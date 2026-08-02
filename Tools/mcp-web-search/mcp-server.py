@@ -111,8 +111,9 @@ def supports(engine: str | None = None, model_name: str | None = None) -> bool:
 
 # Run the ranked web_search pipeline (the model-facing default tool).
 #
-# Advanced mode supplies one string per selected vertical; legacy keeps its query/flag
-# shape. Region is routed by language and safe-search stays moderate in both modes.
+# The model controls only query/effort/shopping. Recency (timelimit) is parsed from the
+# query, region is routed by language, and safe-search stays moderate — none are model-
+# facing knobs. Arguments are coerced (a model may stringify or wrap them).
 async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
     prepared = prepare_search_arguments(args)
     if not prepared.get("ok"):
@@ -120,7 +121,19 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
 
     canonical_args = dict(prepared.get("arguments") or {})
     search_request = dict(prepared.get("search_request") or {})
-    if search_request.get("schema_mode") == "legacy":
+    if search_request.get("schema_mode") == "advanced":
+        queries = [
+            str(item.get("compiled_query") or "")
+            for item in search_request.get("queries", [])
+            if isinstance(item, dict)
+        ]
+        query = queries[0] if len(queries) == 1 else list(queries)
+        query_preview = " | ".join(queries)[:320]
+        effort = str(search_request.get("effort") or "medium")
+        shopping = any(item.get("vertical") == "shopping" for item in search_request.get("queries", []))
+        academic = any(item.get("vertical") == "academic" for item in search_request.get("queries", []))
+        onion = any(item.get("vertical") == "onion" for item in search_request.get("queries", []))
+    else:
         queries = coerce_search_queries(canonical_args.get("query", ""))
         query = queries[0] if len(queries) == 1 else list(queries)
         query_preview = " | ".join(queries)[:320]
@@ -128,18 +141,6 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
         shopping = coerce_search_shopping(canonical_args)
         academic = coerce_search_academic(canonical_args)
         onion = coerce_search_onion(canonical_args)
-        plans = list(search_request.get("queries") or [])
-        is_batch = len(queries) > 1
-    else:
-        plans = [item for item in search_request.get("queries", []) if isinstance(item, dict)]
-        queries = [str(item.get("compiled_query") or "") for item in plans]
-        query = queries[0] if len(queries) == 1 else list(queries)
-        query_preview = " | ".join(queries)[:320]
-        effort = str(search_request.get("effort") or "medium")
-        shopping = any(item.get("vertical") == "shopping" for item in plans)
-        academic = any(item.get("vertical") == "academic" for item in plans)
-        onion = any(item.get("vertical") == "onion" for item in plans)
-        is_batch = search_request.get("batch_kind") == "web"
 
     write_search_io_event(
         {
@@ -149,8 +150,7 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
             "query": query,
             "queries": list(queries),
             "search_request": search_request,
-            "batch": is_batch,
-            "parallel_verticals": len({item.get("vertical") for item in plans}) > 1,
+            "batch": len(queries) > 1,
             "effort": effort,
             "shopping": shopping,
             "academic": academic,
@@ -163,7 +163,7 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
     )
     started = time.perf_counter()
     try:
-        if search_request.get("schema_mode") != "legacy":
+        if search_request.get("schema_mode") == "advanced":
             result = await run_web_search_plan(search_request)
         elif len(queries) > 1:
             result = await run_web_search_batch(
@@ -195,7 +195,7 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
             "tool_id": "web_search",
             "query": query,
             "queries": list(queries),
-            "batch": is_batch,
+            "batch": len(queries) > 1,
             "result": result,
             "elapsed_seconds": elapsed,
         }

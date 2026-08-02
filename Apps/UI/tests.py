@@ -1369,46 +1369,29 @@ class ToolCancellationTests(SimpleTestCase):
 
 # Cover per-response tool quota guardrails.
 class ToolQuotaTests(SimpleTestCase):
-    def test_legacy_web_search_quota_is_unchanged(self):
+    # High-effort web search is expensive, so keep it bounded per response.
+    def test_high_effort_web_search_limits_to_three_calls(self):
         tool_event = {"tool_id": "web_search", "tool_name": "Web search"}
         counters: dict[str, int] = {}
         arguments = {"query": "cheap coding model", "effort": "high"}
 
-        for _index in range(3):
-            self.assertIsNone(
-                tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments)
-            )
-        error = tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments)
-        self.assertIn("high mode is unavailable", str(error))
+        self.assertIsNone(tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments))
+        self.assertIsNone(tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments))
+        self.assertIsNone(tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments))
 
-    def test_web_search_has_independent_effort_quotas(self):
+        error = tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments)
+        self.assertIsNotNone(error)
+        self.assertIn("high mode is unavailable", str(error))
+        self.assertIn("use medium or low", str(error))
+
+    # Lower-effort searches keep the existing broader budget.
+    def test_normal_web_search_keeps_default_quota(self):
         tool_event = {"tool_id": "web_search", "tool_name": "Web search"}
         counters: dict[str, int] = {}
-        for effort, limit in (("low", 12), ("medium", 10), ("high", 4)):
-            arguments = {"web": "cheap coding model", "effort": effort}
-            for _index in range(limit):
-                self.assertIsNone(
-                    tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments)
-                )
-            error = tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments)
-            self.assertIn(f"{effort} mode permits at most {limit} queries", str(error))
-
-    def test_collapsed_web_batch_consumes_quota_per_query(self):
-        tool_event = {
-            "tool_id": "web_search",
-            "tool_name": "Web search",
-            "tool_ui": {"collapsed_parallel_calls": 3},
-        }
-        counters: dict[str, int] = {}
-        arguments = {"web": ["one", "two", "three"], "effort": "low"}
+        arguments = {"query": "cheap coding model", "effort": "medium"}
 
         for _index in range(4):
-            self.assertIsNone(
-                tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments)
-            )
-        self.assertIsNotNone(
-            tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments)
-        )
+            self.assertIsNone(tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments))
 
 
 class ToolCooldownTests(SimpleTestCase):
@@ -1472,14 +1455,14 @@ class ToolPreflightTests(SimpleTestCase):
             "ok": True,
             "arguments": {
                 "description": "Verify canonical sources",
-                "web": "canonical",
+                "queries": [{"vertical": "web", "text": "canonical"}],
             },
             "tool_ui": {
                 "kind": "web_search",
                 "status": "pending",
                 "description": "Verify canonical sources",
                 "search_request": {
-                    "schema_mode": "verticals",
+                    "schema_mode": "advanced",
                     "description": "Verify canonical sources",
                     "effort": "medium",
                     "queries": [{"vertical": "web", "compiled_query": "canonical", "operators": {}}],
@@ -1495,7 +1478,7 @@ class ToolPreflightTests(SimpleTestCase):
 
         self.assertEqual(call["raw_arguments"], raw)
         self.assertNotIn("raw model value", json.dumps(event))
-        self.assertEqual(event["arguments"]["web"], "canonical")
+        self.assertEqual(event["arguments"]["queries"][0]["text"], "canonical")
         self.assertEqual(event["tool_ui"]["description"], "Verify canonical sources")
         self.assertEqual(event["tool_ui"]["search_request"]["queries"][0]["compiled_query"], "canonical")
         marker = _serialize_tool_call_marker(event)
@@ -1544,15 +1527,14 @@ class ToolPreflightTests(SimpleTestCase):
         self.assertEqual(call["tool_ui"]["status"], "rejected")
 
     @patch.object(tool_registry, "_run_worker")
-    def test_parallel_low_web_calls_are_preflighted_as_one_batch(self, worker_mock):
+    def test_parallel_advanced_search_calls_are_preflighted_as_one_batch(self, worker_mock):
         def prepare_batch(_server_file, _operation, payload, persistent=False):
             self.assertTrue(persistent)
             arguments = payload["arguments"]
             self.assertEqual(
-                arguments["web"],
+                [query["text"] for query in arguments["queries"]],
                 ["first query", "second query"],
             )
-            self.assertTrue(arguments["__parallel_web_batch"])
             return {
                 "ok": True,
                 "arguments": arguments,
@@ -1570,8 +1552,8 @@ class ToolPreflightTests(SimpleTestCase):
                 "name": "web_search__web_search",
                 "arguments": {
                     "description": "Check first source",
-                    "web": "first query",
-                    "effort": "low",
+                    "queries": [{"vertical": "web", "text": "first query"}],
+                    "effort": "medium",
                 },
             },
             {
@@ -1579,8 +1561,8 @@ class ToolPreflightTests(SimpleTestCase):
                 "name": "web_search__web_search",
                 "arguments": {
                     "description": "Check second source",
-                    "web": "second query",
-                    "effort": "low",
+                    "queries": [{"vertical": "web", "text": "second query"}],
+                    "effort": "medium",
                 },
             },
         ]
@@ -1594,69 +1576,18 @@ class ToolPreflightTests(SimpleTestCase):
         worker_mock.assert_called_once()
 
     @patch.object(tool_registry, "_run_worker")
-    def test_parallel_medium_web_calls_are_rejected_before_worker(self, worker_mock):
-        calls = [
-            {
-                "id": f"call-{index}",
-                "name": "web_search__web_search",
-                "arguments": {
-                    "description": f"Check source {index}",
-                    "web": f"query {index}",
-                    "effort": "medium",
-                },
-            }
-            for index in range(2)
-        ]
-
-        prepared = tool_registry.prepare_tool_calls(self._lookup(), calls)
-
-        self.assertEqual(len(prepared), 1)
-        self.assertIn("only at low effort", prepared[0]["preflight_error_result"]["model_context"])
-        worker_mock.assert_not_called()
-
-    @patch.object(tool_registry, "_run_worker")
-    def test_parallel_specialized_verticals_are_rejected_before_worker(self, worker_mock):
-        calls = [
-            {
-                "id": "call-shopping",
-                "name": "web_search__web_search",
-                "arguments": {
-                    "description": "Check product price",
-                    "shopping": "ThinkPad X1 Carbon",
-                    "effort": "low",
-                },
-            },
-            {
-                "id": "call-academic",
-                "name": "web_search__web_search",
-                "arguments": {
-                    "description": "Check relevant paper",
-                    "academic": "retrieval augmented generation",
-                    "effort": "low",
-                },
-            },
-        ]
-
-        prepared = tool_registry.prepare_tool_calls(self._lookup(), calls)
-
-        self.assertEqual(len(prepared), 1)
-        context = prepared[0]["preflight_error_result"]["model_context"]
-        self.assertIn("must never be parallelized", context)
-        worker_mock.assert_not_called()
-
-    @patch.object(tool_registry, "_run_worker")
     def test_parallel_search_batch_over_server_limit_is_one_atomic_rejection(self, worker_mock):
         def reject_oversized_batch(_server_file, _operation, payload, persistent=False):
             self.assertTrue(persistent)
-            query_count = len(payload["arguments"]["web"])
+            query_count = len(payload["arguments"]["queries"])
             self.assertEqual(query_count, 4)
             error_result = {
                 "error": {
                     "code": "INVALID_SEARCH_PLAN",
-                    "issues": [{"path": "$.web", "message": "a web batch permits at most 3 queries"}],
+                    "issues": [{"path": "$.queries", "message": "must contain at most 2 items"}],
                 },
                 "sources": [],
-                "model_context": "INVALID_SEARCH_PLAN: $.web: a web batch permits at most 3 queries",
+                "model_context": "INVALID_SEARCH_PLAN: $.queries: must contain at most 2 items",
                 "ui": {"kind": "web_search", "status": "rejected", "query_count": 0},
             }
             return {
@@ -1673,8 +1604,8 @@ class ToolPreflightTests(SimpleTestCase):
                 "name": "web_search__web_search",
                 "arguments": {
                     "description": f"Check source {index}",
-                    "web": f"query {index}",
-                    "effort": "low",
+                    "queries": [{"vertical": "web", "text": f"query {index}"}],
+                    "effort": "medium",
                 },
             }
             for index in range(1, 5)
@@ -1685,8 +1616,8 @@ class ToolPreflightTests(SimpleTestCase):
         self.assertEqual(len(prepared), 1)
         self.assertEqual(prepared[0]["tool_ui"]["status"], "rejected")
         self.assertIn("4 parallel web_search calls", prepared[0]["preflight_error_result"]["model_context"])
-        self.assertIn("at most 3 queries", prepared[0]["preflight_error_result"]["model_context"])
-        worker_mock.assert_not_called()
+        self.assertIn("must contain at most 2 items", prepared[0]["preflight_error_result"]["model_context"])
+        worker_mock.assert_called_once()
 
         transcript = tool_registry.canonicalize_transcript_tool_calls(
             {

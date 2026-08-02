@@ -1179,14 +1179,6 @@ def _combine_search_results(
         "effort": effort,
         "queries": request_queries,
     }
-    verticals = [str(plan.get("vertical") or "web") for plan in plans]
-    if schema_mode == "legacy":
-        is_batch = len(plans) > 1
-        parallel_verticals = False
-    else:
-        is_batch = len(plans) > 1 and len(set(verticals)) < len(verticals)
-        parallel_verticals = len(set(verticals)) > 1
-        search_request["batch_kind"] = "web" if is_batch else "none"
     if description:
         search_request["description"] = description
     ui = _build_ui(all_sources)
@@ -1206,8 +1198,7 @@ def _combine_search_results(
     payload: dict[str, Any] = {
         "query": queries[0] if len(queries) == 1 else queries,
         "queries": queries,
-        "batch": is_batch,
-        "parallel_verticals": parallel_verticals,
+        "batch": len(queries) > 1,
         "search_id": search_id,
         "search_ids": [result.get("search_id") for result in results if result.get("search_id")],
         "effort": effort,
@@ -1224,14 +1215,7 @@ def _combine_search_results(
         "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
         "cached": all(bool(result.get("cached")) for result in results),
         "model_context": (
-            (
-                f"Batch search results for {len(plans)} queries run concurrently:\n\n"
-                if schema_mode == "legacy"
-                else (
-                    f"{'Batch web' if is_batch else 'Independent vertical'} search results "
-                    f"for {len(plans)} queries run concurrently:\n\n"
-                )
-            )
+            f"Batch search results for {len(plans)} queries run concurrently:\n\n"
             + "\n\n---\n\n".join(context_sections)
             if len(plans) > 1
             else context_sections[0]

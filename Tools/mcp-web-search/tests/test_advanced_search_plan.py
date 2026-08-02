@@ -11,7 +11,6 @@ import pytest
 import core.config as config_module
 import core.search.web_search as search_module
 from core.mcp_contract import build_search_description, build_search_schema, prepare_search_arguments
-from core.query.operators import WEB_QUERY_OPERATOR_FORMS
 from core.query.search_plan import PlanValidationError, prepare_advanced_search
 from core.search.query_dates import resolve_query_dates
 
@@ -73,31 +72,29 @@ def test_config_schema_mode_defaults_and_invalid_values_fall_back_to_advanced(tm
 def test_advanced_schema_is_default_and_onion_is_capability_gated(monkeypatch):
     monkeypatch.setattr(config_module, "load_search_config", lambda: _config(tor=False))
     schema = build_search_schema()
-    assert schema["required"] == ["description"]
-    assert schema["properties"]["description"]["maxLength"] == 65
-    assert set(schema["properties"]) == {"description", "web", "shopping", "academic", "effort"}
-    assert all(schema["properties"][key]["type"] == "string" for key in ("web", "shopping", "academic"))
-    assert "operators are silently stripped" in schema["properties"]["shopping"]["description"]
-    assert "maximally dry scholarly" in schema["properties"]["academic"]["description"]
-    web_description = schema["properties"]["web"]["description"]
-    assert all(operator in web_description for operator in WEB_QUERY_OPERATOR_FORMS)
-    assert "Use plain terms by default" in web_description
-    assert "known ambiguity" in web_description
-    assert "Do not stack decorative operators" in web_description
-    assert "query" not in schema["properties"]
-    assert {"required": ["web"]} in schema["anyOf"]
-    assert {"required": ["shopping"]} in schema["anyOf"]
+    item = schema["properties"]["queries"]["items"]
+    assert schema["required"] == ["description", "queries"]
+    assert schema["properties"]["description"]["maxLength"] == 80
+    assert "Visible activity title" in schema["properties"]["description"]["description"]
+    assert "beginning with an action verb" in schema["properties"]["description"]["description"]
+    assert "make sense without the query text" in schema["properties"]["description"]["description"]
+    assert schema["properties"]["queries"]["maxItems"] == 14
+    assert item["required"] == ["vertical", "text"]
+    assert "Never include a four-digit calendar year" in item["properties"]["text"]["description"]
+    assert "Required routing from the research plan" in item["properties"]["vertical"]["description"]
+    assert "MUST use shopping" in item["properties"]["vertical"]["description"]
+    assert "MUST use academic" in item["properties"]["vertical"]["description"]
+    assert item["properties"]["operators"]["properties"]["or_groups"]["items"]["minItems"] == 2
+    assert "selected by the research plan" in (
+        item["properties"]["operators"]["properties"]["site_include"]["items"]["description"]
+    )
+    assert item["properties"]["vertical"]["enum"] == ["web", "shopping", "academic"]
+    assert "Description is the visible activity title" in build_search_description()
     description = build_search_description()
-    assert "Supply at least one vertical argument" in " ".join(description.split())
-    normalized_description = " ".join(description.split())
-    assert "exactly one tool call at medium or high" in normalized_description
-    assert len(description) < 500
-    effort_description = schema["properties"]["effort"]["description"]
-    assert "Only low may use 2-3 parallel calls" in effort_description
-    assert "must always be sequential" in effort_description
+    assert "2 web queries, 4 shopping queries, and 8 academic queries" in description
 
     monkeypatch.setattr(config_module, "load_search_config", lambda: _config(tor=True))
-    assert build_search_schema()["properties"]["onion"]["type"] == "string"
+    assert "onion" in build_search_schema()["properties"]["queries"]["items"]["properties"]["vertical"]["enum"]
 
 
 def test_advanced_compiler_covers_every_operator_and_normalizes_stably():
@@ -133,75 +130,11 @@ def test_advanced_plan_rejects_legacy_shape_and_is_atomic(monkeypatch):
 def test_preflight_advertises_normalized_activity_description(monkeypatch):
     monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
 
-    prepared = prepare_search_arguments({
-        "description": "Convert reference currency",
-        "web": "RUB USD exchange rate site:cbr.ru",
-        "shopping": "\"MacBook Air\" OR laptop site:shop.example -used",
-        "academic": "\"Attention Is All You Need\" site:arxiv.org",
-        "effort": "medium",
-    })
+    prepared = prepare_search_arguments(_plan())
 
     assert prepared["arguments"]["description"] == "Convert reference currency"
-    assert prepared["arguments"]["web"] == "RUB USD exchange rate site:cbr.ru"
-    assert prepared["arguments"]["shopping"] == "MacBook Air laptop"
-    assert prepared["arguments"]["academic"] == "Attention Is All You Need"
-    assert [item["vertical"] for item in prepared["search_request"]["queries"]] == [
-        "web", "shopping", "academic",
-    ]
-    assert prepared["search_request"]["batch_kind"] == "none"
     assert prepared["tool_ui"]["description"] == "Convert reference currency"
     assert prepared["tool_ui"]["search_request"]["description"] == "Convert reference currency"
-
-
-def test_advanced_preflight_accepts_specialized_vertical_without_web(monkeypatch):
-    monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
-
-    prepared = prepare_search_arguments({
-        "description": "Checking product prices",
-        "shopping": "ThinkPad X1 Carbon Gen 14",
-        "effort": "medium",
-    })
-
-    assert prepared["ok"] is True
-    assert prepared["search_request"]["queries"][0]["vertical"] == "shopping"
-
-
-def test_mixed_vertical_operators_are_stripped_locally_without_rejection(monkeypatch):
-    monkeypatch.setattr(config_module, "load_search_config", lambda: _config(tor=True))
-    web = 'runtime error site:docs.example.com after:2026-01-01 -deprecated'
-
-    prepared = prepare_search_arguments({
-        "description": "Comparing source types",
-        "web": web,
-        "shopping": 'ThinkPad X1 site:shop.example -used',
-        "academic": 'retrieval augmented generation site:arxiv.org after:2025-01-01',
-        "onion": 'SecureDrop site:example.onion OR mirror',
-        "effort": "medium",
-    })
-
-    assert prepared["ok"] is True
-    assert prepared["arguments"]["web"] == web
-    assert prepared["arguments"]["shopping"] == "ThinkPad X1"
-    assert prepared["arguments"]["academic"] == "retrieval augmented generation"
-    assert prepared["arguments"]["onion"] == "SecureDrop mirror"
-
-
-def test_operator_only_specialized_vertical_is_omitted_from_valid_mixed_call(monkeypatch):
-    monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
-
-    prepared = prepare_search_arguments({
-        "description": "Checking official sources",
-        "web": "runtime documentation site:example.com",
-        "shopping": "site:shop.example -used",
-        "academic": "after:2025-01-01 site:arxiv.org",
-        "effort": "medium",
-    })
-
-    assert prepared["ok"] is True
-    assert prepared["arguments"]["web"] == "runtime documentation site:example.com"
-    assert "shopping" not in prepared["arguments"]
-    assert "academic" not in prepared["arguments"]
-    assert [query["vertical"] for query in prepared["search_request"]["queries"]] == ["web"]
 
 
 def test_advanced_plan_rejects_missing_description_and_invalid_or_group():
@@ -315,7 +248,7 @@ def test_mixed_vertical_plan_runs_concurrently_and_preserves_metadata(monkeypatc
 
     monkeypatch.setattr(search_module, "run_web_search", fake_search)
     request = {
-        "schema_mode": "verticals",
+        "schema_mode": "advanced",
         "description": "Compare evidence sources",
         "effort": "medium",
         "queries": [
@@ -338,8 +271,6 @@ def test_mixed_vertical_plan_runs_concurrently_and_preserves_metadata(monkeypatc
     assert calls[0][1]["operators"] == {"after": "2026-07-01"}
     assert result["ui"]["description"] == "Compare evidence sources"
     assert result["ui"]["search_request"]["description"] == "Compare evidence sources"
-    assert result["batch"] is False
-    assert result["parallel_verticals"] is True
     assert result["query_results"][1]["index"] == 2
     assert result["query_results"][1]["vertical"] == "shopping"
     assert result["sources"][0]["query_index"] == 1
