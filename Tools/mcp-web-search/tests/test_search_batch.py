@@ -159,8 +159,11 @@ def test_tool_description_documents_rare_batch_and_operator_examples():
     advanced_normalized = " ".join(ADVANCED_WEB_SEARCH_TOOL_DESCRIPTION.split())
     assert "independent web, shopping, academic" in advanced_normalized
     assert "omitted verticals are not searched" in advanced_normalized
+    assert "exactly one tool call at medium or high" in advanced_normalized
+    assert "only at low effort" in advanced_normalized
+    assert "never parallelize calls containing" in advanced_normalized
     assert "quota" not in advanced_normalized.lower()
-    assert len(advanced_normalized) < 250
+    assert len(advanced_normalized) < 500
 
 
 def test_advanced_operators_are_recognized_without_polluting_scoring_terms():

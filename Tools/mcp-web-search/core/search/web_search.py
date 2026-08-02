@@ -28,6 +28,7 @@ import re
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from ..engines import (
     BraveParser,
@@ -55,6 +56,11 @@ _SOURCE_LIMIT = 20
 # snippet-only in search (still readable via read_page). Tighter than read_page's own
 # avoid bar — a wide search cannot afford a multi-second page on the hot path.
 _INLINE_PARSE_SKIP_MS = 6_000.0
+
+# These hosts are always snippet-only during web_search. Exact hostname/subdomain
+# matching avoids path heuristics and cannot match an unrelated domain such as
+# not-reddit.com. Their dedicated read_page behavior, if any, remains unchanged.
+_INLINE_PARSE_BLOCKED_DOMAINS = frozenset({"reddit.com", "redd.it"})
 
 # Per-link timeout for onion fetches during a web_search — tighter than read_page's onion
 # path (which uses the full tor.fetch_timeout). A search must stay responsive even when a
@@ -101,6 +107,12 @@ async def _merge_streams(*streams):
 # browser/slow APIs), or a domain the runtime store has learned is too slow to parse.
 # Either way the source still ranks and is returned; only its page is left for read_page.
 def _inline_parse_allowed(url: str) -> bool:
+    try:
+        host = (urlsplit(str(url or "")).hostname or "").lower().rstrip(".")
+    except ValueError:
+        host = ""
+    if any(host == domain or host.endswith(f".{domain}") for domain in _INLINE_PARSE_BLOCKED_DOMAINS):
+        return False
     try:
         import custom_domains
 

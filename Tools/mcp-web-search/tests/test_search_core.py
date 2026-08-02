@@ -429,6 +429,14 @@ def test_inline_parse_blocks_readpage_only_handler():
     assert not _inline_parse_allowed("https://www.reddit.com/r/Python/comments/a/b/")
 
 
+def test_inline_parse_blocks_every_reddit_hostname_but_not_lookalikes():
+    assert not _inline_parse_allowed("https://reddit.com/r/meshtastic/hot/")
+    assert not _inline_parse_allowed("https://www.reddit.com/r/meshtastic/hot/")
+    assert not _inline_parse_allowed("https://old.reddit.com/r/meshtastic/")
+    assert not _inline_parse_allowed("https://redd.it/abc123")
+    assert _inline_parse_allowed("https://not-reddit.com/article")
+
+
 def test_inline_parse_skips_learned_slow_domain(monkeypatch):
     import core.profiles as profiles
     from core.profiles.models import ProfileHint

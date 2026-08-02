@@ -74,7 +74,7 @@ def test_advanced_schema_is_default_and_onion_is_capability_gated(monkeypatch):
     monkeypatch.setattr(config_module, "load_search_config", lambda: _config(tor=False))
     schema = build_search_schema()
     assert schema["required"] == ["description"]
-    assert schema["properties"]["description"]["maxLength"] == 80
+    assert schema["properties"]["description"]["maxLength"] == 65
     assert set(schema["properties"]) == {"description", "web", "shopping", "academic", "effort"}
     assert all(schema["properties"][key]["type"] == "string" for key in ("web", "shopping", "academic"))
     assert "operators are silently stripped" in schema["properties"]["shopping"]["description"]
@@ -89,7 +89,12 @@ def test_advanced_schema_is_default_and_onion_is_capability_gated(monkeypatch):
     assert {"required": ["shopping"]} in schema["anyOf"]
     description = build_search_description()
     assert "Supply at least one vertical argument" in " ".join(description.split())
-    assert len(description) < 250
+    normalized_description = " ".join(description.split())
+    assert "exactly one tool call at medium or high" in normalized_description
+    assert len(description) < 500
+    effort_description = schema["properties"]["effort"]["description"]
+    assert "Only low may use 2-3 parallel calls" in effort_description
+    assert "must always be sequential" in effort_description
 
     monkeypatch.setattr(config_module, "load_search_config", lambda: _config(tor=True))
     assert build_search_schema()["properties"]["onion"]["type"] == "string"
@@ -152,7 +157,7 @@ def test_advanced_preflight_accepts_specialized_vertical_without_web(monkeypatch
     monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
 
     prepared = prepare_search_arguments({
-        "description": "Ищу цену товара",
+        "description": "Checking product prices",
         "shopping": "ThinkPad X1 Carbon Gen 14",
         "effort": "medium",
     })
@@ -166,7 +171,7 @@ def test_mixed_vertical_operators_are_stripped_locally_without_rejection(monkeyp
     web = 'runtime error site:docs.example.com after:2026-01-01 -deprecated'
 
     prepared = prepare_search_arguments({
-        "description": "Проверяю разные источники",
+        "description": "Comparing source types",
         "web": web,
         "shopping": 'ThinkPad X1 site:shop.example -used',
         "academic": 'retrieval augmented generation site:arxiv.org after:2025-01-01',
@@ -185,7 +190,7 @@ def test_operator_only_specialized_vertical_is_omitted_from_valid_mixed_call(mon
     monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
 
     prepared = prepare_search_arguments({
-        "description": "Проверяю официальный источник",
+        "description": "Checking official sources",
         "web": "runtime documentation site:example.com",
         "shopping": "site:shop.example -used",
         "academic": "after:2025-01-01 site:arxiv.org",

@@ -21,6 +21,9 @@ _SPACE_RE = re.compile(r"\s+")
 _EFFORT_VALUES = ("low", "medium", "high")
 _EFFORT_ALIASES = {"": "medium", "normal": "medium", "default": "medium", "standard": "medium"}
 _WEB_OPERATOR_FORMS = ", ".join(WEB_QUERY_OPERATOR_FORMS)
+ADVANCED_DESCRIPTION_LIMIT = 65
+ADVANCED_DESCRIPTION_MIN_WORDS = 2
+ADVANCED_DESCRIPTION_MAX_WORDS = 7
 WEB_BATCH_QUERY_LIMIT = 3
 SEARCH_BATCH_LIMIT = VERTICAL_QUERY_LIMITS["web"]
 LEGACY_BATCH_LIMIT = max(
@@ -32,7 +35,10 @@ MCP_SERVER_DESCRIPTION = "Search and page-reading tools."
 
 VERTICAL_WEB_SEARCH_TOOL_DESCRIPTION = """\
 Search independent web, shopping, academic, and optional onion verticals. Supply at least
-one vertical argument; omitted verticals are not searched."""
+one vertical argument; omitted verticals are not searched. Emit exactly one tool call at
+medium or high effort. Multiple parallel tool calls are valid only at low effort, with
+2-3 calls that each contain only one `web` query; never parallelize calls containing
+`shopping`, `academic`, or `onion`."""
 
 
 LEGACY_WEB_SEARCH_TOOL_DESCRIPTION = """\
@@ -221,10 +227,13 @@ ADVANCED_SEARCH_QUERY_SCHEMA: dict[str, Any] = {
         "description": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 80,
+            "maxLength": ADVANCED_DESCRIPTION_LIMIT,
             "description": (
-                "Visible 3-6 word activity title in the user's language. Begin with an "
-                "action verb and name the evidence goal; never put the query or answer here."
+                f"Required visible activity title: {ADVANCED_DESCRIPTION_MIN_WORDS}-"
+                f"{ADVANCED_DESCRIPTION_MAX_WORDS} words, at most {ADVANCED_DESCRIPTION_LIMIT} "
+                "characters, in the user's language. Begin with an action verb and name only "
+                "the evidence goal, for example `Checking source reliability`. Never put a query, answer, "
+                "explanation, list, or sentence here. Invalid titles reject the whole call."
             ),
         },
         "web": {
@@ -269,9 +278,12 @@ ADVANCED_SEARCH_QUERY_SCHEMA: dict[str, Any] = {
             "enum": list(_EFFORT_VALUES),
             "default": "medium",
             "description": (
-                "Shared effort for all supplied verticals. medium is the default for a new "
-                "evidence gap; low is quick discovery and the only mode that permits a web "
-                "batch; high is reserved for a concrete unresolved high-stakes gap. "
+                "Shared effort for all verticals in this call. At medium or high, emit "
+                "exactly one web_search tool call in the current tool round. Only low may "
+                "use 2-3 parallel calls, and every such call must contain only `web`; calls "
+                "containing `shopping`, `academic`, or `onion` must always be sequential. "
+                "medium is the default for a new evidence gap; low is quick discovery; "
+                "high is reserved for a concrete unresolved high-stakes gap. "
                 "Per-response quotas are 12 low, 10 medium, and 4 high queries."
             ),
         },
@@ -589,9 +601,36 @@ def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
         issues.append({"path": f"$.{key}", "message": "is not allowed"})
 
     raw_description = args.get("description")
-    description = sanitize_query(raw_description)[:80] if isinstance(raw_description, str) else ""
-    if not description:
-        issues.append({"path": "$.description", "message": "must be a non-empty string"})
+    description = sanitize_query(raw_description) if isinstance(raw_description, str) else ""
+    if not isinstance(raw_description, str) or not description:
+        issues.append({
+            "path": "$.description",
+            "message": (
+                f"is required and must be a {ADVANCED_DESCRIPTION_MIN_WORDS}-"
+                f"{ADVANCED_DESCRIPTION_MAX_WORDS} word activity title in the user's language; "
+                "begin with an action verb and name only the evidence goal, for example "
+                "`Checking source reliability`"
+            ),
+        })
+    else:
+        word_count = len(description.split())
+        if len(description) > ADVANCED_DESCRIPTION_LIMIT:
+            issues.append({
+                "path": "$.description",
+                "message": (
+                    f"is {len(description)} characters; maximum is {ADVANCED_DESCRIPTION_LIMIT}. "
+                    "Use only a short activity title, not a sentence, query, or explanation"
+                ),
+            })
+        if not ADVANCED_DESCRIPTION_MIN_WORDS <= word_count <= ADVANCED_DESCRIPTION_MAX_WORDS:
+            issues.append({
+                "path": "$.description",
+                "message": (
+                    f"contains {word_count} words; {ADVANCED_DESCRIPTION_MIN_WORDS}-"
+                    f"{ADVANCED_DESCRIPTION_MAX_WORDS} words are required. Begin with "
+                    "an action verb and name only the evidence goal"
+                ),
+            })
 
     raw_effort = args.get("effort", "medium")
     if not isinstance(raw_effort, str) or raw_effort.strip().lower() not in _EFFORT_VALUES:
@@ -599,7 +638,7 @@ def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
     effort = coerce_search_effort(raw_effort)
 
     plans: list[dict[str, Any]] = []
-    canonical: dict[str, Any] = {"description": description, "effort": effort}
+    canonical: dict[str, Any] = {"effort": effort}
     verticals = ["web", "shopping", "academic", *(["onion"] if tor_enabled else [])]
     for vertical in verticals:
         value = args.get(vertical)
@@ -673,6 +712,8 @@ def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
             "path": "$",
             "message": "at least one of web, shopping, academic, or available onion is required",
         })
+
+    canonical["description"] = description
 
     if issues:
         error_result = invalid_search_plan_result(issues, description=description)
