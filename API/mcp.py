@@ -4,19 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import contextlib
+import copy
 import importlib.util
 import inspect
 import json
 import logging
 import os
 import re
+import secrets
+import signal
+import socket
 import subprocess
 import sys
 import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from queue import Queue
+from queue import Empty, Queue
 from types import ModuleType
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
@@ -52,6 +57,8 @@ _SEARCH_IO_LOG_PATH = TOOLS_DIR / "mcp-web-search" / "logs" / "model_search_io.j
 _TOOL_COOLDOWN_SECONDS = 30.0
 _TOOL_COOLDOWN_LOCK = threading.Lock()
 _TOOL_COOLDOWNS: dict[str, float] = {}
+_ACTIVE_TOOL_EXECUTIONS_LOCK = threading.Lock()
+_ACTIVE_TOOL_EXECUTIONS: set["ActiveToolExecution"] = set()
 TOOL_CALL_QUOTAS = {
     "web_search": 15,
     "read_page": 10,
@@ -63,6 +70,104 @@ TOOL_BLOCK_FINAL_PROMPT = (
     "present in the conversation and answer the user now. If the collected evidence is "
     "insufficient for a claim, say that clearly instead of searching again."
 )
+TOOL_CANCEL_FINAL_PROMPT = (
+    "The user stopped the active tool call. Do not call any tool again in this response "
+    "and do not restart the cancelled work under a new session. Briefly acknowledge the stop "
+    "or answer only from evidence already present in the conversation."
+)
+NON_MODEL_TOOL_SERVER_IDS = {"deep_research"}
+
+
+class ToolExecutionCancelled(Exception):
+    """Raised inside a tool runner after its owning generation is stopped."""
+
+
+TOOL_EXECUTION_CANCELLED = object()
+
+
+class ActiveToolExecution:
+    """Track and cancel one in-flight tool invocation."""
+
+    def __init__(self, generation_id: str = "", *, research_session_id: str = "") -> None:
+        self.generation_id = str(generation_id or "")
+        self.research_session_id = str(research_session_id or "").strip()
+        self.cancelled = threading.Event()
+        self._lock = threading.Lock()
+        self._cancel_callback = None
+
+    def set_cancel_callback(self, callback) -> None:
+        call_immediately = False
+        with self._lock:
+            if self.cancelled.is_set():
+                call_immediately = True
+            else:
+                self._cancel_callback = callback
+        if call_immediately and callable(callback):
+            callback()
+
+    def clear_cancel_callback(self) -> None:
+        with self._lock:
+            self._cancel_callback = None
+
+    def cancel(self) -> None:
+        with self._lock:
+            if self.cancelled.is_set():
+                return
+            self.cancelled.set()
+            callback = self._cancel_callback
+        if callable(callback):
+            try:
+                callback()
+            except Exception as exc:  # noqa: BLE001 - cancellation remains best effort
+                logger.warning("Failed to stop active tool resource: %s", exc)
+
+
+def _register_active_tool(execution: ActiveToolExecution) -> None:
+    with _ACTIVE_TOOL_EXECUTIONS_LOCK:
+        _ACTIVE_TOOL_EXECUTIONS.add(execution)
+
+
+def _unregister_active_tool(execution: ActiveToolExecution) -> None:
+    with _ACTIVE_TOOL_EXECUTIONS_LOCK:
+        _ACTIVE_TOOL_EXECUTIONS.discard(execution)
+
+
+def abort_active_tools(generation_id: str | None = None) -> int:
+    """Cancel tool invocations owned by one generation, or all when omitted."""
+
+    requested_id = str(generation_id or "")
+    with _ACTIVE_TOOL_EXECUTIONS_LOCK:
+        executions = [
+            execution
+            for execution in _ACTIVE_TOOL_EXECUTIONS
+            if not requested_id or execution.generation_id == requested_id
+        ]
+    for execution in executions:
+        execution.cancel()
+    return len(executions)
+
+
+def abort_active_research(session_id: str) -> int:
+    """Cancel only the active tool invocation for one Deep Research session."""
+
+    requested_id = str(session_id or "").strip()
+    if not requested_id:
+        return 0
+    with _ACTIVE_TOOL_EXECUTIONS_LOCK:
+        executions = [
+            execution
+            for execution in _ACTIVE_TOOL_EXECUTIONS
+            if execution.research_session_id == requested_id
+        ]
+    for execution in executions:
+        execution.cancel()
+    return len(executions)
+
+
+def is_tool_execution_cancelled(result: Any) -> bool:
+    """Return whether a streamed tool call ended because generation was stopped."""
+
+    return result is TOOL_EXECUTION_CANCELLED
 
 
 # Run async tool handlers on one persistent event loop.
@@ -105,11 +210,23 @@ class AsyncCallableRunner:
             self._ready.wait()
 
     # Run one coroutine on the shared loop and wait for its result.
-    def run(self, coro: Any, *, timeout: float | None = None) -> Any:
+    def run(
+        self,
+        coro: Any,
+        *,
+        timeout: float | None = None,
+        cancellation: ActiveToolExecution | None = None,
+    ) -> Any:
         self.ensure_started()
         assert self._loop is not None
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result(timeout=timeout)
+        if cancellation is not None:
+            cancellation.set_cancel_callback(future.cancel)
+        try:
+            return future.result(timeout=timeout)
+        finally:
+            if cancellation is not None:
+                cancellation.clear_cancel_callback()
 
     # Stop the background loop and join its thread.
     def close(self) -> None:
@@ -183,6 +300,7 @@ class ExternalWorkerSession:
             cwd=str(self.server_file.parent),
             env=_venv_subprocess_env(self.python_path),
             bufsize=1,
+            **_tool_process_group_kwargs(),
         )
 
     # Send one JSON request to the worker and return its result envelope.
@@ -192,6 +310,7 @@ class ExternalWorkerSession:
         payload: dict[str, Any] | None = None,
         *,
         timeout_s: float | None = None,
+        cancellation: ActiveToolExecution | None = None,
     ) -> Any:
         """Send one request to the worker process and return its result."""
 
@@ -204,7 +323,15 @@ class ExternalWorkerSession:
             raw_response = ""
             last_error: Exception | None = None
             for attempt in range(2):
+                if cancellation is not None and cancellation.cancelled.is_set():
+                    raise ToolExecutionCancelled()
                 self._start()
+                # Cancellation may arrive while a new persistent worker is
+                # spawning.  Do not let that worker survive long enough to
+                # receive the request or be mistaken for a retry candidate.
+                if cancellation is not None and cancellation.cancelled.is_set():
+                    self.close()
+                    raise ToolExecutionCancelled()
                 assert self.process is not None
                 assert self.process.stdin is not None
                 assert self.process.stdout is not None
@@ -226,6 +353,8 @@ class ExternalWorkerSession:
                     break
 
                 self.close()
+                if cancellation is not None and cancellation.cancelled.is_set():
+                    raise ToolExecutionCancelled()
                 if attempt == 0:
                     logger.warning("Tool worker stopped before response; restarting once for %s", self.server_file)
                     continue
@@ -303,11 +432,7 @@ class ExternalWorkerSession:
 
         try:
             if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    process.kill()
+                _terminate_tool_process(process)
         finally:
             for stream in (process.stdin, process.stdout, process.stderr):
                 try:
@@ -315,6 +440,114 @@ class ExternalWorkerSession:
                         stream.close()
                 except Exception:
                     pass
+
+
+def _tool_process_group_kwargs() -> dict[str, Any]:
+    """Start tool workers in a group that can be terminated with descendants."""
+
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def _terminate_tool_process(process: subprocess.Popen[Any]) -> None:
+    """Terminate a tool worker and any child processes it launched."""
+
+    if process.poll() is not None:
+        return
+
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=3,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            pass
+
+    try:
+        process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        if os.name != "nt":
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
+        else:
+            process.kill()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=1)
+
+
+class ToolEventSocketChannel:
+    """Receive structured worker events without multiplexing them onto stdout."""
+
+    def __init__(self, callback) -> None:
+        self.callback = callback
+        self.token = secrets.token_urlsafe(24)
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server.bind(("127.0.0.1", 0))
+        self.server.listen(2)
+        self.server.settimeout(0.2)
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(
+            target=self._serve,
+            name="aslm-tool-event-channel",
+            daemon=True,
+        )
+        self.thread.start()
+
+    @property
+    def config(self) -> dict[str, Any]:
+        return {
+            "host": "127.0.0.1",
+            "port": int(self.server.getsockname()[1]),
+            "token": self.token,
+        }
+
+    def _serve(self) -> None:
+        while not self.stop_event.is_set():
+            try:
+                connection, _address = self.server.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            with connection:
+                stream = connection.makefile("r", encoding="utf-8", errors="replace")
+                with stream:
+                    for raw_line in stream:
+                        if self.stop_event.is_set():
+                            return
+                        try:
+                            envelope = json.loads(raw_line)
+                        except json.JSONDecodeError:
+                            continue
+                        if not isinstance(envelope, dict) or envelope.get("token") != self.token:
+                            continue
+                        event = envelope.get("event")
+                        if not isinstance(event, dict):
+                            continue
+                        try:
+                            self.callback(event)
+                        except Exception as exc:  # noqa: BLE001 - observers cannot break tools
+                            logger.warning("Tool event callback failed: %s", exc)
+
+    def close(self) -> None:
+        self.stop_event.set()
+        with contextlib.suppress(OSError):
+            self.server.close()
+        self.thread.join(timeout=1)
 
 
 # Print one shared runtime event.
@@ -560,6 +793,8 @@ def consume_tool_quota(
 def is_blocking_tool_result(result: Any) -> bool:
     """Return whether a tool result is a guardrail/block message, not fresh evidence."""
 
+    if is_tool_execution_cancelled(result):
+        return True
     text = str(result or "").strip()
     return text.startswith(
         (
@@ -567,6 +802,7 @@ def is_blocking_tool_result(result: Any) -> bool:
             "Duplicate web_search blocked:",
             "Duplicate read_page blocked:",
             "Tool quota exceeded:",
+            "TOOL_EXECUTION_CANCELLED:",
         )
     )
 
@@ -578,8 +814,154 @@ def forced_final_prompt_after_tool_blocks() -> str:
     return TOOL_BLOCK_FINAL_PROMPT
 
 
+def forced_final_prompt_after_tool_cancellation() -> str:
+    """Return the instruction for the immediate tool-free round after a user stop."""
+
+    return TOOL_CANCEL_FINAL_PROMPT
+
+
 # How many times the tool loop re-prompts a model that ignored user-required tools.
 MAX_REQUIRED_TOOL_NUDGES = 2
+
+
+# Read an optional per-session tool-loop limit without exceeding the adapter cap.
+def tool_round_limit_from_context(
+    tool_context: dict[str, Any] | None,
+    adapter_limit: int,
+) -> int:
+    """Return a bounded number of model/tool rounds for this generation."""
+
+    raw_limit = tool_context.get("max_tool_rounds") if isinstance(tool_context, dict) else None
+    try:
+        requested_limit = int(raw_limit)
+    except (TypeError, ValueError):
+        requested_limit = adapter_limit
+    return min(max(1, requested_limit), max(1, int(adapter_limit)))
+
+
+# Bound one assistant turn's parallel calls before its transcript is canonicalized.
+def limit_tool_calls_from_context(
+    tool_context: dict[str, Any] | None,
+    tool_calls: list[dict[str, Any]],
+    tool_lookup: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Apply optional global and per-server parallel call limits."""
+
+    raw_limit = tool_context.get("max_parallel_tool_calls") if isinstance(tool_context, dict) else None
+    try:
+        global_limit = max(1, int(raw_limit)) if raw_limit not in (None, "") else None
+    except (TypeError, ValueError):
+        global_limit = None
+
+    raw_server_limits = (
+        tool_context.get("max_parallel_tool_calls_by_server")
+        if isinstance(tool_context, dict)
+        else None
+    )
+    server_limits: dict[str, int] = {}
+    if isinstance(raw_server_limits, dict):
+        for raw_server_id, raw_server_limit in raw_server_limits.items():
+            try:
+                server_limits[str(raw_server_id).strip()] = max(1, int(raw_server_limit))
+            except (TypeError, ValueError):
+                continue
+
+    limited = tool_calls[:global_limit] if global_limit is not None else list(tool_calls)
+    if not server_limits:
+        return limited
+
+    server_counts: dict[str, int] = {}
+    output: list[dict[str, Any]] = []
+    for tool_call in limited:
+        alias = str(tool_call.get("name") or "")
+        server_id = tool_server_id_for_alias(tool_lookup, alias)
+        server_limit = server_limits.get(server_id)
+        if server_limit is not None and server_counts.get(server_id, 0) >= server_limit:
+            continue
+        output.append(tool_call)
+        if server_limit is not None:
+            server_counts[server_id] = server_counts.get(server_id, 0) + 1
+    return output
+
+
+def _conversation_char_count(conversation: list[dict[str, Any]]) -> int:
+    try:
+        return len(json.dumps(conversation, ensure_ascii=False, default=str))
+    except (TypeError, ValueError):
+        return sum(len(str(message)) for message in conversation)
+
+
+def _message_contains_tool_call(message: dict[str, Any], provider_format: str) -> bool:
+    if message.get("tool_calls"):
+        return True
+    if provider_format != "google":
+        return False
+    parts = message.get("parts") if isinstance(message.get("parts"), list) else []
+    return any(isinstance(part, dict) and isinstance(part.get("function_call"), dict) for part in parts)
+
+
+def maybe_compact_tool_conversation(
+    tool_context: dict[str, Any] | None,
+    conversation: list[dict[str, Any]],
+    *,
+    provider_format: str = "standard",
+) -> list[dict[str, Any]]:
+    """Compact completed tool history while retaining the newest provider-native tool pair."""
+
+    if not isinstance(tool_context, dict):
+        return conversation
+    compactor = tool_context.get("conversation_compactor")
+    if not callable(compactor):
+        return conversation
+    try:
+        trigger_chars = max(1, int(tool_context.get("compression_trigger_chars") or 0))
+    except (TypeError, ValueError):
+        return conversation
+    if trigger_chars <= 0 or _conversation_char_count(conversation) < trigger_chars:
+        return conversation
+
+    try:
+        prefix_count = max(0, int(tool_context.get("compression_prefix_messages") or 0))
+    except (TypeError, ValueError):
+        prefix_count = 0
+    prefix_count = min(prefix_count, len(conversation))
+    while (
+        prefix_count > 0
+        and isinstance(conversation[prefix_count - 1], dict)
+        and _message_contains_tool_call(conversation[prefix_count - 1], provider_format)
+    ):
+        prefix_count -= 1
+
+    keep_from = len(conversation)
+    for index in range(len(conversation) - 1, prefix_count - 1, -1):
+        message = conversation[index]
+        if isinstance(message, dict) and _message_contains_tool_call(message, provider_format):
+            keep_from = index
+            break
+    if keep_from <= prefix_count:
+        return conversation
+
+    compacted_span = [dict(message) for message in conversation[prefix_count:keep_from]]
+    if not compacted_span:
+        return conversation
+    try:
+        summary = str(compactor(compacted_span, provider_format=provider_format) or "").strip()
+    except Exception as exc:  # noqa: BLE001 - compression must not break the active tool loop
+        logger.warning("Tool conversation compression failed: %s", exc)
+        return conversation
+    if not summary:
+        return conversation
+
+    memory_text = "[deep research memory]\n" + summary
+    if provider_format == "google":
+        memory_message = {"role": "user", "parts": [{"text": memory_text}]}
+    else:
+        memory_message = {"role": "user", "content": memory_text}
+    return [
+        *conversation[:prefix_count],
+        memory_message,
+        *conversation[keep_from:],
+    ]
 
 
 # Resolve the owning tool-server id for one public tool alias.
@@ -751,13 +1133,25 @@ def _normalize_cooldown_value(value: Any) -> Any:
     return canonical
 
 
+# Resolve the conversation boundary for cooldown bookkeeping.
+def _tool_cooldown_scope(context: dict[str, Any] | None) -> str:
+    chat_id = str((context or {}).get("chat_id") or "").strip().lower()
+    return f"chat:{chat_id}" if chat_id else "chat:<unknown>"
+
+
 # Build cooldown keys for one search or read_page tool invocation.
-def _tool_cooldown_keys(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> list[tuple[str, str]]:
+def _tool_cooldown_keys(
+    tool_event: dict[str, Any] | None,
+    arguments: dict[str, Any] | None,
+    *,
+    context: dict[str, Any] | None = None,
+) -> list[tuple[str, str]]:
     tool_id = _quota_tool_id(tool_event)
+    scope = _tool_cooldown_scope(context)
     if tool_id == "read_page":
         urls = [_normalize_read_page_url(url) for url in _read_page_urls(arguments)]
         return [
-            (f"{tool_id}:url:{url}", url)
+            (f"{scope}:{tool_id}:url:{url}", url)
             for url in dict.fromkeys(url for url in urls if url)
         ]
     if tool_id == "web_search":
@@ -767,7 +1161,7 @@ def _tool_cooldown_keys(tool_event: dict[str, Any] | None, arguments: dict[str, 
         except TypeError:
             key = str(canonical)
         label = _preview_jsonish(canonical, limit=220)
-        return [(f"{tool_id}:args:{key}", label)] if key and key != "{}" else []
+        return [(f"{scope}:{tool_id}:args:{key}", label)] if key and key != "{}" else []
     return []
 
 
@@ -788,11 +1182,16 @@ def _tool_cooldown_message(tool_id: str, entries: list[tuple[str, int]]) -> str:
 
 
 # Block repeated search/read-page calls within a short cooldown window.
-def consume_tool_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> str | None:
+def consume_tool_cooldown(
+    tool_event: dict[str, Any] | None,
+    arguments: dict[str, Any] | None,
+    *,
+    context: dict[str, Any] | None = None,
+) -> str | None:
     """Block repeated search/read-page calls within a short cooldown window."""
 
     tool_id = _quota_tool_id(tool_event)
-    entries = _tool_cooldown_keys(tool_event, arguments)
+    entries = _tool_cooldown_keys(tool_event, arguments, context=context)
     if not tool_id or not entries:
         return None
 
@@ -814,10 +1213,15 @@ def consume_tool_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str
 
 
 # Mark search/read-page calls as recently used.
-def remember_tool_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> None:
+def remember_tool_cooldown(
+    tool_event: dict[str, Any] | None,
+    arguments: dict[str, Any] | None,
+    *,
+    context: dict[str, Any] | None = None,
+) -> None:
     """Mark search/read-page calls as recently used."""
 
-    entries = _tool_cooldown_keys(tool_event, arguments)
+    entries = _tool_cooldown_keys(tool_event, arguments, context=context)
     if not entries:
         return
     expires_at = time.monotonic() + _TOOL_COOLDOWN_SECONDS
@@ -826,14 +1230,34 @@ def remember_tool_cooldown(tool_event: dict[str, Any] | None, arguments: dict[st
             _TOOL_COOLDOWNS[key] = expires_at
 
 
+def clear_tool_runtime_scope(context: dict[str, Any] | None) -> None:
+    """Remove in-memory tool bookkeeping owned by one isolated conversation."""
+
+    scope_prefix = f"{_tool_cooldown_scope(context)}:"
+    with _TOOL_COOLDOWN_LOCK:
+        scoped_keys = [key for key in _TOOL_COOLDOWNS if key.startswith(scope_prefix)]
+        for key in scoped_keys:
+            _TOOL_COOLDOWNS.pop(key, None)
+
+
 # Delegate read_page cooldown checks to the shared tool cooldown helper.
-def consume_read_page_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> str | None:
-    return consume_tool_cooldown(tool_event, arguments)
+def consume_read_page_cooldown(
+    tool_event: dict[str, Any] | None,
+    arguments: dict[str, Any] | None,
+    *,
+    context: dict[str, Any] | None = None,
+) -> str | None:
+    return consume_tool_cooldown(tool_event, arguments, context=context)
 
 
 # Delegate read_page cooldown bookkeeping to the shared tool cooldown helper.
-def remember_read_page_cooldown(tool_event: dict[str, Any] | None, arguments: dict[str, Any] | None) -> None:
-    remember_tool_cooldown(tool_event, arguments)
+def remember_read_page_cooldown(
+    tool_event: dict[str, Any] | None,
+    arguments: dict[str, Any] | None,
+    *,
+    context: dict[str, Any] | None = None,
+) -> None:
+    remember_tool_cooldown(tool_event, arguments, context=context)
 
 
 # Manage the server discovery cache.
@@ -847,6 +1271,7 @@ def reset_cache() -> None:
     _SERVER_CACHE = {}
     _SCOPED_REGISTRY_CACHE.clear()
     user_mcp_client.shutdown_all()
+    close_external_workers()
 
 
 # Normalize one optional module directory path.
@@ -1042,36 +1467,58 @@ def _run_worker(
     payload: dict[str, Any] | None = None,
     *,
     persistent: bool = False,
+    cancellation: ActiveToolExecution | None = None,
 ) -> Any:
     """Run a tool worker operation and return its result payload."""
 
     if persistent:
-        return _get_worker_session(server_file).request(
-            operation,
-            payload,
-            timeout_s=_worker_timeout_seconds(operation, payload),
-        )
+        session = _get_worker_session(server_file)
+        if cancellation is not None:
+            cancellation.set_cancel_callback(session.close)
+        try:
+            return session.request(
+                operation,
+                payload,
+                timeout_s=_worker_timeout_seconds(operation, payload),
+                cancellation=cancellation,
+            )
+        finally:
+            if cancellation is not None:
+                cancellation.clear_cancel_callback()
 
     python_path = _get_worker_python(server_file)
     if python_path is None:
         raise RuntimeError(f"No isolated Python environment is available for {server_file.parent.name}.")
 
     request_payload = json.dumps(payload or {}, ensure_ascii=False)
-    result = subprocess.run(
+    process = subprocess.Popen(
         [str(python_path), str(WORKER_FILE), operation, str(server_file)],
-        input=request_payload,
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
         cwd=str(server_file.parent),
         env=_venv_subprocess_env(python_path),
-        check=False,
-        timeout=_worker_timeout_seconds(operation, payload),
+        **_tool_process_group_kwargs(),
     )
+    if cancellation is not None:
+        cancellation.set_cancel_callback(lambda: _terminate_tool_process(process))
+    try:
+        stdout, stderr = process.communicate(
+            input=request_payload,
+            timeout=_worker_timeout_seconds(operation, payload),
+        )
+    except subprocess.TimeoutExpired:
+        _terminate_tool_process(process)
+        raise
+    finally:
+        if cancellation is not None:
+            cancellation.clear_cancel_callback()
 
-    stdout = (result.stdout or "").strip()
-    stderr = (result.stderr or "").strip()
+    stdout = (stdout or "").strip()
+    stderr = (stderr or "").strip()
     if not stdout:
         raise RuntimeError(stderr or f"Tool worker returned no output for {server_file}.")
 
@@ -1110,6 +1557,7 @@ def _load_external_server(server_file: Path) -> dict[str, Any]:
         "name": str(description.get("name") or server_file.parent.name).strip() or server_file.parent.name,
         "description": str(description.get("description") or "").strip(),
         "requires_docker": bool(description.get("requires_docker")),
+        "fresh_process_per_call": bool(description.get("fresh_process_per_call")),
         "tools": tools,
         "module": None,
         "supports": None,
@@ -1197,6 +1645,7 @@ def _normalize_server_tools(raw_tools: Any, server_id: str) -> list[dict[str, An
                 "name": name,
                 "description": description,
                 "parameters": parameters,
+                "prepares_arguments": bool(raw_tool.get("prepares_arguments")),
             }
         )
 
@@ -1316,6 +1765,8 @@ def _ensure_registry_loaded_for(
     cached = _SCOPED_REGISTRY_CACHE.get(scope_key)
     if cached is not None and cached[0] == signature:
         return cached[1]
+    if cached is not None and cached[0] != signature:
+        close_external_workers()
 
     if resolved_tools_dir == TOOLS_DIR and resolved_module_dir == MODULE_ROOT:
         global _SERVER_CACHE_SIGNATURE, _SERVER_CACHE
@@ -1409,7 +1860,8 @@ def list_servers(
     return [
         _serialize_server(server_definition)
         for server_definition in registry.values()
-        if _server_is_supported(server_definition, engine, model_name)
+        if server_definition.get("id") not in NON_MODEL_TOOL_SERVER_IDS
+        and _server_is_supported(server_definition, engine, model_name)
     ]
 
 # Get one matching server.
@@ -1425,7 +1877,7 @@ def get_server(
     """Return one discovered server when it is available in the current context."""
 
     normalized_id = _slugify(str(server_id or ""))
-    if not normalized_id:
+    if not normalized_id or normalized_id in NON_MODEL_TOOL_SERVER_IDS:
         return None
 
     source = (tool_source_map or {}).get(normalized_id) or {}
@@ -1482,6 +1934,7 @@ def build_ollama_tools(
     model_name: str | None = None,
     *,
     tool_source_map: dict[str, dict[str, Any]] | None = None,
+    allowed_tool_aliases: list[str] | set[str] | tuple[str, ...] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Return Ollama-compatible tool payloads for one or more selected servers."""
 
@@ -1492,6 +1945,11 @@ def build_ollama_tools(
 
     tools: list[dict[str, Any]] = []
     tool_lookup: dict[str, dict[str, Any]] = {}
+    allowed_aliases = {
+        str(alias).strip()
+        for alias in (allowed_tool_aliases or [])
+        if str(alias).strip()
+    }
 
     for server_id in server_ids:
         server_definition = get_server(
@@ -1505,6 +1963,8 @@ def build_ollama_tools(
 
         for tool_definition in server_definition["tools"]:
             alias = tool_definition["alias"]
+            if allowed_aliases and alias not in allowed_aliases:
+                continue
             # Tool aliases are global in the conversation, so skip duplicates
             # when multiple selected servers resolve to the same public alias.
             if alias in tool_lookup:
@@ -1561,11 +2021,18 @@ def _run_sync_callable(callable_fn, *args: Any) -> Any:
     return callable_fn(*args)
 
 # Execute one callable safely.
-def _execute_callable(callable_fn, *args: Any) -> Any:
+def _execute_callable(
+    callable_fn,
+    *args: Any,
+    cancellation: ActiveToolExecution | None = None,
+) -> Any:
     """Execute sync and async callables behind one shared helper."""
 
     if inspect.iscoroutinefunction(callable_fn):
-        return _get_async_callable_runner().run(_run_async_callable(callable_fn, *args))
+        return _get_async_callable_runner().run(
+            _run_async_callable(callable_fn, *args),
+            cancellation=cancellation,
+        )
 
     return _run_sync_callable(callable_fn, *args)
 
@@ -1575,6 +2042,7 @@ def _dispatch_server_callable(
     tool_id: str,
     arguments: dict[str, Any],
     context: dict[str, Any],
+    cancellation: ActiveToolExecution | None = None,
 ) -> Any:
     """Call a generic server dispatcher with a tolerant signature strategy."""
 
@@ -1583,16 +2051,16 @@ def _dispatch_server_callable(
     # Accept older dispatchers that still use positional signatures instead of
     # the newer ``(tool_id, arguments, context)`` convention.
     if len(parameter_names) <= 1:
-        return _execute_callable(callable_fn, arguments)
+        return _execute_callable(callable_fn, arguments, cancellation=cancellation)
 
     if len(parameter_names) == 2:
         first_name = parameter_names[0].lower()
         if first_name in {"tool_id", "tool", "name", "tool_name"}:
-            return _execute_callable(callable_fn, tool_id, arguments)
+            return _execute_callable(callable_fn, tool_id, arguments, cancellation=cancellation)
 
-        return _execute_callable(callable_fn, arguments, context)
+        return _execute_callable(callable_fn, arguments, context, cancellation=cancellation)
 
-    return _execute_callable(callable_fn, tool_id, arguments, context)
+    return _execute_callable(callable_fn, tool_id, arguments, context, cancellation=cancellation)
 
 
 # Serialize tool results.
@@ -1706,6 +2174,25 @@ def _extract_structured_tool_result(result: Any) -> dict[str, Any] | None:
 def split_tool_result_payload(content: Any) -> tuple[str, dict[str, Any]]:
     """Split one tool result into model-visible text and UI-only metadata."""
 
+    if is_tool_execution_cancelled(content):
+        model_context = (
+            "TOOL_EXECUTION_CANCELLED: The user stopped this tool call. "
+            "Do not retry it unless the user explicitly asks you to start again."
+        )
+        structured = {
+            "model_context": model_context,
+            "sources": [],
+            "ui": {
+                "kind": "tool_execution",
+                "status": "cancelled",
+                "cancelled": True,
+            },
+        }
+        return model_context, {
+            "structured_content": structured,
+            "tool_ui": structured["ui"],
+        }
+
     if isinstance(content, dict) and "_image_b64" in content:
         return f"[Image: {content.get('_path', 'image')}]", _image_tool_result_extras(content)
 
@@ -1798,12 +2285,325 @@ def _extract_inline_image_payload(result: Any) -> dict[str, Any] | None:
         "_height": payload.get("height"),
     }
 
+def prepare_tool_call(
+    tool_lookup: dict[str, dict[str, Any]], tool_call: dict[str, Any]
+) -> dict[str, Any]:
+    """Run an optional argument-only preflight before a tool event is published."""
+
+    prepared_call = dict(tool_call or {})
+    raw_arguments = prepared_call.get("arguments") if isinstance(prepared_call.get("arguments"), dict) else {}
+    prepared_call["raw_arguments"] = raw_arguments
+    lookup_entry = tool_lookup.get(str(prepared_call.get("name") or ""))
+    if not isinstance(lookup_entry, dict):
+        prepared_call["arguments"] = raw_arguments
+        return prepared_call
+    tool_definition = lookup_entry.get("tool") if isinstance(lookup_entry.get("tool"), dict) else {}
+    server_definition = lookup_entry.get("server") if isinstance(lookup_entry.get("server"), dict) else {}
+    if not tool_definition.get("prepares_arguments"):
+        prepared_call["arguments"] = raw_arguments
+        return prepared_call
+
+    try:
+        if not server_definition.get("external"):
+            raise RuntimeError("argument preflight is currently supported only for isolated tools")
+        result = _run_worker(
+            Path(server_definition["server_file"]),
+            "prepare",
+            {"tool_id": tool_definition.get("id"), "arguments": raw_arguments},
+            persistent=not bool(server_definition.get("fresh_process_per_call")),
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("tool preparer returned a non-object response")
+    except Exception as exc:  # noqa: BLE001
+        message = f"Tool preparation failed: {type(exc).__name__}: {exc}"
+        result = {
+            "ok": False,
+            "arguments": {},
+            "tool_ui": {"kind": str(tool_definition.get("id") or "tool"), "status": "error"},
+            "error_result": {
+                "sources": [],
+                "model_context": message,
+                "ui": {"kind": str(tool_definition.get("id") or "tool"), "status": "error"},
+            },
+        }
+
+    prepared_call["arguments"] = result.get("arguments") if isinstance(result.get("arguments"), dict) else {}
+    parallel_batch_size = int(prepared_call.get("parallel_batch_size", 0) or 0)
+    if isinstance(result.get("tool_ui"), dict):
+        prepared_call["tool_ui"] = copy.deepcopy(result["tool_ui"])
+        if parallel_batch_size > 1:
+            prepared_call["tool_ui"]["collapsed_parallel_calls"] = parallel_batch_size
+    if not bool(result.get("ok", True)):
+        error_result = copy.deepcopy(result.get("error_result") or "Tool preparation failed.")
+        if parallel_batch_size > 1 and isinstance(error_result, dict):
+            existing_context = str(error_result.get("model_context") or "").strip()
+            prefix = (
+                f"PARALLEL_SEARCH_BATCH_REJECTED: {parallel_batch_size} parallel web_search calls "
+                "were collapsed into one atomic batch before execution. "
+            )
+            error_result["model_context"] = prefix + existing_context
+            if isinstance(error_result.get("ui"), dict):
+                error_result["ui"]["collapsed_parallel_calls"] = parallel_batch_size
+        prepared_call["preflight_error_result"] = error_result
+    return prepared_call
+
+
+def _tool_definition_id(
+    tool_lookup: dict[str, dict[str, Any]], tool_call: dict[str, Any]
+) -> str:
+    lookup_entry = tool_lookup.get(str((tool_call or {}).get("name") or ""))
+    if not isinstance(lookup_entry, dict):
+        return ""
+    tool_definition = lookup_entry.get("tool")
+    if not isinstance(tool_definition, dict):
+        return ""
+    return str(tool_definition.get("id") or "").strip()
+
+
+def _normalized_batch_effort(arguments: dict[str, Any]) -> str:
+    return str(arguments.get("effort") or "medium").strip().lower()
+
+
+def _normalized_batch_bool(arguments: dict[str, Any], key: str) -> bool:
+    value = arguments.get(key, False)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _web_search_call_mode(arguments: dict[str, Any]) -> str:
+    if isinstance(arguments.get("queries"), list):
+        return "advanced"
+    if "query" in arguments:
+        return "legacy"
+    return ""
+
+
+def _rejected_parallel_search_call(
+    tool_call: dict[str, Any], *, message: str, call_count: int
+) -> dict[str, Any]:
+    rejected = dict(tool_call)
+    rejected["arguments"] = {}
+    rejected["tool_ui"] = {
+        "kind": "web_search",
+        "status": "rejected",
+        "result_count": 0,
+        "query_count": call_count,
+        "collapsed_parallel_calls": call_count,
+        "error": {"code": "INCOMPATIBLE_PARALLEL_SEARCH_BATCH"},
+    }
+    rejected["preflight_error_result"] = {
+        "error": {"code": "INCOMPATIBLE_PARALLEL_SEARCH_BATCH"},
+        "sources": [],
+        "model_context": f"INCOMPATIBLE_PARALLEL_SEARCH_BATCH: {message}",
+        "ui": dict(rejected["tool_ui"]),
+    }
+    return rejected
+
+
+def _merge_parallel_web_search_calls(tool_calls: list[dict[str, Any]]) -> dict[str, Any]:
+    first = dict(tool_calls[0])
+    first["absorbed_tool_calls"] = [dict(call) for call in tool_calls[1:]]
+    first["parallel_batch_size"] = len(tool_calls)
+
+    raw_arguments = [
+        dict(call.get("arguments") or {})
+        if isinstance(call.get("arguments"), dict)
+        else {}
+        for call in tool_calls
+    ]
+    modes = {_web_search_call_mode(arguments) for arguments in raw_arguments}
+    if len(modes) != 1 or not modes or "" in modes:
+        first["raw_arguments"] = raw_arguments
+        return _rejected_parallel_search_call(
+            first,
+            message="parallel web_search calls must all use the same advanced or legacy argument shape",
+            call_count=len(tool_calls),
+        )
+
+    efforts = {_normalized_batch_effort(arguments) for arguments in raw_arguments}
+    if len(efforts) != 1:
+        first["raw_arguments"] = raw_arguments
+        return _rejected_parallel_search_call(
+            first,
+            message="parallel web_search calls must use the same effort before they can be batched",
+            call_count=len(tool_calls),
+        )
+
+    mode = next(iter(modes))
+    merged_arguments = copy.deepcopy(raw_arguments[0])
+    if mode == "advanced":
+        merged_arguments["queries"] = [
+            copy.deepcopy(query)
+            for arguments in raw_arguments
+            for query in arguments.get("queries", [])
+        ]
+    else:
+        routing_keys = ("shopping", "academic", "onion")
+        for key in routing_keys:
+            values = {_normalized_batch_bool(arguments, key) for arguments in raw_arguments}
+            if len(values) != 1:
+                first["raw_arguments"] = raw_arguments
+                return _rejected_parallel_search_call(
+                    first,
+                    message=f"parallel legacy web_search calls must use the same {key} routing value",
+                    call_count=len(tool_calls),
+                )
+        merged_queries: list[Any] = []
+        for arguments in raw_arguments:
+            value = arguments.get("query")
+            if isinstance(value, list):
+                merged_queries.extend(copy.deepcopy(value))
+            else:
+                merged_queries.append(copy.deepcopy(value))
+        merged_arguments["query"] = merged_queries
+
+    first["arguments"] = merged_arguments
+    return first
+
+
+def _coalesce_parallel_web_search_calls(
+    tool_lookup: dict[str, dict[str, Any]], tool_calls: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for tool_call in tool_calls:
+        if _tool_definition_id(tool_lookup, tool_call) != "web_search":
+            continue
+        alias = str(tool_call.get("name") or "")
+        groups.setdefault(alias, []).append(tool_call)
+
+    emitted_aliases: set[str] = set()
+    output: list[dict[str, Any]] = []
+    for tool_call in tool_calls:
+        alias = str(tool_call.get("name") or "")
+        group = groups.get(alias, [])
+        if len(group) < 2:
+            output.append(tool_call)
+            continue
+        if alias in emitted_aliases:
+            continue
+        emitted_aliases.add(alias)
+        output.append(_merge_parallel_web_search_calls(group))
+    return output
+
+
+def prepare_tool_calls(
+    tool_lookup: dict[str, dict[str, Any]], tool_calls: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    coalesced = _coalesce_parallel_web_search_calls(tool_lookup, list(tool_calls or []))
+    return [
+        tool_call
+        if tool_call.get("preflight_error_result") is not None
+        else prepare_tool_call(tool_lookup, tool_call)
+        for tool_call in coalesced
+    ]
+
+
+def build_tool_event(
+    tool_lookup: dict[str, dict[str, Any]], tool_call: dict[str, Any]
+) -> dict[str, Any]:
+    """Build the shared canonical tool event used by every model adapter."""
+
+    alias = str(tool_call.get("name") or "")
+    lookup_entry = tool_lookup.get(alias, {})
+    server_definition = lookup_entry.get("server", {})
+    tool_definition = lookup_entry.get("tool", {})
+    event = {
+        "alias": alias,
+        "server_id": server_definition.get("id") or "",
+        "server_name": server_definition.get("name") or server_definition.get("id") or "",
+        "tool_id": tool_definition.get("id") or alias,
+        "tool_name": tool_definition.get("name") or alias,
+        "arguments": tool_call.get("arguments") or {},
+    }
+    if isinstance(tool_call.get("tool_ui"), dict):
+        event["tool_ui"] = tool_call["tool_ui"]
+    return event
+
+
+def canonicalize_transcript_tool_calls(
+    transcript_message: dict[str, Any], tool_calls: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Replace provider tool arguments before the transcript is persisted or published."""
+
+    message = copy.deepcopy(transcript_message or {})
+    raw_calls = message.get("tool_calls")
+    if not isinstance(raw_calls, list):
+        return message
+
+    remaining = list(tool_calls or [])
+    canonical_calls: list[dict[str, Any]] = []
+    for raw_call in raw_calls:
+        if not isinstance(raw_call, dict):
+            continue
+        function_payload = raw_call.get("function")
+        if not isinstance(function_payload, dict):
+            continue
+        name = str(function_payload.get("name") or "")
+        raw_id = str(raw_call.get("id") or "")
+        match_index = next(
+            (
+                index
+                for index, prepared in enumerate(remaining)
+                if (
+                    (
+                        bool(raw_id)
+                        and bool(str(prepared.get("id") or ""))
+                        and str(prepared.get("id") or "") == raw_id
+                    )
+                    or (
+                        (not raw_id or not str(prepared.get("id") or ""))
+                        and str(prepared.get("name") or "") == name
+                    )
+                )
+            ),
+            None,
+        )
+        if match_index is None:
+            continue
+        prepared = remaining.pop(match_index)
+        canonical = prepared.get("arguments")
+        canonical = canonical if isinstance(canonical, dict) else {}
+        if isinstance(function_payload.get("arguments"), str):
+            function_payload["arguments"] = json.dumps(
+                canonical,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        else:
+            function_payload["arguments"] = canonical
+        canonical_calls.append(raw_call)
+    message["tool_calls"] = canonical_calls
+
+    google_parts = message.get("google_parts")
+    if isinstance(google_parts, list):
+        remaining_names = [str(call.get("name") or "") for call in tool_calls or []]
+        filtered_parts: list[Any] = []
+        for raw_part in google_parts:
+            if not isinstance(raw_part, dict) or not isinstance(raw_part.get("function_call"), dict):
+                filtered_parts.append(raw_part)
+                continue
+            function_name = str(raw_part["function_call"].get("name") or "")
+            try:
+                name_index = remaining_names.index(function_name)
+            except ValueError:
+                continue
+            remaining_names.pop(name_index)
+            # Keep the provider-native signed function-call part byte-for-byte apart
+            # from the surrounding deepcopy. Gemini may reject altered signed parts.
+            filtered_parts.append(raw_part)
+        message["google_parts"] = filtered_parts
+    return message
+
+
 # Execute one local tool.
 def call_ollama_tool(
     tool_lookup: dict[str, dict[str, Any]],
     alias: str,
     arguments: dict[str, Any] | None,
     context: dict[str, Any] | None = None,
+    event_callback=None,
+    cancellation: ActiveToolExecution | None = None,
 ) -> str | dict:
     """Execute a local tool and serialize its result for Ollama.
 
@@ -1857,7 +2657,13 @@ def call_ollama_tool(
             mcp_tool_name = str(tool_definition.get("mcp_tool_name") or tool_definition["id"] or "").strip()
             if not mcp_tool_name:
                 return "Tool execution failed: missing MCP tool name"
-            result = user_mcp_client.call_user_mcp_tool(entry, mcp_tool_name, call_arguments)
+            if cancellation is not None:
+                cancellation.set_cancel_callback(lambda: user_mcp_client.cancel_entry(entry))
+            try:
+                result = user_mcp_client.call_user_mcp_tool(entry, mcp_tool_name, call_arguments)
+            finally:
+                if cancellation is not None:
+                    cancellation.clear_cancel_callback()
             if _is_debug_logging_enabled():
                 _print_runtime_event(
                     "Tool completed: "
@@ -1871,6 +2677,9 @@ def call_ollama_tool(
 
         if server_definition.get("external"):
             worker_context = json.loads(json.dumps(call_context, ensure_ascii=False, default=str))
+            event_channel = ToolEventSocketChannel(event_callback) if callable(event_callback) else None
+            if event_channel is not None:
+                worker_context["_event_channel"] = event_channel.config
             worker_payload = {
                 "tool_id": tool_definition["id"],
                 "arguments": call_arguments,
@@ -1878,26 +2687,37 @@ def call_ollama_tool(
             }
             server_file = Path(server_definition["server_file"])
             try:
-                result = _run_worker(
-                    server_file,
-                    "call",
-                    worker_payload,
-                    persistent=True,
-                )
-            except RuntimeError as worker_exc:
-                if "Tool worker stopped" not in str(worker_exc):
-                    raise
-                logger.warning(
-                    "Persistent tool worker stopped for %s; retrying call in one-shot mode.",
-                    server_file,
-                )
-                result = _run_worker(
-                    server_file,
-                    "call",
-                    worker_payload,
-                    persistent=False,
-                )
+                try:
+                    result = _run_worker(
+                        server_file,
+                        "call",
+                        worker_payload,
+                        persistent=not bool(server_definition.get("fresh_process_per_call")),
+                        cancellation=cancellation,
+                    )
+                except RuntimeError as worker_exc:
+                    if (
+                        "Tool worker stopped" not in str(worker_exc)
+                        or (cancellation is not None and cancellation.cancelled.is_set())
+                    ):
+                        raise
+                    logger.warning(
+                        "Persistent tool worker stopped for %s; retrying call in one-shot mode.",
+                        server_file,
+                    )
+                    result = _run_worker(
+                        server_file,
+                        "call",
+                        worker_payload,
+                        persistent=False,
+                        cancellation=cancellation,
+                    )
+            finally:
+                if event_channel is not None:
+                    event_channel.close()
         else:
+            if cancellation is not None:
+                call_context["cancel_event"] = cancellation.cancelled
             handler = server_definition["tool_handlers"].get(tool_definition["id"])
             if handler is None:
                 handler = server_definition["tool_handlers"].get(tool_definition["alias"])
@@ -1907,15 +2727,21 @@ def call_ollama_tool(
             if handler is not None:
                 signature = inspect.signature(handler)
                 if len(signature.parameters) <= 1:
-                    result = _execute_callable(handler, call_arguments)
+                    result = _execute_callable(handler, call_arguments, cancellation=cancellation)
                 else:
-                    result = _execute_callable(handler, call_arguments, call_context)
+                    result = _execute_callable(
+                        handler,
+                        call_arguments,
+                        call_context,
+                        cancellation=cancellation,
+                    )
             elif server_definition["server_callable"] is not None:
                 result = _dispatch_server_callable(
                     server_definition["server_callable"],
                     tool_definition["id"],
                     call_arguments,
                     call_context,
+                    cancellation=cancellation,
                 )
             else:
                 return f"Tool execution failed: no handler registered for {tool_definition['id']}"
@@ -1962,3 +2788,171 @@ def call_ollama_tool(
             f"error={exc}"
         )
         return f"Tool execution failed: {exc}"
+
+
+TOOL_EVENT_BATCH_INTERVAL_SECONDS = 3.0
+TOOL_EVENT_BATCH_MAX_EVENTS = 64
+TOOL_EVENT_BATCH_MAX_BYTES = 64 * 1024
+
+
+def stream_ollama_tool(
+    tool_lookup: dict[str, dict[str, Any]],
+    alias: str,
+    arguments: dict[str, Any] | None,
+    context: dict[str, Any] | None = None,
+):
+    """Yield realtime activity events and return the final tool result.
+
+    Tool execution runs on a background thread so adapters can immediately
+    forward side-channel events while the normal worker response is pending.
+    """
+
+    updates: Queue[dict[str, Any]] = Queue()
+    finished = threading.Event()
+    outcome: dict[str, Any] = {}
+    lookup_entry = tool_lookup.get(alias) or {}
+    server_definition = lookup_entry.get("server") or {}
+    tool_definition = lookup_entry.get("tool") or {}
+    call_context = dict(context or {})
+    call_arguments = arguments if isinstance(arguments, dict) else {}
+    research_session_id = str(call_arguments.get("session_id") or "").strip()
+    if not research_session_id.startswith("deep-research:"):
+        research_session_id = ""
+    execution = ActiveToolExecution(
+        str(call_context.get("generation_id") or ""),
+        research_session_id=research_session_id,
+    )
+    _register_active_tool(execution)
+
+    def execute() -> None:
+        try:
+            outcome["result"] = call_ollama_tool(
+                tool_lookup,
+                alias,
+                arguments,
+                context=call_context,
+                event_callback=updates.put,
+                cancellation=execution,
+            )
+            if execution.cancelled.is_set():
+                outcome["result"] = TOOL_EXECUTION_CANCELLED
+        except BaseException as exc:  # noqa: BLE001 - re-raised on generator thread
+            if execution.cancelled.is_set():
+                outcome["result"] = TOOL_EXECUTION_CANCELLED
+            else:
+                outcome["error"] = exc
+        finally:
+            _unregister_active_tool(execution)
+            finished.set()
+
+    thread = threading.Thread(
+        target=execute,
+        name=f"aslm-tool-stream-{alias}",
+        daemon=True,
+    )
+    thread.start()
+
+    if research_session_id:
+        def watch_research_stop() -> None:
+            """Bridge the durable UI command to a blocking provider/tool call."""
+
+            try:
+                from Tools.deep_research import control as deep_research_control
+            except Exception as exc:  # pragma: no cover - project import guard
+                logger.warning("Could not start Deep Research stop monitor: %s", exc)
+                return
+            while not finished.wait(0.25):
+                try:
+                    if deep_research_control.latest_cancel_requested(research_session_id):
+                        execution.cancel()
+                        cancelled_at = time.time()
+                        deep_research_control.update_state(
+                            research_session_id,
+                            status="cancelled",
+                            phase="cancelled",
+                            latest_action="Research stopped by user",
+                            can_approve=False,
+                            can_edit=False,
+                            can_stop=False,
+                            cancelled_at=cancelled_at,
+                            completed_at=cancelled_at,
+                        )
+                        return
+                except Exception as exc:  # noqa: BLE001 - transient state reads are retried
+                    logger.debug("Deep Research stop monitor could not read state: %s", exc)
+
+        threading.Thread(
+            target=watch_research_stop,
+            name=f"aslm-research-stop-{research_session_id.rsplit(':', 1)[-1][:8]}",
+            daemon=True,
+        ).start()
+
+    batch: list[dict[str, Any]] = []
+    batch_bytes = 0
+    batch_started_at: float | None = None
+
+    def progress_batch(events: list[dict[str, Any]]) -> dict[str, Any]:
+        first_sequence = events[0].get("sequence") if events else None
+        last_sequence = events[-1].get("sequence") if events else None
+        return {
+            "tool_progress": {
+                "alias": alias,
+                "server_id": server_definition.get("id"),
+                "tool_id": tool_definition.get("id"),
+                "event": {
+                    "type": "event_batch",
+                    "count": len(events),
+                    "first_sequence": first_sequence,
+                    "last_sequence": last_sequence,
+                    "events": events,
+                },
+            }
+        }
+
+    while not finished.is_set() or not updates.empty() or batch:
+        now = time.monotonic()
+        timeout = 0.05
+        if batch_started_at is not None:
+            timeout = min(
+                timeout,
+                max(0.0, TOOL_EVENT_BATCH_INTERVAL_SECONDS - (now - batch_started_at)),
+            )
+        try:
+            event = updates.get(timeout=timeout)
+        except Empty:
+            event = None
+
+        if event is not None:
+            event_bytes = len(
+                json.dumps(event, ensure_ascii=False, default=str).encode("utf-8")
+            )
+            if batch and batch_bytes + event_bytes > TOOL_EVENT_BATCH_MAX_BYTES:
+                yield progress_batch(batch)
+                batch = []
+                batch_bytes = 0
+                batch_started_at = None
+            if not batch:
+                batch_started_at = time.monotonic()
+            batch.append(event)
+            batch_bytes += event_bytes
+
+        now = time.monotonic()
+        should_flush = bool(batch) and (
+            len(batch) >= TOOL_EVENT_BATCH_MAX_EVENTS
+            or batch_bytes >= TOOL_EVENT_BATCH_MAX_BYTES
+            or (
+                batch_started_at is not None
+                and now - batch_started_at >= TOOL_EVENT_BATCH_INTERVAL_SECONDS
+            )
+            or (finished.is_set() and updates.empty())
+        )
+        if should_flush:
+            yield progress_batch(batch)
+            batch = []
+            batch_bytes = 0
+            batch_started_at = None
+
+    thread.join(timeout=1)
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("result")

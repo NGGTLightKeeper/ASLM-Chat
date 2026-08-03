@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import threading
+import unicodedata
 from typing import Any
 from urllib.parse import urlparse
 
@@ -1005,6 +1006,7 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
         content = message.get("content", "") or ""
         images = message.get("images") or []
         image_mime_types = message.get("image_mime_types") or []
+        media = message.get("media") if isinstance(message.get("media"), list) else []
 
         if role == "tool":
             payload.append(
@@ -1016,7 +1018,7 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
             )
             continue
 
-        if images:
+        if images or media:
             content_parts: list[dict[str, Any]] = []
             if content:
                 content_parts.append({"type": "text", "text": content})
@@ -1028,6 +1030,34 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
                     {
                         "type": "image_url",
                         "image_url": {"url": f"data:{image_mime_type};base64,{image_base64}"},
+                    }
+                )
+            for media_item in media:
+                if not isinstance(media_item, dict):
+                    continue
+                media_data = str(media_item.get("data") or "").strip()
+                mime_type = str(media_item.get("mime_type") or "application/octet-stream").lower()
+                media_kind = str(media_item.get("kind") or "").lower()
+                if not media_data:
+                    continue
+                if media_kind == "audio" and mime_type in {"audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav"}:
+                    content_parts.append(
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": media_data,
+                                "format": "mp3" if mime_type in {"audio/mpeg", "audio/mp3"} else "wav",
+                            },
+                        }
+                    )
+                    continue
+                content_parts.append(
+                    {
+                        "type": "file",
+                        "file": {
+                            "filename": str(media_item.get("name") or f"uploaded-{media_kind or 'media'}"),
+                            "file_data": f"data:{mime_type};base64,{media_data}",
+                        },
                     }
                 )
             entry: dict[str, Any] = {"role": role, "content": content_parts}
@@ -1051,20 +1081,7 @@ def _build_openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any
 # Build one tool event.
 def _build_tool_event(tool_lookup: dict[str, dict[str, Any]], tool_call: dict[str, Any]) -> dict[str, Any]:
     """Serialize one tool invocation so the UI can render it during streaming."""
-
-    alias = tool_call.get("name", "")
-    lookup_entry = tool_lookup.get(alias, {})
-    server_definition = lookup_entry.get("server", {})
-    tool_definition = lookup_entry.get("tool", {})
-
-    return {
-        "alias": alias,
-        "server_id": server_definition.get("id") or "",
-        "server_name": server_definition.get("name") or server_definition.get("id") or "",
-        "tool_id": tool_definition.get("id") or alias,
-        "tool_name": tool_definition.get("name") or alias,
-        "arguments": tool_call.get("arguments") or {},
-    }
+    return tool_registry.build_tool_event(tool_lookup, tool_call)
 
 
 # Build one tool message.
@@ -1110,18 +1127,43 @@ class _ReasoningTextParser:
         self._end_tags = [end for _start, end in tag_pairs]
         self._in_reasoning = False
         self._pending = ""
+        self._visible_boundary_char: str | None = None
 
     # Find the next matching tag.
-    @staticmethod
-    def _find_next_tag(source: str, tags: list[str]) -> tuple[int, str] | None:
+    def _find_next_tag(self, source: str, tags: list[str]) -> tuple[int, str] | None:
         next_match: tuple[int, str] | None = None
         for tag in tags:
-            index = source.find(tag)
+            search_from = 0
+            index = source.find(tag, search_from)
+            while (
+                index != -1
+                and not self._in_reasoning
+                and not self._is_reasoning_start_boundary(source, index)
+            ):
+                search_from = index + len(tag)
+                index = source.find(tag, search_from)
             if index == -1:
                 continue
             if next_match is None or index < next_match[0]:
                 next_match = (index, tag)
         return next_match
+
+    # Accept opening tags only at the start of text or after a clear separator.
+    def _is_reasoning_start_boundary(self, source: str, tag_index: int) -> bool:
+        cursor = tag_index - 1
+        while cursor >= 0 and source[cursor] in " \t\f\v":
+            cursor -= 1
+        previous = source[cursor] if cursor >= 0 else self._visible_boundary_char
+        if previous is None:
+            return True
+        return previous in "\r\n>" or unicodedata.category(previous).startswith("P")
+
+    # Remember the last non-horizontal-whitespace visible character across chunks.
+    def _remember_visible_text(self, value: str) -> None:
+        for character in reversed(str(value or "")):
+            if character not in " \t\f\v":
+                self._visible_boundary_char = character
+                return
 
     # Preserve a possible partial tag suffix.
     @staticmethod
@@ -1165,6 +1207,7 @@ class _ReasoningTextParser:
                     thinking_parts.append(visible)
                 else:
                     content_parts.append(visible)
+                    self._remember_visible_text(visible)
                 self._pending = pending
                 break
 
@@ -1175,6 +1218,7 @@ class _ReasoningTextParser:
                     thinking_parts.append(chunk)
                 else:
                     content_parts.append(chunk)
+                    self._remember_visible_text(chunk)
             source = source[index + len(tag):]
             self._in_reasoning = not self._in_reasoning
 
@@ -1190,6 +1234,7 @@ class _ReasoningTextParser:
             return "", ""
         if self._in_reasoning:
             return pending, ""
+        self._remember_visible_text(pending)
         return "", pending
 
 
@@ -1471,6 +1516,7 @@ def _run_tool_loop(
         engine="lms",
         model_name=model_name,
         tool_source_map=tool_context.get("tool_source_map") if isinstance(tool_context, dict) else None,
+        allowed_tool_aliases=tool_context.get("allowed_tool_aliases") if isinstance(tool_context, dict) else None,
     )
 
     if not tools:
@@ -1492,7 +1538,8 @@ def _run_tool_loop(
     # right after a supervisor nudge so the model can still finish normally.
     enforce_required_tools_this_round = True
 
-    for round_index in range(MAX_TOOL_ROUNDS):
+    max_tool_rounds = tool_registry.tool_round_limit_from_context(tool_context, MAX_TOOL_ROUNDS)
+    for round_index in range(max_tool_rounds):
         round_forced_tool_name = ""
         round_requires_tool_call = False
         if enforce_required_tools_this_round:
@@ -1561,18 +1608,26 @@ def _run_tool_loop(
                 }
             )
 
+        tool_calls = tool_registry.prepare_tool_calls(tool_lookup, tool_calls)
+        tool_calls = tool_registry.limit_tool_calls_from_context(tool_context, tool_calls, tool_lookup)
+
         for tool_call in tool_calls:
             satisfied_server_id = tool_registry.tool_server_id_for_alias(tool_lookup, tool_call["name"])
             if satisfied_server_id:
                 satisfied_tool_server_ids.add(satisfied_server_id)
 
-        yield {"transcript_message": assistant_message}
+        canonical_assistant_message = tool_registry.canonicalize_transcript_tool_calls(
+            assistant_message, tool_calls
+        )
+        conversation[-1] = canonical_assistant_message
+        yield {"transcript_message": canonical_assistant_message}
 
         tool_events = [_build_tool_event(tool_lookup, tool_call) for tool_call in tool_calls]
         for _i, _ev in enumerate(tool_events):
             _ev["alias"] = f"{_ev['alias']}__{_i}"
         yield {"tool_events": tool_events}
 
+        cancelled_tool_result_seen = False
         for tool_call_index, (tool_call, tool_event) in enumerate(zip(tool_calls, tool_events), start=1):
             call_context = dict(tool_context or {})
             call_context.update(
@@ -1581,6 +1636,7 @@ def _run_tool_loop(
                     "model_name": model_name,
                     "tool_alias": tool_call["name"],
                     "tool_arguments": tool_call.get("arguments") or {},
+                    "raw_tool_arguments": tool_call.get("raw_arguments") or {},
                     "tool_call_index": tool_call_index,
                     "tool_round_index": round_index + 1,
                 }
@@ -1592,39 +1648,49 @@ def _run_tool_loop(
                 context=call_context,
             )
 
-            tool_cooldown_error = tool_registry.consume_tool_cooldown(
-                tool_event,
-                tool_call.get("arguments") or {},
-            )
-            if tool_cooldown_error is not None:
-                tool_result = tool_cooldown_error
+            preflight_error = tool_call.get("preflight_error_result")
+            if preflight_error is not None:
+                tool_result = preflight_error
             else:
-                duplicate_error = tool_registry.consume_duplicate_tool_call(
+                tool_cooldown_error = tool_registry.consume_tool_cooldown(
                     tool_event,
                     tool_call.get("arguments") or {},
-                    seen_tool_signatures,
+                    context=call_context,
                 )
-                if duplicate_error is not None:
-                    tool_result = duplicate_error
+                if tool_cooldown_error is not None:
+                    tool_result = tool_cooldown_error
                 else:
-                    quota_error = tool_registry.consume_tool_quota(
+                    duplicate_error = tool_registry.consume_duplicate_tool_call(
                         tool_event,
-                        tool_quota_counters,
-                        arguments=tool_call.get("arguments") or {},
+                        tool_call.get("arguments") or {},
+                        seen_tool_signatures,
                     )
-                    if quota_error is not None:
-                        tool_result = quota_error
+                    if duplicate_error is not None:
+                        tool_result = duplicate_error
                     else:
-                        tool_result = tool_registry.call_ollama_tool(
-                            tool_lookup,
-                            tool_call["name"],
-                            tool_call.get("arguments") or {},
-                            context=call_context,
-                        )
-                        tool_registry.remember_tool_cooldown(
+                        quota_error = tool_registry.consume_tool_quota(
                             tool_event,
-                            tool_call.get("arguments") or {},
+                            tool_quota_counters,
+                            arguments=tool_call.get("arguments") or {},
                         )
+                        if quota_error is not None:
+                            tool_result = quota_error
+                        else:
+                            tool_result = yield from tool_registry.stream_ollama_tool(
+                                tool_lookup,
+                                tool_call["name"],
+                                tool_call.get("arguments") or {},
+                                context=call_context,
+                            )
+                            tool_registry.remember_tool_cooldown(
+                                tool_event,
+                                tool_call.get("arguments") or {},
+                                context=call_context,
+                            )
+            cancelled_tool_result_seen = (
+                cancelled_tool_result_seen
+                or tool_registry.is_tool_execution_cancelled(tool_result)
+            )
             if tool_registry.is_blocking_tool_result(tool_result):
                 consecutive_blocked_tool_results += 1
             else:
@@ -1653,11 +1719,17 @@ def _run_tool_loop(
             )
             yield {"tool_result": dict(tool_message)}
 
-        if consecutive_blocked_tool_results >= 2:
+        if cancelled_tool_result_seen and _abort_event.is_set():
+            return
+        if cancelled_tool_result_seen or consecutive_blocked_tool_results >= 2:
             conversation.append(
                 {
                     "role": "user",
-                    "content": tool_registry.forced_final_prompt_after_tool_blocks(),
+                    "content": (
+                        tool_registry.forced_final_prompt_after_tool_cancellation()
+                        if cancelled_tool_result_seen
+                        else tool_registry.forced_final_prompt_after_tool_blocks()
+                    ),
                 }
             )
             assistant_message = yield from _yield_stream_round(
@@ -1665,6 +1737,10 @@ def _run_tool_loop(
             )
             yield {"transcript_message": assistant_message}
             return
+
+        conversation = tool_registry.maybe_compact_tool_conversation(
+            tool_context, conversation, provider_format="standard"
+        )
 
     yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
 

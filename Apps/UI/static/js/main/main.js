@@ -3,16 +3,17 @@
 import { createAttachmentsUi } from '../ui/attachments-ui.js';
 import { createBrowserPortalUi } from '../ui/browser-portal-ui.js';
 import { createChatHistoryUi } from '../ui/chat-history-ui.js';
-import { createMessagesUi } from '../ui/messages-ui.js?v=web-code-preview-2';
+import { createDeepResearchUi } from '../ui/deep-research-ui.js';
+import { createMessagesUi } from '../ui/messages-ui.js';
 import { createModelSelectorUi } from '../ui/model-selector-ui.js';
 import { createParametersUi } from '../ui/parameters-ui.js';
 import { createSettingsSelectUi } from '../ui/settings-select-ui.js';
-import { createSkillsUi } from '../ui/skills-ui.js?v=slash-inline-1';
+import { createSkillsUi } from '../ui/skills-ui.js';
 import { createToolInspector } from '../ui/tool-inspector.js';
-import { createAppContext } from './app-context.js?v=message-icons-1';
-import { createChatController } from './chat-controller.js?v=slash-inline-4';
+import { createAppContext } from './app-context.js';
+import { createChatController } from './chat-controller.js';
 import { createEngineManager } from './engine-manager.js';
-import { bindEventHandlers } from './event-bindings.js?v=web-code-preview-2';
+import { bindEventHandlers } from './event-bindings.js';
 
 // Application bootstrap.
 // Initialize the chat page after the DOM is ready.
@@ -20,6 +21,7 @@ $(function initChatApp() {
   const context = createAppContext();
 
   const toolInspector = createToolInspector(context);
+  const deepResearchUi = createDeepResearchUi(context, { toolInspector });
   const browserPortalUi = createBrowserPortalUi(context);
   const attachmentsUi = createAttachmentsUi(context);
   const parametersUi = createParametersUi(context);
@@ -31,6 +33,7 @@ $(function initChatApp() {
   const messagesUi = createMessagesUi(context, {
     attachmentUi: attachmentsUi,
     browserPortalUi,
+    deepResearchUi,
     toolInspector
   });
 
@@ -53,6 +56,7 @@ $(function initChatApp() {
   bindEventHandlers(context, {
     attachmentsUi,
     chatController,
+    deepResearchUi,
     engineManager,
     historyUi,
     messagesUi,

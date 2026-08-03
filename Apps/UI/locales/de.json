@@ -32,7 +32,7 @@
     "tools": "Werkzeuge",
     "other": "Sonstiges",
     "reasoningEffort": "Denkaufwand",
-    "intelligence": "Denken",
+    "effort": "Aufwand",
     "off": "Aus",
     "sendMessage": "Nachricht senden",
     "queueMessage": "Nachricht einreihen",
@@ -43,6 +43,11 @@
     "panel": "Denkbereich",
     "title": "Denkprozess",
     "closePanel": "Denkbereich schließen"
+  },
+  "sources": {
+    "panel": "Quellenbereich",
+    "title": "Quellen",
+    "closePanel": "Quellenbereich schließen"
   },
   "settings": {
     "modelSettings": "Modelleinstellungen",
@@ -104,6 +109,8 @@
   },
   "think": {
     "off": "Aus",
+    "instant": "Sofort",
+    "thinking": "Nachdenken",
     "low": "Niedrig",
     "medium": "Mittel",
     "high": "Hoch",

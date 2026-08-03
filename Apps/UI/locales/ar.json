@@ -32,7 +32,7 @@
     "tools": "الأدوات",
     "other": "أخرى",
     "reasoningEffort": "جهد الاستدلال",
-    "intelligence": "التفكير",
+    "effort": "الجهد",
     "off": "إيقاف",
     "sendMessage": "إرسال الرسالة",
     "queueMessage": "إدراج الرسالة في الطابور",
@@ -43,6 +43,11 @@
     "panel": "لوحة الاستدلال",
     "title": "الاستدلال",
     "closePanel": "إغلاق لوحة الاستدلال"
+  },
+  "sources": {
+    "panel": "لوحة المصادر",
+    "title": "المصادر",
+    "closePanel": "إغلاق لوحة المصادر"
   },
   "settings": {
     "modelSettings": "إعدادات النموذج",
@@ -104,6 +109,8 @@
   },
   "think": {
     "off": "إيقاف",
+    "instant": "فوري",
+    "thinking": "تفكير",
     "low": "منخفض",
     "medium": "متوسط",
     "high": "مرتفع",

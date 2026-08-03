@@ -29,16 +29,46 @@ REF_DEPENDENT_TOOLS = {
     "browser_text",
 }
 
+_SKIP_JSON_VALUE = object()
+
+
+# Convert nested tool context values to JSON primitives and drop runtime-only
+# objects such as bound methods, sessions, locks, and cancellation events.
+def _json_safe_value(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if callable(value):
+        return _SKIP_JSON_VALUE
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, child in value.items():
+            safe_child = _json_safe_value(child)
+            if safe_child is not _SKIP_JSON_VALUE:
+                result[str(key)] = safe_child
+        return result
+    if isinstance(value, (list, tuple, set)):
+        result = []
+        for child in value:
+            safe_child = _json_safe_value(child)
+            if safe_child is not _SKIP_JSON_VALUE:
+                result.append(safe_child)
+        return result
+    return _SKIP_JSON_VALUE
+
 
 # Strip non-serializable fields from the tool context before sending to the worker.
 def _json_safe_context(context: dict[str, Any] | None) -> dict[str, Any]:
-    safe_context = {
+    raw_context = {
         "module_dir": str(PROJECT_ROOT),
         "project_dir": str(PROJECT_ROOT),
         **(context or {}),
     }
-    safe_context.pop("mcp_session", None)
-    return safe_context
+    raw_context.pop("mcp_session", None)
+    raw_context.pop("cancel_event", None)
+    safe_context = _json_safe_value(raw_context)
+    return safe_context if isinstance(safe_context, dict) else {}
 
 
 # Own the isolated browser worker process and its idle lifecycle.

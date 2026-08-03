@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urljoin, urlparse
 
+from django.db import transaction
 from django.http import FileResponse, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.utils import timezone
 from django.views.generic import TemplateView
@@ -75,6 +76,7 @@ from Apps.Data.google_genai_presets import (
 )
 from Apps.Data.models import (
     Chat,
+    ChatBranch,
     GoogleGenAiPreset,
     LmsPreset,
     Message,
@@ -84,6 +86,7 @@ from Apps.Data.models import (
     OllamaPreset,
     OpenAiPreset,
 )
+from Apps.UI.chat_export import archive_filename, build_chat_archive
 from Apps.UI import STATIC_CACHE_VERSION
 from Apps.UI.host_theme_bridge import build_host_theme_template_context
 from Apps.UI.host_locale_bridge import build_host_locale_template_context
@@ -96,6 +99,9 @@ from Apps.UI.upload_storage import (
 )
 from Settings import mcp_json, settings
 from Settings import skills as skills_config
+from Tools.deep_research import control as deep_research_control
+from Tools.deep_research import export as research_export
+from Tools.deep_research import service as deep_research_service
 
 logger = logging.getLogger(__name__)
 
@@ -909,6 +915,16 @@ FAVICON_ROOT_FALLBACKS = (
     "/apple-touch-icon-precomposed.png",
 )
 UPLOADED_FILE_CONTEXT_ENTRY_TYPE = "uploaded_file_context"
+UPLOADED_JSON_CONTEXT_MAX_BYTES = 8 * 1024 * 1024
+UPLOADED_MEDIA_CONTEXT_MAX_BYTES = 20 * 1024 * 1024
+JSON_UPLOAD_MIME_TYPES = {
+    "application/geo+json",
+    "application/json",
+    "application/ld+json",
+    "application/vnd.api+json",
+    "application/x-ndjson",
+}
+JSON_UPLOAD_SUFFIXES = {".geojson", ".json", ".jsonl", ".ndjson"}
 
 CONTEXT_WINDOW_KEYS = (
     "num_ctx",
@@ -1108,10 +1124,20 @@ def _list_tool_servers_cached(engine: str, model_name: str | None = None) -> lis
         if cached is not None:
             cached_at, servers = cached
             if now - cached_at <= MODEL_LIST_CACHE_TTL_SECONDS:
-                return _stamp_docker_availability(_clone_metadata_payload(servers))
+                return _stamp_docker_availability([
+                    server
+                    for server in _clone_metadata_payload(servers)
+                    if str(server.get("id") or "").strip().lower() != "deep_research"
+                ])
             _tool_server_cache.pop(cache_key, None)
 
-    servers = tool_registry.list_servers(engine, model_name)
+    # Deep Research has its own chat protocol and must never be offered to the
+    # model (or slash/MCP menus) as a selectable tool server.
+    servers = [
+        server
+        for server in tool_registry.list_servers(engine, model_name)
+        if str(server.get("id") or "").strip().lower() != "deep_research"
+    ]
     with _metadata_cache_lock:
         _tool_server_cache[cache_key] = (time.monotonic(), _clone_metadata_payload(servers))
     return _stamp_docker_availability(_clone_metadata_payload(servers))
@@ -1731,28 +1757,151 @@ def _build_uploaded_file_prompt_block(manifest: dict[str, Any]) -> str:
     if table_preview:
         lines.append(f"Table preview:\n{table_preview}")
 
+    json_content = manifest.get("json_content")
+    if isinstance(json_content, str):
+        lines.append(f"JSON content:\n```json\n{json_content}\n```")
+        if manifest.get("json_content_truncated"):
+            lines.append("JSON content was truncated to the model-context size limit.")
+
     text_preview = str(manifest.get("text_preview") or "").strip()
-    if text_preview:
+    if text_preview and not isinstance(json_content, str):
         lines.append(f"Text preview:\n{text_preview}")
-    elif not sandbox_path:
+    elif manifest.get("media_context_attached"):
+        lines.append("Media content is attached as a native multimodal input.")
+    elif not isinstance(json_content, str) and not sandbox_path:
         lines.append("Readable content is not available for this model request.")
 
     lines.append("[/Uploaded file]")
     return "\n".join(lines)
 
 
+# Return media kinds accepted by the selected model, based on normalized adapter metadata.
+def _supported_model_media_kinds(
+    engine: str,
+    model_info_payload: dict[str, Any] | None,
+) -> set[str]:
+    payload = model_info_payload if isinstance(model_info_payload, dict) else {}
+    supported: set[str] = set()
+    if bool(payload.get("supports_vision", False)):
+        supported.add("image")
+    if bool(payload.get("supports_audio_input", False)):
+        supported.add("audio")
+    if bool(payload.get("supports_video_input", False)):
+        supported.add("video")
+
+    # Ollama and LM Studio currently expose image handles only. Never infer
+    # audio/video support for them from a broad "multimodal" label.
+    if settings.is_ollama_engine(engine) or settings.normalize_engine_name(engine) == "lms":
+        supported.intersection_update({"image"})
+    return supported
+
+
+# Return the uploaded file bytes without exposing the host path in model text.
+def _read_uploaded_context_bytes(manifest: dict[str, Any], *, max_bytes: int) -> tuple[bytes, bool]:
+    file_id = str(manifest.get("file_id") or "").strip()
+    storage_manifest = load_upload_manifest(file_id) if file_id else None
+    source_manifest = storage_manifest or manifest
+    try:
+        target = resolve_uploaded_file_host_path(source_manifest)
+        with target.open("rb") as handle:
+            payload = handle.read(max_bytes + 1)
+    except (FileNotFoundError, OSError, ValueError):
+        return b"", False
+    return payload[:max_bytes], len(payload) > max_bytes
+
+
+# Decode JSON-family uploads for direct text context instead of a short manifest preview.
+def _uploaded_json_context(manifest: dict[str, Any]) -> tuple[str | None, bool]:
+    name = str(manifest.get("name") or "").strip()
+    mime = str(manifest.get("mime") or "").split(";", 1)[0].strip().lower()
+    if mime not in JSON_UPLOAD_MIME_TYPES and Path(name).suffix.lower() not in JSON_UPLOAD_SUFFIXES:
+        return None, False
+
+    raw_bytes, truncated = _read_uploaded_context_bytes(
+        manifest,
+        max_bytes=UPLOADED_JSON_CONTEXT_MAX_BYTES,
+    )
+    if not raw_bytes:
+        return None, truncated
+    for encoding in ("utf-8", "utf-8-sig", "cp1251"):
+        try:
+            return raw_bytes.decode(encoding).strip(), truncated
+        except UnicodeDecodeError:
+            continue
+    return raw_bytes.decode("utf-8", errors="replace").strip(), truncated
+
+
+# Build one inline media part only when the selected model supports its modality.
+def _uploaded_media_context(
+    manifest: dict[str, Any],
+    supported_media_kinds: set[str],
+) -> dict[str, Any] | None:
+    mime = str(manifest.get("mime") or "application/octet-stream").split(";", 1)[0].strip().lower()
+    kind = next((candidate for candidate in ("image", "audio", "video") if mime.startswith(f"{candidate}/")), "")
+    if not kind or kind not in supported_media_kinds:
+        return None
+
+    raw_bytes, truncated = _read_uploaded_context_bytes(
+        manifest,
+        max_bytes=UPLOADED_MEDIA_CONTEXT_MAX_BYTES,
+    )
+    if not raw_bytes or truncated:
+        return None
+    return {
+        "kind": kind,
+        "name": str(manifest.get("name") or f"uploaded-{kind}"),
+        "mime_type": mime,
+        "data": base64.b64encode(raw_bytes).decode("ascii"),
+    }
+
+
 # Attach uploaded file manifests to the current user entry.
 def _apply_uploaded_file_manifests_to_llm_entry(
     entry: dict[str, Any],
     manifests: list[dict[str, Any]],
+    *,
+    supported_media_kinds: set[str] | None = None,
 ) -> dict[str, Any]:
-    blocks = [_build_uploaded_file_prompt_block(manifest) for manifest in manifests if manifest]
+    allowed_media = set(supported_media_kinds or set())
+    hydrated_manifests: list[dict[str, Any]] = []
+    media_parts: list[dict[str, Any]] = []
+    for manifest in manifests:
+        if not manifest:
+            continue
+        hydrated = dict(manifest)
+        json_content, json_truncated = _uploaded_json_context(hydrated)
+        if json_content is not None:
+            hydrated["json_content"] = json_content
+            hydrated["json_content_truncated"] = json_truncated
+        media_part = _uploaded_media_context(hydrated, allowed_media)
+        if media_part:
+            hydrated["media_context_attached"] = True
+            media_parts.append(media_part)
+        hydrated_manifests.append(hydrated)
+
+    blocks = [_build_uploaded_file_prompt_block(manifest) for manifest in hydrated_manifests]
     if not blocks:
         return entry
 
     content = str(entry.get("content") or "").strip()
     upload_context = "\n\n".join(blocks)
     entry["content"] = f"{content}\n\n{upload_context}".strip() if content else upload_context
+
+    for media_part in media_parts:
+        if media_part["kind"] == "image":
+            images = entry.setdefault("images", [])
+            image_mime_types = entry.setdefault("image_mime_types", [])
+            if media_part["data"] not in images:
+                images.append(media_part["data"])
+                image_mime_types.append(media_part["mime_type"])
+            continue
+        media = entry.setdefault("media", [])
+        if not any(
+            item.get("data") == media_part["data"] and item.get("mime_type") == media_part["mime_type"]
+            for item in media
+            if isinstance(item, dict)
+        ):
+            media.append(media_part)
     return entry
 
 
@@ -2074,6 +2223,7 @@ def _build_llm_entries_from_request_message(
     message: dict[str, Any],
     *,
     sandbox_enabled: bool = False,
+    supported_media_kinds: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     role = str(message.get("role") or "").strip().lower()
     if role == "assistant":
@@ -2094,7 +2244,11 @@ def _build_llm_entries_from_request_message(
             _normalize_uploaded_file_ids(message),
             sandbox_enabled=sandbox_enabled,
         )
-        payload = _apply_uploaded_file_manifests_to_llm_entry(payload, upload_manifests or [])
+        payload = _apply_uploaded_file_manifests_to_llm_entry(
+            payload,
+            upload_manifests or [],
+            supported_media_kinds=supported_media_kinds,
+        )
         if not str(payload.get("content") or "").strip() and not attachments and not upload_manifests:
             return []
         return [payload]
@@ -2110,13 +2264,19 @@ def _build_llm_entries_from_request_message(
 
 
 # Build LLM history entries
-def _build_llm_history_entries(message: Message, *, sandbox_enabled: bool = False) -> list[dict[str, Any]]:
+def _build_llm_history_entries(
+    message: Message,
+    *,
+    sandbox_enabled: bool = False,
+    supported_media_kinds: set[str] | None = None,
+) -> list[dict[str, Any]]:
     if message.role != "assistant":
         payload = {"role": message.role, "content": message.content}
         payload = _apply_attachments_to_llm_entry(payload, _get_message_attachments(message))
         payload = _apply_uploaded_file_manifests_to_llm_entry(
             payload,
             _load_message_upload_manifests(message, sandbox_enabled=sandbox_enabled),
+            supported_media_kinds=supported_media_kinds,
         )
         return [payload]
 
@@ -2161,6 +2321,9 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
     if not transcript_entries:
         return []
 
+    def canonical_alias(value: Any) -> str:
+        return re.sub(r"__\d+$", "", str(value or "").strip())
+
     # Index tool results by alias while preserving order. Some runtimes can
     # emit repeated aliases (for example "sandbox__share_file__0" for several
     # different files in one answer), so a simple dict overwrite would keep
@@ -2175,9 +2338,49 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
                     "content": str(entry.get("content") or ""),
                     "toolUi": entry.get("tool_ui") if isinstance(entry.get("tool_ui"), dict) else None,
                     "structuredContent": entry.get("structured_content") if isinstance(entry.get("structured_content"), dict) else None,
+                    "entry": entry,
                 })
 
+    def pop_tool_result(alias: str) -> tuple[str, dict[str, Any] | None]:
+        queue = tool_results.get(alias) or []
+        if queue:
+            return alias, queue.pop(0)
+        normalized = canonical_alias(alias)
+        for candidate_alias, candidate_queue in tool_results.items():
+            if candidate_queue and canonical_alias(candidate_alias) == normalized:
+                return candidate_alias, candidate_queue.pop(0)
+        return alias, None
+
+    def split_alias(alias: str) -> tuple[str, str]:
+        normalized = canonical_alias(alias)
+        if "__" not in normalized:
+            return "", normalized
+        return tuple(normalized.split("__", 1))  # type: ignore[return-value]
+
+    def pending_deep_research_ui(alias: str, arguments: dict[str, Any]) -> dict[str, Any] | None:
+        server_id, tool_id = split_alias(alias)
+        if server_id != "deep_research" and tool_id != "deep_research":
+            return None
+        try:
+            rounds = min(25, max(2, int(arguments.get("max_rounds") or 6)))
+        except (TypeError, ValueError):
+            rounds = 6
+        return {
+            "kind": "deep_research",
+            "status": "planning",
+            "topic": str(arguments.get("topic") or "").strip(),
+            "session_id": str(arguments.get("session_id") or "").strip(),
+            "plan_version": 0,
+            "checklist": [],
+            "queries_used": 0,
+            "query_budget": rounds * 2,
+            "can_approve": False,
+            "can_edit": False,
+            "can_stop": True,
+        }
+
     segments: list[dict[str, Any]] = []
+    consumed_result_entries: dict[str, int] = {}
     for entry in transcript_entries:
         if entry["role"] == "assistant":
             thinking = str(entry.get("thinking", "") or "").strip()
@@ -2186,9 +2389,64 @@ def _build_activity_segments(message: Message) -> list[dict[str, Any]]:
                 segments.append({"type": "thought", "content": thinking})
             if content:
                 segments.append({"type": "text", "content": content})
+            for raw_call in entry.get("tool_calls") if isinstance(entry.get("tool_calls"), list) else []:
+                if not isinstance(raw_call, dict):
+                    continue
+                function_payload = raw_call.get("function")
+                if not isinstance(function_payload, dict):
+                    continue
+                alias = str(function_payload.get("name") or "").strip()
+                if not alias:
+                    continue
+                raw_arguments = function_payload.get("arguments")
+                if isinstance(raw_arguments, str):
+                    try:
+                        decoded_arguments = json.loads(raw_arguments)
+                    except json.JSONDecodeError:
+                        decoded_arguments = {}
+                    arguments = decoded_arguments if isinstance(decoded_arguments, dict) else {}
+                else:
+                    arguments = raw_arguments if isinstance(raw_arguments, dict) else {}
+                result_alias, result_payload = pop_tool_result(alias)
+                server_id, tool_id = split_alias(alias)
+                result_entry = result_payload.get("entry") if isinstance(result_payload, dict) else {}
+                segment = {
+                    "type": "tool",
+                    "alias": result_alias or alias,
+                    "serverId": str(result_entry.get("server_id") or server_id),
+                    "serverName": str(result_entry.get("server_name") or server_id.replace("_", " ").title()),
+                    "toolId": str(result_entry.get("tool_id") or tool_id),
+                    "toolName": str(
+                        result_entry.get("tool_display_name")
+                        or result_entry.get("tool_name")
+                        or tool_id.replace("_", " ").title()
+                    ),
+                    "arguments": arguments,
+                    "result": result_payload.get("content") if isinstance(result_payload, dict) else None,
+                }
+                tool_ui = result_payload.get("toolUi") if isinstance(result_payload, dict) else None
+                if not isinstance(tool_ui, dict):
+                    tool_ui = pending_deep_research_ui(alias, arguments)
+                if isinstance(tool_ui, dict):
+                    segment["toolUi"] = tool_ui
+                structured_content = (
+                    result_payload.get("structuredContent") if isinstance(result_payload, dict) else None
+                )
+                if isinstance(structured_content, dict):
+                    segment["structuredContent"] = structured_content
+                segments.append(segment)
+                if result_payload is not None:
+                    normalized_result_alias = canonical_alias(result_alias)
+                    consumed_result_entries[normalized_result_alias] = (
+                        consumed_result_entries.get(normalized_result_alias, 0) + 1
+                    )
             continue
 
         seg_alias = str(entry.get("alias") or entry.get("tool_id", entry.get("name", "")) or "")
+        normalized_seg_alias = canonical_alias(seg_alias)
+        if consumed_result_entries.get(normalized_seg_alias, 0) > 0:
+            consumed_result_entries[normalized_seg_alias] -= 1
+            continue
         payload_queue = tool_results.get(seg_alias) or []
         if payload_queue:
             result_payload = payload_queue.pop(0)
@@ -2317,6 +2575,8 @@ def _serialize_tool_call_marker(tool_event: dict[str, Any]) -> str:
         "tool_name": str(tool_event.get("tool_name", "") or "").strip(),
         "arguments": tool_event.get("arguments") or {},
     }
+    if isinstance(tool_event.get("tool_ui"), dict):
+        payload["tool_ui"] = tool_event["tool_ui"]
     return f'<tool_call>{json.dumps(payload, ensure_ascii=False)}</tool_call>'
 
 
@@ -2334,6 +2594,11 @@ def _serialize_tool_result_marker(
     if isinstance(structured_content, dict):
         payload["structured_content"] = structured_content
     return f'<tool_result>{json.dumps(payload, ensure_ascii=False)}</tool_result>'
+
+
+# Encode one realtime tool activity event for the frontend event timeline.
+def _serialize_tool_activity_marker(activity: dict[str, Any]) -> str:
+    return f'<tool_activity>{json.dumps(activity, ensure_ascii=False)}</tool_activity>'
 
 
 # Encode a context-compression boundary without pretending it is a model tool.
@@ -2499,6 +2764,8 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
         supports_think_toggle = True
 
     supports_vision = "vision" in normalized_capabilities
+    supports_audio_input = bool(normalized_capabilities & {"audio", "audio_input", "input_audio"})
+    supports_video_input = bool(normalized_capabilities & {"video", "video_input", "input_video"})
     supports_tool_calling = _ollama_metadata_supports_tool_calling(capabilities, template_str)
 
     # Runtime limits are used by the frontend controls.
@@ -2516,6 +2783,8 @@ def _extract_ollama_model_info(settings_data: Any) -> dict[str, Any]:
         "think_param_name": think_param_name,
         "think_level_param_name": think_level_param_name,
         "supports_vision": supports_vision,
+        "supports_audio_input": supports_audio_input,
+        "supports_video_input": supports_video_input,
         "supports_tool_calling": supports_tool_calling,
         "supports_files": False,
         "runtime_limits": {
@@ -2553,6 +2822,8 @@ def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
             "think_level_param_name": "think_level",
             "think_level_options": [],
             "supports_vision": False,
+            "supports_audio_input": False,
+            "supports_video_input": False,
             "supports_tool_calling": False,
             "supports_files": False,
             "runtime_limits": {},
@@ -2598,6 +2869,14 @@ def _extract_generic_model_info(settings_data: Any) -> dict[str, Any]:
         "think_level_options": think_level_options,
         "supported_parameters": settings_data.get("supported_parameters", []) if isinstance(settings_data.get("supported_parameters", []), list) else [],
         "supports_vision": "vision" in normalized_capabilities or bool(settings_data.get("supports_vision", False)),
+        "supports_audio_input": bool(
+            settings_data.get("supports_audio_input", False)
+            or normalized_capabilities & {"audio", "audio_input", "input_audio"}
+        ),
+        "supports_video_input": bool(
+            settings_data.get("supports_video_input", False)
+            or normalized_capabilities & {"video", "video_input", "input_video"}
+        ),
         "supports_tool_calling": bool(settings_data.get("supports_tool_calling", False)),
         "supports_files": bool(settings_data.get("supports_files", False)),
         "runtime_limits": settings_data.get("runtime_limits", {}) if isinstance(settings_data.get("runtime_limits", {}), dict) else {},
@@ -2757,6 +3036,8 @@ def _build_inference_info_payload(
             ),
             "supports_think_level": bool(model_info_payload.get("supports_think_level", False)),
             "supports_vision": bool(model_info_payload.get("supports_vision", False)),
+            "supports_audio_input": bool(model_info_payload.get("supports_audio_input", False)),
+            "supports_video_input": bool(model_info_payload.get("supports_video_input", False)),
             "supports_tool_calling": bool(model_info_payload.get("supports_tool_calling", False)),
             "supports_files": bool(model_info_payload.get("supports_files", False)),
         },
@@ -3131,6 +3412,10 @@ def _estimate_llm_entry_chars(entry: dict[str, Any]) -> int:
 
     images = entry.get("images") if isinstance(entry.get("images"), list) else []
     cost += len(images) * 4096
+    media = entry.get("media") if isinstance(entry.get("media"), list) else []
+    for item in media:
+        if isinstance(item, dict):
+            cost += max(4096, len(str(item.get("data") or "")) // 4)
     return cost
 
 
@@ -3727,6 +4012,7 @@ def _build_chat_history(
     sandbox_enabled: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     llm_messages: list[dict[str, Any]] = []
+    supported_media_kinds = _supported_model_media_kinds(engine, model_info_payload)
     if system_prompt:
         llm_messages.append({"role": "system", "content": system_prompt})
 
@@ -3771,7 +4057,11 @@ def _build_chat_history(
         if upload_manifests is not None
         else _load_message_upload_manifests(user_message_record, sandbox_enabled=sandbox_enabled)
     )
-    current_entry = _apply_uploaded_file_manifests_to_llm_entry(current_entry, current_upload_manifests or [])
+    current_entry = _apply_uploaded_file_manifests_to_llm_entry(
+        current_entry,
+        current_upload_manifests or [],
+        supported_media_kinds=supported_media_kinds,
+    )
 
     used_history_chars = len(str(system_prompt or "")) + _estimate_llm_entry_chars(current_entry)
     selected_history: list[list[dict[str, Any]]] = []
@@ -3783,7 +4073,11 @@ def _build_chat_history(
         .order_by("-created_at", "-id")[:LLM_HISTORY_MAX_MESSAGES]
     ))
     for index, historical_message in enumerate(history_records):
-        entries = _build_llm_history_entries(historical_message, sandbox_enabled=sandbox_enabled)
+        entries = _build_llm_history_entries(
+            historical_message,
+            sandbox_enabled=sandbox_enabled,
+            supported_media_kinds=supported_media_kinds,
+        )
         if not entries:
             continue
 
@@ -4179,10 +4473,16 @@ def _build_current_user_llm_entry(
     user_message: str,
     attachments: list[dict[str, Any]],
     upload_manifests: list[dict[str, Any]],
+    *,
+    supported_media_kinds: set[str] | None = None,
 ) -> dict[str, Any]:
     current_entry: dict[str, Any] = {"role": "user", "content": user_message}
     current_entry = _apply_attachments_to_llm_entry(current_entry, attachments)
-    current_entry = _apply_uploaded_file_manifests_to_llm_entry(current_entry, upload_manifests or [])
+    current_entry = _apply_uploaded_file_manifests_to_llm_entry(
+        current_entry,
+        upload_manifests or [],
+        supported_media_kinds=supported_media_kinds,
+    )
     return current_entry
 
 
@@ -4199,6 +4499,7 @@ def _build_generate_llm_messages(
     sandbox_enabled: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     llm_messages: list[dict[str, Any]] = []
+    supported_media_kinds = _supported_model_media_kinds(engine, model_info_payload)
     if system_prompt:
         llm_messages.append({"role": "system", "content": system_prompt})
 
@@ -4243,7 +4544,11 @@ def _build_generate_llm_messages(
     history_newest_first = list(reversed(history_records))
 
     for index, historical_message in enumerate(history_newest_first):
-        entries = _build_llm_entries_from_request_message(historical_message, sandbox_enabled=sandbox_enabled)
+        entries = _build_llm_entries_from_request_message(
+            historical_message,
+            sandbox_enabled=sandbox_enabled,
+            supported_media_kinds=supported_media_kinds,
+        )
         if not entries:
             continue
 
@@ -4609,6 +4914,9 @@ def _stream_chat_response(
             _active_generation_id_by_engine[str(engine)] = str(generation_id or "")
             if tracking_id:
                 _active_generation_id_by_chat_id[tracking_id] = str(generation_id or "")
+        tool_context = generate_kwargs.get("tool_context")
+        if isinstance(tool_context, dict):
+            tool_context["generation_id"] = str(generation_id or "")
         if isinstance(compression_event, dict):
             transcript_entries.append(compression_event)
             persist_stream_snapshot(force=True)
@@ -4617,6 +4925,13 @@ def _stream_chat_response(
         llm_api.prepare_runtime(engine)
         response_iterator = llm_api.generate(**generate_kwargs)
         for chunk in response_iterator:
+            if isinstance(chunk, dict) and isinstance(chunk.get("tool_progress"), dict):
+                if is_thinking:
+                    is_thinking = False
+                    yield "\n</think>\n"
+                yield _serialize_tool_activity_marker(chunk["tool_progress"])
+                continue
+
             # Save assistant/tool transcript entries that are not meant
             # to be rendered directly as plain chat text.
             if isinstance(chunk, dict) and chunk.get("transcript_message"):
@@ -4987,6 +5302,10 @@ def generate_api(request):
             command_plan.message,
             prepared.attachments,
             prepared.upload_manifests,
+            supported_media_kinds=_supported_model_media_kinds(
+                prepared.engine,
+                prepared.model_info_payload,
+            ),
         )
         llm_messages, compression_event = _build_generate_llm_messages(
             history_messages,
@@ -5046,6 +5365,148 @@ def generate_api(request):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Build a non-empty Deep Research topic and preserve attached model context.
+def _build_deep_research_request_message(
+    user_message: str,
+    attachments: list[dict[str, Any]],
+    upload_manifests: list[dict[str, Any]],
+    *,
+    engine: str,
+    model_info_payload: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any]]:
+    attachment_names = [
+        str(item.get("name") or "").strip()
+        for item in [*(attachments or []), *(upload_manifests or [])]
+        if isinstance(item, dict) and str(item.get("name") or "").strip()
+    ]
+    attachment_names = list(dict.fromkeys(attachment_names))
+    topic = str(user_message or "").strip()
+    if not topic:
+        listed_names = ", ".join(attachment_names[:6])
+        topic = (
+            f"Research the user-provided attachments: {listed_names}."
+            if listed_names
+            else "Research the user-provided attachments."
+        )
+
+    request_message: dict[str, Any] = {"role": "user", "content": topic}
+    request_message = _apply_attachments_to_llm_entry(request_message, attachments or [])
+    request_message = _apply_uploaded_file_manifests_to_llm_entry(
+        request_message,
+        upload_manifests or [],
+        supported_media_kinds=_supported_model_media_kinds(engine, model_info_payload),
+    )
+    return topic, request_message
+
+
+# Stream a first-class Deep Research run without routing the request through the
+# parent model's tool-selection loop.
+def _stream_deep_research_response(
+    *,
+    chat: Chat,
+    assistant_message_record: Message,
+    prepared_research: dict[str, Any],
+    engine: str,
+    model_name: str,
+    request_message: dict[str, Any] | None = None,
+):
+    arguments = dict(prepared_research.get("arguments") or {})
+    initial_ui = dict(prepared_research.get("tool_ui") or {})
+    alias = "research__deep_research"
+    call_id = f"research-{uuid.uuid4().hex}"
+    call_entry = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {"name": alias, "arguments": arguments},
+            }
+        ],
+    }
+    # Persist the pending artifact before the blocking orchestrator begins so a
+    # reload can reconstruct the card and continue polling the durable session.
+    assistant_message_record.llm_transcript = [call_entry]
+    assistant_message_record.save(update_fields=["llm_transcript"])
+    Chat.objects.filter(pk=chat.pk).update(updated_at=timezone.now())
+    yield _serialize_tool_call_marker(
+        {
+            "alias": alias,
+            "server_id": "research",
+            "server_name": "Deep Research",
+            "tool_id": "deep_research",
+            "tool_name": "Deep Research",
+            "arguments": arguments,
+            "tool_ui": initial_ui,
+        }
+    )
+
+    result: dict[str, Any]
+    try:
+        result = deep_research_service.run_research(
+            arguments,
+            {
+                "chat_id": str(chat.id),
+                "engine": engine,
+                "model_name": model_name,
+                "request_message": dict(request_message or {}),
+            },
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("Deep Research returned an invalid result.")
+    except Exception as exc:
+        logger.exception("First-class Deep Research failed")
+        session_id = str(arguments.get("session_id") or "")
+        snapshot = deep_research_control.read_state(session_id) if session_id else {}
+        public_error = str((snapshot or {}).get("error") or exc).strip()
+        result = {
+            "model_context": public_error,
+            "report": "",
+            "sources": [],
+            "ui": {
+                **initial_ui,
+                **(snapshot if isinstance(snapshot, dict) else {}),
+                "kind": "deep_research",
+                "status": "failed",
+                "error": public_error,
+                "can_approve": False,
+                "can_edit": False,
+                "can_stop": False,
+            },
+        }
+
+    tool_ui = result.get("ui") if isinstance(result.get("ui"), dict) else initial_ui
+    model_context = str(result.get("model_context") or result.get("report") or "").strip()
+    tool_entry = {
+        "role": "tool",
+        "tool_call_id": call_id,
+        "alias": alias,
+        "server_id": "research",
+        "server_name": "Deep Research",
+        "tool_id": "deep_research",
+        "tool_name": "Deep Research",
+        "content": model_context,
+        "structured_content": result,
+        "tool_ui": tool_ui,
+    }
+    yield _serialize_tool_result_marker(
+        alias,
+        model_context,
+        tool_ui=tool_ui,
+        structured_content=result,
+    )
+
+    status = str(tool_ui.get("status") or "").strip().lower()
+    ready_text = "Your research is ready" if status in {"completed", "partial"} else "Research could not be completed"
+    visible_entry = {"role": "assistant", "content": ready_text}
+    assistant_message_record.content = ready_text
+    assistant_message_record.llm_transcript = [call_entry, tool_entry, visible_entry]
+    assistant_message_record.save(update_fields=["content", "llm_transcript"])
+    Chat.objects.filter(pk=chat.pk).update(updated_at=timezone.now())
+    yield f"\n{ready_text}"
+
+
 # Handle a chat generation request.
 def chat_api(request):
     if request.method != "POST":
@@ -5061,18 +5522,24 @@ def chat_api(request):
         chat_id = data.get("chat_id", "")
         attachments = _normalize_request_attachments(data)
         uploaded_file_ids = _normalize_uploaded_file_ids(data)
+        deep_research_requested = data.get("deep_research") is True
         engine, engine_error = _resolve_request_engine_or_response(request, data)
         if engine_error is not None:
             return engine_error
         raw_tool_ids = data.get("tool_server_ids") or data.get("tool_server_id") or data.get("tool_id") or []
         if isinstance(raw_tool_ids, str):
             raw_tool_ids = [raw_tool_ids] if raw_tool_ids.strip() else []
-        tool_server_ids = [str(s).strip() for s in raw_tool_ids if str(s).strip()]
+        tool_server_ids = [
+            str(s).strip()
+            for s in raw_tool_ids
+            if str(s).strip() and str(s).strip().lower() != "deep_research"
+        ]
         command_plan = _parse_chat_command_plan(
             user_message,
             tool_server_ids,
             is_known_tool_id=lambda tool_id: (
-                tool_registry.get_server(tool_id, engine=engine, model_name=model_name) is not None
+                str(tool_id or "").strip().lower() != "deep_research"
+                and tool_registry.get_server(tool_id, engine=engine, model_name=model_name) is not None
             ),
         )
         # The stored message keeps the raw slash commands the user typed; the model
@@ -5295,6 +5762,42 @@ def chat_api(request):
             content="",
             llm_transcript=[],
         )
+
+        if deep_research_requested:
+            current_attachments = _get_message_attachments(user_message_record)
+            research_topic, research_request_message = _build_deep_research_request_message(
+                llm_user_message or user_message,
+                current_attachments,
+                upload_manifests or [],
+                engine=engine,
+                model_info_payload=model_info_payload,
+            )
+            prepared_research = deep_research_service.prepare_research(
+                research_topic,
+                instructions=str(data.get("deep_research_instructions") or ""),
+                max_rounds=data.get("deep_research_max_rounds") or 6,
+            )
+            generation_id = uuid.uuid4().hex
+            response = StreamingHttpResponse(
+                _stream_deep_research_response(
+                    chat=chat,
+                    assistant_message_record=assistant_message_record,
+                    prepared_research=prepared_research,
+                    engine=engine,
+                    model_name=model_name,
+                    request_message=research_request_message,
+                ),
+                content_type="text/plain; charset=utf-8",
+            )
+            response["X-Chat-ID"] = str(chat.id)
+            response["X-LLM-Engine"] = engine
+            response["X-User-Message-ID"] = str(user_message_record.id)
+            response["X-Assistant-Message-ID"] = str(assistant_message_record.id)
+            response["X-Generation-ID"] = generation_id
+            response["X-Deep-Research-Session-ID"] = str(
+                prepared_research.get("arguments", {}).get("session_id") or ""
+            )
+            return response
 
         # Rebuild the message history expected by the selected backend.
         llm_messages, compression_event = _build_chat_history(
@@ -5670,10 +6173,186 @@ def abort_generation_api(request):
                 active_id = str(_active_generation_id_by_engine.get(str(engine)) or "")
             if not active_id or active_id != generation_id:
                 return JsonResponse({"ok": True, "ignored": True, "reason": "generation_mismatch"})
-        llm_api.abort_generation(engine)
+        llm_api.abort_generation(engine, generation_id=generation_id or None)
         return JsonResponse({"ok": True})
     except Exception as exc:
         logger.exception("Failed to abort generation")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Download a completed Deep Research report in a portable format. The durable
+# report already contains resolved Markdown links for every citation handle.
+def deep_research_export_api(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+    try:
+        data = _read_json_request_body(request)
+        session_id = str(data.get("session_id") or "").strip()
+        export_format = str(data.get("format") or "md").strip().lower()
+        if export_format not in {"md", "pdf", "docx"}:
+            return JsonResponse({"error": "Unsupported research export format."}, status=400)
+        snapshot = deep_research_control.read_state(session_id)
+        fallback_report = str(data.get("report") or "").strip()
+        # Older chats can retain a complete report in their transcript after
+        # the retention policy removes the durable control snapshot.
+        report = str(
+            (snapshot or {}).get("report")
+            or (snapshot or {}).get("model_context")
+            or fallback_report
+        ).strip()
+        if not report:
+            return JsonResponse({"error": "The research report is not ready yet."}, status=409)
+        title = str((snapshot or {}).get("topic") or data.get("title") or "Research report").strip()
+        if export_format == "md":
+            payload = research_export.markdown_bytes(report)
+            content_type = "text/markdown; charset=utf-8"
+        elif export_format == "docx":
+            payload = research_export.docx_bytes(report, title)
+            content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        else:
+            payload = research_export.pdf_bytes(report, title)
+            content_type = "application/pdf"
+        response = HttpResponse(payload, content_type=content_type)
+        response["Content-Disposition"] = (
+            f'attachment; filename="{research_export.safe_filename(title, export_format)}"'
+        )
+        return response
+    except deep_research_control.InvalidResearchSession as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        logger.exception("Failed to export Deep Research report")
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Read or control one durable Deep Research session.
+def deep_research_control_api(request):
+    """Approve, revise, stop, or inspect an isolated Deep Research run."""
+
+    try:
+        if request.method == "GET":
+            session_id = str(request.GET.get("session_id") or "").strip()
+            if not session_id:
+                return JsonResponse({"error": "Missing session_id."}, status=400)
+            state = deep_research_control.read_state(session_id)
+            if not state:
+                return JsonResponse({"error": "Deep research session was not found."}, status=404)
+            return JsonResponse({"ok": True, "state": state})
+
+        if request.method != "POST":
+            return JsonResponse({"error": "Invalid request method"}, status=405)
+
+        data = _read_json_request_body(request)
+        session_id = str(data.get("session_id") or "").strip()
+        action = str(data.get("action") or "").strip().lower()
+        if not session_id:
+            return JsonResponse({"error": "Missing session_id."}, status=400)
+        if action not in {"approve", "revise", "cancel"}:
+            return JsonResponse({"error": "Unsupported deep research action."}, status=400)
+
+        current_state = deep_research_control.read_state(session_id)
+        if not current_state:
+            return JsonResponse({"error": "Deep research session was not found."}, status=404)
+        if action == "approve" and current_state.get("can_approve") is False:
+            return JsonResponse(
+                {"error": "This research plan is not awaiting approval.", "state": current_state},
+                status=409,
+            )
+        if action == "revise" and current_state.get("can_edit") is False:
+            return JsonResponse(
+                {"error": "This research plan can no longer be edited.", "state": current_state},
+                status=409,
+            )
+
+        expected_version = data.get("expected_plan_version")
+        if expected_version in (None, ""):
+            expected_plan_version = None
+        else:
+            try:
+                expected_plan_version = int(expected_version)
+            except (TypeError, ValueError):
+                return JsonResponse({"error": "expected_plan_version must be an integer."}, status=400)
+
+        payload: dict[str, Any] = {}
+        if action in {"approve", "revise"} and data.get("plan") is not None:
+            plan = str(data.get("plan") or "").strip()
+            if len(plan) > 20_000:
+                return JsonResponse({"error": "Research plan is too long."}, status=400)
+            if action == "revise" and not plan:
+                return JsonResponse({"error": "A revised plan cannot be empty."}, status=400)
+            if plan:
+                payload["plan"] = plan
+
+        result = deep_research_control.submit_command(
+            session_id,
+            action,
+            payload=payload,
+            expected_plan_version=expected_plan_version,
+        )
+        if action == "cancel" and result.get("accepted") and not result.get("terminal"):
+            # Persist the user's intent before waiting for the worker to reach a
+            # cooperative cancellation point. This keeps the Stop control gone
+            # across polls and page reloads instead of briefly reviving it from
+            # the last running snapshot.
+            stopping_state = deep_research_control.update_state(
+                session_id,
+                status="stopping",
+                phase="stopping",
+                latest_action="Stopping research safely",
+                can_approve=False,
+                can_edit=False,
+                can_stop=False,
+                stop_requested_at=time.time(),
+            )
+            result = {**result, "state": stopping_state}
+            # The durable command remains the cooperative cancellation path.
+            # When this Django process also owns the active tool worker, stop
+            # that exact process immediately so a hung provider/read cannot
+            # leave the card in "Stopping" until its network timeout.
+            interrupted = tool_registry.abort_active_research(session_id)
+            if interrupted:
+                cancelled_at = time.time()
+                terminal_state = deep_research_control.update_state(
+                    session_id,
+                    status="cancelled",
+                    phase="cancelled",
+                    latest_action="Research stopped by user",
+                    can_approve=False,
+                    can_edit=False,
+                    can_stop=False,
+                    cancelled_at=cancelled_at,
+                    completed_at=cancelled_at,
+                )
+                result = {
+                    **result,
+                    "terminal": True,
+                    "state": terminal_state,
+                    "interrupted_active_tools": interrupted,
+                }
+        return JsonResponse({"ok": True, **result}, status=202)
+    except deep_research_control.InvalidResearchSession as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except FileNotFoundError as exc:
+        return JsonResponse({"error": str(exc)}, status=404)
+    except RuntimeError as exc:
+        if str(exc) == "STALE_PLAN_VERSION":
+            state = deep_research_control.read_state(
+                str(request.GET.get("session_id") or "")
+                if request.method == "GET"
+                else str(data.get("session_id") or "")
+            )
+            return JsonResponse(
+                {"error": "The research plan changed. Review the latest revision.", "state": state},
+                status=409,
+            )
+        if str(exc) == "ACTION_NOT_AVAILABLE":
+            state = deep_research_control.read_state(str(data.get("session_id") or ""))
+            return JsonResponse(
+                {"error": "That research action is no longer available.", "state": state},
+                status=409,
+            )
+        raise
+    except Exception as exc:
+        logger.exception("Failed to control Deep Research")
         return JsonResponse({"error": str(exc)}, status=500)
 
 
@@ -5722,6 +6401,127 @@ def delete_message_api(request, message_id):
         return JsonResponse({"error": "Message not found"}, status=404)
     except Exception as exc:
         logger.exception("Failed to delete message %s", message_id)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Replace one user message and discard the now-stale continuation.
+def edit_message_api(request, message_id):
+    if request.method != "PATCH":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = _read_json_request_body(request)
+        content = str(data.get("content", ""))
+        with transaction.atomic():
+            message = Message.objects.select_related("chat").get(id=message_id)
+            if message.role != "user":
+                return JsonResponse({"error": "Only user messages can be edited"}, status=400)
+            if not content.strip() and not message.attachments.exists() and not message.images.exists():
+                return JsonResponse({"error": "Message content is required"}, status=400)
+
+            later_ids = list(
+                message.chat.messages.filter(
+                    created_at__gt=message.created_at,
+                ).values_list("id", flat=True)
+            )
+            # IDs are a stable tie-breaker for records created in the same timestamp tick.
+            later_ids.extend(
+                message.chat.messages.filter(created_at=message.created_at, id__gt=message.id)
+                .values_list("id", flat=True)
+            )
+            if later_ids:
+                Message.objects.filter(id__in=set(later_ids)).delete()
+            message.content = content
+            message.save(update_fields=["content"])
+            Chat.objects.filter(id=message.chat_id).update(updated_at=timezone.now())
+
+        return JsonResponse({"ok": True, "message": _serialize_message(message), "deleted_message_ids": later_ids})
+    except Message.DoesNotExist:
+        return JsonResponse({"error": "Message not found"}, status=404)
+    except Exception as exc:
+        logger.exception("Failed to edit message %s", message_id)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
+# Clone one conversation through a selected message and link both sides.
+def branch_message_api(request, message_id):
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        with transaction.atomic():
+            source_message = Message.objects.select_related("chat").get(id=message_id)
+            source_chat = source_message.chat
+            source_messages = list(
+                source_chat.messages.filter(created_at__lt=source_message.created_at)
+                .prefetch_related("attachments", "images")
+            )
+            source_messages.extend(
+                source_chat.messages.filter(created_at=source_message.created_at, id__lte=source_message.id)
+                .prefetch_related("attachments", "images")
+            )
+            source_messages.sort(key=lambda item: (item.created_at, item.id))
+
+            child_title = f"Branch: {source_chat.title}"[:255]
+            child_chat = Chat.objects.create(
+                title=child_title,
+                active_tool_slug=source_chat.active_tool_slug,
+            )
+            cloned_by_source_id: dict[int, Message] = {}
+            for original in source_messages:
+                cloned = Message.objects.create(
+                    chat=child_chat,
+                    role=original.role,
+                    content=original.content,
+                    llm_transcript=copy.deepcopy(original.llm_transcript),
+                )
+                Message.objects.filter(id=cloned.id).update(created_at=original.created_at)
+                cloned.created_at = original.created_at
+                cloned_by_source_id[original.id] = cloned
+
+                MessageAttachment.objects.bulk_create([
+                    MessageAttachment(
+                        message=cloned,
+                        kind=attachment.kind,
+                        name=attachment.name,
+                        mime_type=attachment.mime_type,
+                        data=attachment.data,
+                        size_bytes=attachment.size_bytes,
+                        extracted_text=attachment.extracted_text,
+                        extracted_text_ready=attachment.extracted_text_ready,
+                        order=attachment.order,
+                    )
+                    for attachment in original.attachments.all()
+                ])
+                MessageImage.objects.bulk_create([
+                    MessageImage(
+                        message=cloned,
+                        mime_type=image.mime_type,
+                        data=image.data,
+                        order=image.order,
+                    )
+                    for image in original.images.all()
+                ])
+
+            child_message = cloned_by_source_id[source_message.id]
+            ChatBranch.objects.create(
+                source_chat=source_chat,
+                source_message=source_message,
+                child_chat=child_chat,
+                child_message=child_message,
+            )
+
+        return JsonResponse({
+            "ok": True,
+            "chat_id": str(child_chat.id),
+            "title": child_chat.title,
+            "source_chat_id": str(source_chat.id),
+            "source_chat_title": source_chat.title,
+        }, status=201)
+    except Message.DoesNotExist:
+        return JsonResponse({"error": "Message not found"}, status=404)
+    except Exception as exc:
+        logger.exception("Failed to branch from message %s", message_id)
         return JsonResponse({"error": str(exc)}, status=500)
 
 
@@ -5952,6 +6752,23 @@ def delete_chat_api(request, chat_id):
         return JsonResponse({"error": str(exc)}, status=500)
 
 
+# Download a lossless portable archive of one entire chat.
+def export_chat_api(request, chat_id):
+    if request.method != "GET":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        chat = Chat.objects.get(id=chat_id)
+        response = HttpResponse(build_chat_archive(chat), content_type="application/zip")
+        response["Content-Disposition"] = f'attachment; filename="{archive_filename(chat)}"'
+        return response
+    except Chat.DoesNotExist:
+        return JsonResponse({"error": "Chat not found"}, status=404)
+    except Exception as exc:
+        logger.exception("Failed to export chat %s", chat_id)
+        return JsonResponse({"error": str(exc)}, status=500)
+
+
 # Load persisted messages for a chat thread.
 def load_chat_api(request, chat_id):
     if request.method != "GET":
@@ -5959,8 +6776,28 @@ def load_chat_api(request, chat_id):
 
     try:
         chat = Chat.objects.get(id=chat_id)
-        messages = chat.messages.all().prefetch_related("attachments", "images")
-        payload = [_serialize_message(message, include_attachment_data=False) for message in messages]
+        messages = chat.messages.order_by("created_at", "id").prefetch_related("attachments", "images")
+        message_records = list(messages)
+        payload = [_serialize_message(message, include_attachment_data=False) for message in message_records]
+        payload_by_id = {item["id"]: item for item in payload}
+
+        for branch in chat.outgoing_branches.select_related("child_chat").all():
+            if branch.source_message_id in payload_by_id:
+                payload_by_id[branch.source_message_id].setdefault("branch_links", []).append({
+                    "direction": "to_branch",
+                    "chat_id": str(branch.child_chat_id),
+                    "title": branch.child_chat.title,
+                })
+        try:
+            incoming_branch = chat.incoming_branch
+        except ChatBranch.DoesNotExist:
+            incoming_branch = None
+        if incoming_branch and incoming_branch.child_message_id in payload_by_id:
+            payload_by_id[incoming_branch.child_message_id].setdefault("branch_links", []).append({
+                "direction": "to_origin",
+                "chat_id": str(incoming_branch.source_chat_id),
+                "title": incoming_branch.source_chat.title,
+            })
         active_tool_server_ids = _parse_active_tool_slugs(chat.active_tool_slug)
         return JsonResponse({
             "chat_id": str(chat.id),

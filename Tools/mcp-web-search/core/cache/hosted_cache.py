@@ -19,15 +19,12 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from core.cache.query_normalizer import (
-    has_search_operators,
-    normalize_exact_query_key,
-    normalize_query_key,
-)
+from core.cache.query_normalizer import normalize_query_key
 
 logger = logging.getLogger("core.cache.hosted_cache")
 
 _CACHE_PATH = Path(__file__).resolve().parents[2] / "_cache" / "hosted_cache.db"
+_CACHE_KEY_VERSION = "v2"
 
 
 # SQLite-backed query → result-payload cache with flat + negative TTL.
@@ -69,9 +66,8 @@ class HostedSearchCache:
 
     # Deterministic key over the normalized query and result-affecting parameters.
     #
-    # Uses the order-independent normalized key (stopwords/order dropped) so equivalent
-    # phrasings share a cache entry. The strict exact-match lives in recent_tracker, which
-    # serves a different purpose (blocking literal repeats, not widening cache hits).
+    # Preserve query semantics. Only case, whitespace, and unambiguous technical spellings
+    # are normalized; terms, operators, punctuation, repetition, and order remain intact.
     @staticmethod
     def make_key(
         query: str,
@@ -83,16 +79,9 @@ class HostedSearchCache:
         shopping: bool = False,
         academic: bool = False,
     ) -> str:
-        # Operator queries (site:/-site:/"…"/OR/-term) keep the strict order-preserving key
-        # so they don't collide with a differently-meaning refinement; plain queries use the
-        # token-sort key so paraphrases share one entry.
-        normalized = (
-            normalize_exact_query_key(query)
-            if has_search_operators(query)
-            else normalize_query_key(query)
-        )
+        normalized = normalize_query_key(query)
         raw = (
-            f"{normalized}|{region}|{safesearch}|{timelimit or ''}|{effort}"
+            f"{_CACHE_KEY_VERSION}|{normalized}|{region}|{safesearch}|{timelimit or ''}|{effort}"
             f"|{int(bool(shopping))}|{int(bool(academic))}"
         )
         return hashlib.sha256(raw.encode()).hexdigest()

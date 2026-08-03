@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import re
+from core.query.operators import has_search_operators  # noqa: F401 - compatibility export
 
 
-# Multilingual stopwords stripped before cache-key hashing.
+# Compatibility vocabulary for document scoring only. Cache normalization never uses it.
 QUERY_STOPWORDS: frozenset[str] = frozenset({
     # English
     "the", "this", "that", "with", "from", "into", "about", "what", "which",
@@ -23,8 +23,8 @@ QUERY_STOPWORDS: frozenset[str] = frozenset({
     "was", "wer", "für", "oder", "nicht", "dem", "den", "des", "im", "zum",
     # French
     "les", "des", "une", "qui", "que", "dans", "est", "avec", "par", "sur",
-    "pas", "mais", "plus", "très", "aux", "ces", "son", "leur", "leur",
     # Spanish
+    "pas", "mais", "plus", "très", "aux", "ces", "son", "leur",
     "los", "las", "una", "que", "con", "por", "para", "del", "más", "como",
     "pero", "este", "esta", "estos", "sus", "ser", "han", "hay",
     # Arabic (common function words)
@@ -37,9 +37,8 @@ QUERY_STOPWORDS: frozenset[str] = frozenset({
     "의", "을", "를", "이", "가", "에", "와", "과", "도", "은", "는",
 })
 
-_WORD_RE = re.compile(r"\w+", re.UNICODE)
 
-# Tech token normalizations applied before word-token extraction (e.g. ".net" → "dotnet").
+# Unambiguous technical spelling normalizations applied without discarding query syntax.
 COMPOSITE_TOKENS: dict[str, str] = {
     "c++": "cpp",
     "c#": "csharp",
@@ -56,19 +55,7 @@ COMPOSITE_TOKENS: dict[str, str] = {
 }
 
 
-# Search operators that change a query's meaning and must NOT be collapsed by the
-# token-sort cache key: site:/-site: restrictions, "exact phrases", OR alternation, and
-# -term exclusions. When present, the cache uses the strict order-preserving key so a
-# refined directive query can't collide with a differently-meaning one.
-_OPERATOR_RE = re.compile(r'(?:^|\s)(?:-?site:|")|(?:^|\s)OR(?:\s|$)|(?:^|\s)-\w')
-
-
-# True when the query carries a meaning-changing search operator.
-def has_search_operators(query: str) -> bool:
-    return bool(_OPERATOR_RE.search(query or ""))
-
-
-# Canonical cache key: lowercase, stopwords removed, terms sorted (order discarded).
+# Canonical cache key that preserves every semantic token, punctuation, repetition, and order.
 def normalize_query_key(query: str) -> str:
     if not query or not query.strip():
         return ""
@@ -77,19 +64,9 @@ def normalize_query_key(query: str) -> str:
     for token, replacement in COMPOSITE_TOKENS.items():
         lowered = lowered.replace(token, replacement)
 
-    tokens = _WORD_RE.findall(lowered)
-    content = sorted({t for t in tokens if len(t) >= 2 and t not in QUERY_STOPWORDS})
-
-    return " ".join(content) if content else lowered.strip()
-
-
-# Order-preserving canonical query string for strict cache keys.
-def normalize_exact_query_key(query: str) -> str:
-    if not query or not query.strip():
-        return ""
-
-    lowered = query.lower()
-    for token, replacement in COMPOSITE_TOKENS.items():
-        lowered = lowered.replace(token, replacement)
-
     return " ".join(lowered.split())
+
+
+# Compatibility alias used by the recent-query tracker.
+def normalize_exact_query_key(query: str) -> str:
+    return normalize_query_key(query)

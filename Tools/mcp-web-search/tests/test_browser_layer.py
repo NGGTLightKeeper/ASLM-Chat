@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from core.config.settings import BrowserSection, load_search_config
+from core.config.settings import _CONFIG_PATH, BrowserSection, load_search_config
 from core.fetch.browser.client import BrowserClient
 from core.fetch.browser.identity_store import IdentityStore
 from core.fetch.browser.models import STATUS_OK, STATUS_UNAVAILABLE, BrowserFetch
@@ -82,6 +82,11 @@ def test_browser_section_defaults():
     assert sec.max_rss_mb == 2048
     assert sec.autostart_daemon is True             # spawn on first tool call
     assert sec.daemon_idle_shutdown_sec == 900.0    # 15 min warm, 0 = eternal
+
+
+def test_shipped_config_allows_search_browser_fallback():
+    cfg = load_search_config(path=_CONFIG_PATH)
+    assert cfg.browser.browser_fallback == "full"
 
 
 def test_browser_config_validates_enums(tmp_path):

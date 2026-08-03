@@ -6,6 +6,7 @@ export function bindEventHandlers(context, dependencies) {
   const {
     attachmentsUi,
     chatController,
+    deepResearchUi,
     engineManager,
     historyUi,
     messagesUi,
@@ -13,7 +14,9 @@ export function bindEventHandlers(context, dependencies) {
   } = dependencies;
   const { dom, state } = context;
   const rightSidebarStorageKey = 'aslm.settingsSidebarCollapsed';
-  const $activityRoots = dom.$messagesInner.add($('#reasoningDrawerBody'));
+  const $activityRoots = dom.$messagesInner
+    .add($('#reasoningDrawerBody'))
+    .add(dom.$toolInspectorModal);
 
   // Layout helpers.
   // Collapse or expand the right settings sidebar and optionally persist state.
@@ -128,6 +131,25 @@ export function bindEventHandlers(context, dependencies) {
 
   dom.$messagesInner.on('click', '.msg-copy-btn', function onCopyClick() {
     messagesUi.copyMessage($(this));
+  });
+
+  dom.$messagesInner.on('click', '.msg-branch-btn', function onBranchClick() {
+    chatController.branchFromMessage($(this).closest('.msg'));
+  });
+
+  dom.$messagesInner.on('click', '.msg-edit-btn', function onEditMessageClick() {
+    chatController.editUserMessage($(this).closest('.msg'));
+  });
+
+  dom.$messagesInner.on('click', '.msg-branch-link', function onBranchLinkClick(event) {
+    event.preventDefault();
+    chatController.loadChat($(this).attr('data-chat-link'), true);
+  });
+
+  dom.$messagesInner.on('click', '.msg-sources-btn', function onSourcesClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    messagesUi.openSourcesDrawer($(this));
   });
 
   $activityRoots.on('click', '.md-code-copy-btn', function onMarkdownCodeCopyClick(event) {
@@ -252,12 +274,72 @@ export function bindEventHandlers(context, dependencies) {
 
   $activityRoots.on('click', [
     '.msg-tool-call-card[data-tool-segment-index]',
-    '.msg-reasoning-tool-row[data-tool-segment-index]'
+    '.msg-reasoning-tool-row[data-tool-segment-index]',
+    '.msg-deep-research-card[data-tool-segment-index]'
   ].join(', '), function onToolCardClick(event) {
-    if ($(event.target).closest('.msg-search-chip, .msg-write-card, .msg-edit-card, a, button').length) {
+    if ($(event.target).closest('.msg-search-chip, .msg-write-card, .msg-edit-card, a, button, textarea, details, summary').length) {
       return;
     }
     messagesUi.openToolInspectorFromCard($(this));
+  });
+
+  $activityRoots.on('keydown', '.msg-deep-research-card[data-tool-segment-index]', function onResearchCardKeyDown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+    if ($(event.target).is('button, textarea, input')) {
+      return;
+    }
+    event.preventDefault();
+    messagesUi.openToolInspectorFromCard($(this));
+  });
+
+  // Deep Research controls live both on the compact card and in the inspector.
+  $(document).on('click', '[data-deep-research-action]', function onResearchActionClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    deepResearchUi.handleAction($(this)).catch(function onResearchControlError(error) {
+      console.error('Deep Research control failed:', error);
+    });
+  });
+
+  $(document).on('keydown', '.deep-research-report-preview[data-deep-research-action="open-report"]', function onResearchReportPreviewKeyDown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    deepResearchUi.handleAction($(this)).catch(function onResearchReportOpenError(error) {
+      console.error('Failed to open Deep Research report:', error);
+    });
+  });
+
+  $(document).on('click', '.deep-research-download-menu', function keepResearchDownloadMenuOpen(event) {
+    event.stopPropagation();
+  });
+
+  $(document).on('click', '[data-deep-research-editor-action]', function onResearchEditorActionClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const action = String($(this).attr('data-deep-research-editor-action') || '');
+    if (action === 'cancel') {
+      deepResearchUi.cancelEdit();
+      return;
+    }
+    if (action === 'save') {
+      deepResearchUi.saveEdit().catch(function onResearchPlanSaveError(error) {
+        console.error('Failed to save Deep Research plan:', error);
+      });
+    }
+  });
+
+  $(document).on('keydown', '.deep-research-plan-textarea', function onResearchEditorKeyDown(event) {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      deepResearchUi.saveEdit().catch(function onResearchPlanShortcutError(error) {
+        console.error('Failed to save Deep Research plan:', error);
+      });
+    }
   });
 
   $activityRoots.on('click', '.msg-write-card[data-write-segment-index]', function onWriteCardClick() {
@@ -282,6 +364,12 @@ export function bindEventHandlers(context, dependencies) {
     }
     event.preventDefault();
     messagesUi.toggleEditCard($(this));
+  });
+
+  $activityRoots.on('click', '.msg-sandbox-toggle', function onSandboxToggleClick(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    messagesUi.toggleSandboxCard($(this));
   });
 
   $activityRoots.on('click', '.msg-compression-context-btn', function onCompressionContextClick(event) {
@@ -316,8 +404,17 @@ export function bindEventHandlers(context, dependencies) {
     messagesUi.closeReasoningDrawer();
   });
 
+  $(document).on('click', '#sourcesDrawerClose, #sourcesDrawerBackdrop', function onSourcesDrawerClose() {
+    messagesUi.closeSourcesDrawer();
+  });
+
   $(document).on('keydown', function onReasoningDrawerKeydown(event) {
-    if (event.key === 'Escape' && $('#reasoningDrawer').hasClass('is-open')) {
+    if (event.key !== 'Escape') {
+      return;
+    }
+    if ($('#sourcesDrawer').hasClass('is-open')) {
+      messagesUi.closeSourcesDrawer();
+    } else if ($('#reasoningDrawer').hasClass('is-open')) {
       messagesUi.closeReasoningDrawer();
     }
   });
@@ -649,6 +746,10 @@ export function bindEventHandlers(context, dependencies) {
 
   $('#chatRenameBtn').on('click', function onRenameClick() {
     chatController.renameActiveMenuChat();
+  });
+
+  $('#chatDownloadBtn').on('click', function onDownloadChatClick() {
+    chatController.downloadActiveMenuChat();
   });
 
   $('#chatDeleteBtn').on('click', function onDeleteChatClick() {

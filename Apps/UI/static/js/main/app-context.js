@@ -1,8 +1,8 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { normalizeEngineValue } from '../engines/engine-registry.js';
-import { initI18n } from './i18n.js';
-import { parseJsonScript } from './utils.js';
+import { initI18n, t } from './i18n.js';
+import { escHtml, escapeAttributeValue, parseJsonScript } from './utils.js';
 
 initI18n();
 
@@ -69,6 +69,7 @@ export function createAppContext() {
     $composerMenuPopoverConv: $('#composerMenuPopoverConv'),
     $composerToolLists: $('.composer-tool-list'),
     $composerToolMenus: $('[data-tool-menu]'),
+    $composerModePills: $('.composer-mode-pills'),
     $composerMcpHosts: $('.composer-mcp-host'),
     $composerSkillsMenus: $('[data-skills-menu]'),
     $composerSkillsHosts: $('.composer-skills-host'),
@@ -99,6 +100,8 @@ export function createAppContext() {
     REMOVE_ATTACHMENT_ICON: svgIcon(uiIconPaths.removeAttachment, 'width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24" aria-hidden="true"'),
     COPY_MESSAGE_ICON: svgIcon(uiIconPaths.copy, 'width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"'),
     REGENERATE_ICON: svgIcon(uiIconPaths.refresh, 'width="18" height="18" viewBox="0 -960 960 960" aria-hidden="true"'),
+    BRANCH_ICON: svgIcon(uiIconPaths.branch, 'width="17" height="17" viewBox="0 0 21 21" aria-hidden="true"'),
+    EDIT_MESSAGE_ICON: svgIcon(uiIconPaths.pen, 'width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"'),
     DELETE_MESSAGE_ICON: svgIcon(uiIconPaths.trash, 'width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
     COPIED_ICON: svgIcon(uiIconPaths.check, 'width="14" height="14" viewBox="0 -960 960 960" aria-hidden="true"'),
     ARROW_LEFT_ICON: svgIcon(uiIconPaths.arrowLeft, 'width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"'),
@@ -144,11 +147,21 @@ export function createAppContext() {
   };
 
   // Build the shared action buttons used by assistant and user rows.
-  icons.buildMessageActionsHtml = function buildMessageActionsHtml() {
+  icons.buildMessageActionsHtml = function buildMessageActionsHtml(isUser) {
+    const sourcesLabel = t('sources.title', null, 'Sources');
+    const sourcesLabelAttr = escapeAttributeValue(sourcesLabel);
+    const branchLabel = escapeAttributeValue(t('messages.branch', null, 'Branch from here'));
+    const editLabel = escapeAttributeValue(t('messages.editMessage', null, 'Edit message'));
     return `<div class="msg-actions">
       <button class="msg-action-btn msg-copy-btn" title="Copy" aria-label="Copy message">${icons.COPY_MESSAGE_ICON}</button>
+      ${isUser ? '' : `<button class="msg-action-btn msg-branch-btn" title="${branchLabel}" aria-label="${branchLabel}">${icons.BRANCH_ICON}</button>`}
+      ${isUser ? `<button class="msg-action-btn msg-edit-btn" title="${editLabel}" aria-label="${editLabel}">${icons.EDIT_MESSAGE_ICON}</button>` : ''}
       <button class="msg-action-btn msg-regen-btn" title="Regenerate" aria-label="Regenerate response">${icons.REGENERATE_ICON}</button>
       <button class="msg-action-btn msg-delete-btn" title="Delete" aria-label="Delete message">${icons.DELETE_MESSAGE_ICON}</button>
+      <button class="msg-action-btn msg-sources-btn" type="button" title="${sourcesLabelAttr}" aria-label="${sourcesLabelAttr}" aria-expanded="false" hidden>
+        <span class="msg-sources-btn-icons" aria-hidden="true">${icons.GLOBE_ICON}</span>
+        <span class="msg-sources-btn-label">${escHtml(sourcesLabel)}</span>
+      </button>
     </div>`;
   };
 
@@ -161,6 +174,7 @@ export function createAppContext() {
       availableToolServers: Array.isArray(defaultAvailableToolServers) ? defaultAvailableToolServers.slice() : [],
       userMcpToolServers: Array.isArray(defaultUserMcpToolServers) ? defaultUserMcpToolServers.slice() : [],
       selectedToolServerIds: new Set(),
+      deepResearchEnabled: false,
       currentChatId: null,
       engineSelectionVersion: 0,
       modelInfoRequestVersion: 0,

@@ -32,7 +32,7 @@
     "tools": "Alat",
     "other": "Lainnya",
     "reasoningEffort": "Upaya penalaran",
-    "intelligence": "Berpikir",
+    "effort": "Upaya",
     "off": "Nonaktif",
     "sendMessage": "Kirim Pesan",
     "queueMessage": "Antre pesan",
@@ -43,6 +43,11 @@
     "panel": "Panel penalaran",
     "title": "Penalaran",
     "closePanel": "Tutup panel penalaran"
+  },
+  "sources": {
+    "panel": "Panel sumber",
+    "title": "Sumber",
+    "closePanel": "Tutup panel sumber"
   },
   "settings": {
     "modelSettings": "Pengaturan Model",
@@ -104,6 +109,8 @@
   },
   "think": {
     "off": "Nonaktif",
+    "instant": "Instan",
+    "thinking": "Berpikir",
     "low": "Rendah",
     "medium": "Sedang",
     "high": "Tinggi",

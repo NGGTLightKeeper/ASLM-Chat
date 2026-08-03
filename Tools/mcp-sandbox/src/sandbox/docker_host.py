@@ -380,17 +380,25 @@ def _ensure_sandbox_config(config_path: str = CONFIG_FILE_PATH) -> None:
 def _build_run_command(
     image_name: str,
     include_storage_limit: bool = True,
+    *,
+    container_name: str = CONTAINER_NAME,
+    task_host_path: str | None = None,
+    restart_policy: str | None = "unless-stopped",
+    auto_remove: bool = False,
 ) -> list[str]:
     command = [
         "docker", "run", "-d",
-        "--name", CONTAINER_NAME,
-        "--restart", "unless-stopped",
+        "--name", container_name,
         "--cpus", CPU_LIMIT,
         "--memory", MEMORY_LIMIT,
         "--memory-swap", MEMORY_SWAP_LIMIT,
         "--pids-limit", PIDS_LIMIT,
         "--no-healthcheck",
     ]
+    if restart_policy:
+        command.extend(["--restart", restart_policy])
+    if auto_remove:
+        command.append("--rm")
     # Do not add --security-opt no-new-privileges here unless the sudo model
     # is redesigned. The sandbox_user intentionally has passwordless sudo for
     # package-manager compatibility, and no-new-privileges would break sudo.
@@ -401,7 +409,7 @@ def _build_run_command(
     if include_storage_limit and STORAGE_LIMIT:
         command.extend(["--storage-opt", f"size={STORAGE_LIMIT}"])
 
-    task_host_path = os.path.join(HOST_WORKSPACE, DEFAULT_TASK_DIR)
+    task_host_path = task_host_path or os.path.join(HOST_WORKSPACE, DEFAULT_TASK_DIR)
     os.makedirs(task_host_path, exist_ok=True)
     supervisor_src_host = SUPERVISOR_SRC_HOST
     supervisor_venv_host = _linux_venv_bind_source()

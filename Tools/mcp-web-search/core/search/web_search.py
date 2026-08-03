@@ -22,12 +22,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import itertools
 import logging
 import re
-import secrets
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from ..engines import (
     BraveParser,
@@ -55,6 +56,11 @@ _SOURCE_LIMIT = 20
 # snippet-only in search (still readable via read_page). Tighter than read_page's own
 # avoid bar — a wide search cannot afford a multi-second page on the hot path.
 _INLINE_PARSE_SKIP_MS = 6_000.0
+
+# These hosts are always snippet-only during web_search. Exact hostname/subdomain
+# matching avoids path heuristics and cannot match an unrelated domain such as
+# not-reddit.com. Their dedicated read_page behavior, if any, remains unchanged.
+_INLINE_PARSE_BLOCKED_DOMAINS = frozenset({"reddit.com", "redd.it"})
 
 # Per-link timeout for onion fetches during a web_search — tighter than read_page's onion
 # path (which uses the full tor.fetch_timeout). A search must stay responsive even when a
@@ -101,6 +107,12 @@ async def _merge_streams(*streams):
 # browser/slow APIs), or a domain the runtime store has learned is too slow to parse.
 # Either way the source still ranks and is returned; only its page is left for read_page.
 def _inline_parse_allowed(url: str) -> bool:
+    try:
+        host = (urlsplit(str(url or "")).hostname or "").lower().rstrip(".")
+    except ValueError:
+        host = ""
+    if any(host == domain or host.endswith(f".{domain}") for domain in _INLINE_PARSE_BLOCKED_DOMAINS):
+        return False
     try:
         import custom_domains
 
@@ -170,8 +182,7 @@ def _infer_pdf_url(url: str) -> str:
 #   low    — SERP-only. Pure HTTP, NO page parse, no browser, no model. Sub-2s.
 #   medium — HTTP page parsing only (no browser, no model). Hard-bounded to ~6-8s total:
 #            tight per-page parse cap and a short overall deadline.
-#   high   — deeper HTTP parse + limited warm-browser escalation. The browser allowance
-#            is declared here; its wiring (read/service warm-browser) lands separately.
+#   high   — deeper HTTP parse + limited warm-browser escalation.
 #
 # parse_budget=0 means SERP-only. parse_timeout is the hard per-page cap (6s ceiling —
 # a wide search cannot afford a slow page; slow domains are left snippet-only anyway).
@@ -185,7 +196,7 @@ class EffortProfile:
     parse_max_chars: int
     deadline: float  # hard cap for the whole search
     max_results: int  # sources returned after ranking
-    allow_browser: bool  # high only: limited warm-browser escalation (HTTP-only until wired)
+    allow_browser: bool  # high only: limited warm-browser escalation
 
 
 EFFORT_PROFILES: dict[str, EffortProfile] = {
@@ -195,18 +206,21 @@ EFFORT_PROFILES: dict[str, EffortProfile] = {
 }
 
 
+# Process-local monotonic namespace. Four hex digits provide 65,536 compact IDs; the
+# representation grows instead of wrapping once that range is exhausted.
+_SEARCH_ID_SEQUENCE = itertools.count()
+
+
 # Opaque per-search id; seeds the citation handles the model is told to cite with.
 def _make_search_id() -> str:
-    return f"srch_{secrets.token_hex(4)}"
+    return f"srch_{next(_SEARCH_ID_SEQUENCE):04x}"
 
 
-# Stable citation handle for a source's rank within a search. Byte-for-byte the legacy
-# format ("c<3-char-namespace>-<rank>", e.g. "cab1-3") so the model — tuned to that shape
-# — keeps citing correctly. search_id is "srch_<hex>"; the "srch" prefix is dropped and
-# the next 3 alphanumerics form the namespace.
+# Stable citation handle for a source's rank within a search. New searches use at least a
+# four-character namespace; a longer monotonic search id is never truncated or wrapped.
 def _citation_id(search_id: str, rank: int) -> str:
     compact = re.sub(r"[^a-z0-9]+", "", (search_id or "").lower()).removeprefix("srch")
-    namespace = (compact[:3] or "src").ljust(3, "0")
+    namespace = (compact or "src").ljust(4, "0")
     return f"c{namespace}-{rank}"
 
 
@@ -470,13 +484,16 @@ class WebSearchService:
                     timeout=profile.parse_timeout,
                     max_chars=profile.parse_max_chars,
                     focus=query,
-                    # Search stays HTTP-only: the warm browser is exclusive to the
-                    # read_page tool. Flip to profile.allow_browser to let high effort
-                    # escalate to the warm daemon (it autostarts) within parse_timeout.
-                    allow_browser=False,
+                    # Only the high profile may escalate blocked or weak pages to the
+                    # warm browser; low/medium remain cheap and HTTP-only.
+                    allow_browser=profile.allow_browser,
                 )
-            source.parsed_markdown = markdown or ""
             source.parsed_ok = bool(markdown) and not markdown.startswith("Error:")
+            # A terminal domain handler may intentionally reject a page (for example,
+            # Telegram group roots have no public HTTP message feed).  Keep the SERP
+            # snippet as the preview instead of serialising the parser's diagnostic as
+            # if it were useful source content.
+            source.parsed_markdown = (markdown or "") if source.parsed_ok else ""
         except (TimeoutError, asyncio.CancelledError):
             source.parsed_markdown = ""
             source.parsed_ok = False
@@ -490,7 +507,16 @@ class WebSearchService:
     # Build the hosted supplement stream when API keys are configured; None otherwise
     # (no keys → pure scrape, baseline unchanged). Imports are deferred so the SERP-only
     # and key-less paths never pay for httpx provider code.
-    def _hosted_stream(self, query: str, *, region: str, deadline: float):
+    def _hosted_stream(
+        self,
+        query: str,
+        *,
+        region: str,
+        deadline: float,
+        query_text: str = "",
+        operators: dict[str, Any] | None = None,
+        timelimit: str | None = None,
+    ):
         try:
             from core.search.hosted_providers import available_providers
             from core.search.hosted_stream import hosted_search_stream
@@ -500,7 +526,13 @@ class WebSearchService:
         if not available_providers():
             return None
         return hosted_search_stream(
-            query, region=region, max_results=_HOSTED_MAX_RESULTS, deadline_seconds=deadline,
+            query,
+            region=region,
+            max_results=_HOSTED_MAX_RESULTS,
+            deadline_seconds=deadline,
+            query_text=query_text,
+            operators=operators,
+            timelimit=timelimit,
         )
 
     # Run one full search. Returns the aggregated, ranked payload.
@@ -515,6 +547,9 @@ class WebSearchService:
         shopping: bool = False,
         academic: bool = False,
         onion: bool = False,
+        dates_resolved: bool = False,
+        query_text: str = "",
+        operators: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         profile = EFFORT_PROFILES.get(effort, EFFORT_PROFILES["low"])
         started = time.perf_counter()
@@ -525,7 +560,8 @@ class WebSearchService:
         from core.config import load_search_config
         from core.search.query_dates import resolve_query_dates
 
-        query, timelimit = resolve_query_dates(query, load_search_config().query, timelimit)
+        if not dates_resolved:
+            query, timelimit = resolve_query_dates(query, load_search_config().query, timelimit)
 
         # Region routing (§3.2): explicit region wins; otherwise Cyrillic and
         # friends route to their home region instead of us-en.
@@ -534,6 +570,18 @@ class WebSearchService:
             region = {"ru": "ru-ru", "de": "de-de"}.get(language, "us-en")
 
         engines = select_engines(profile.name, self._tracker)
+        from core.query.provider_compiler import compile_provider_query
+
+        provider_queries = {
+            engine.name: compile_provider_query(
+                query_text or query,
+                operators,
+                engine.name,
+                fallback_query=query,
+                timelimit=timelimit,
+            )
+            for engine in engines
+        }
         logger.info(
             "web_search.start effort=%s region=%s language=%s engines=%s query=%r",
             profile.name, region, language, [e.name for e in engines], query[:160],
@@ -591,10 +639,22 @@ class WebSearchService:
         # (low stays SERP-only and pays no hosted credits).
         event_stream = api.search_stream(
             query, region=region, safesearch=safesearch, timelimit=timelimit,
+            engine_queries={name: item.query for name, item in provider_queries.items()},
+            engine_timelimits={name: item.timelimit for name, item in provider_queries.items()},
+            engine_omitted_operators={
+                name: item.omitted_operators for name, item in provider_queries.items()
+            },
             deadline_seconds=profile.deadline * 0.8,
         )
         if profile.parse_budget:
-            hosted = self._hosted_stream(query, region=region, deadline=profile.deadline * 0.8)
+            hosted = self._hosted_stream(
+                query,
+                region=region,
+                deadline=profile.deadline * 0.8,
+                query_text=query_text,
+                operators=operators,
+                timelimit=timelimit,
+            )
             if hosted is not None:
                 event_stream = _merge_streams(event_stream, hosted)
 
@@ -818,6 +878,14 @@ class WebSearchService:
             "language": language,
             "region": region,
             "engines_used": [engine.name for engine in engines],
+            "provider_queries": {
+                name: {
+                    "query": item.query,
+                    "timelimit": item.timelimit,
+                    "omitted_operators": list(item.omitted_operators),
+                }
+                for name, item in provider_queries.items()
+            },
             "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
             "model_context": model_context,
             "sources": source_dicts,
@@ -955,6 +1023,9 @@ async def run_web_search(
     shopping: bool = False,
     academic: bool = False,
     onion: bool = False,
+    dates_resolved: bool = False,
+    query_text: str = "",
+    operators: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from core.cache.hosted_cache import get_hosted_cache
     from core.config import load_search_config
@@ -979,6 +1050,8 @@ async def run_web_search(
         payload = await WebSearchService().search(
             query, effort=effort, region=region, safesearch=safesearch,
             timelimit=timelimit, shopping=shopping, academic=academic, onion=True,
+            dates_resolved=dates_resolved,
+            query_text=query_text, operators=operators,
         )
         payload["cached"] = False
         return payload
@@ -997,6 +1070,8 @@ async def run_web_search(
         payload = await WebSearchService().search(
             query, effort=effort, region=region, safesearch=safesearch,
             timelimit=timelimit, shopping=shopping, academic=academic,
+            dates_resolved=dates_resolved,
+            query_text=query_text, operators=operators,
         )
         payload["cached"] = False
         empty = not payload.get("sources")
@@ -1040,3 +1115,206 @@ async def run_web_search(
         get_prefetch_manager().schedule(targets[: cache_cfg.prefetch_max_urls])
 
     return payload
+
+
+def _combine_search_results(
+    plans: list[dict[str, Any]],
+    results: list[dict[str, Any]],
+    *,
+    effort: str,
+    schema_mode: str,
+    started: float,
+    description: str = "",
+    legacy_flags: dict[str, bool] | None = None,
+) -> dict[str, Any]:
+    from core.config import load_search_config
+
+    search_cfg = load_search_config().search
+    search_id = _make_search_id()
+    all_sources: list[dict[str, Any]] = []
+    sources_by_query: list[list[dict[str, Any]]] = []
+    next_rank = 1
+
+    for query_index, (plan, result) in enumerate(zip(plans, results), 1):
+        query_sources: list[dict[str, Any]] = []
+        for raw_source in result.get("sources") or []:
+            source = dict(raw_source)
+            source["id"] = _citation_id(search_id, next_rank)
+            source["rank"] = next_rank
+            source["batch_query"] = plan["compiled_query"]
+            source["batch_query_index"] = query_index
+            source["batch_query_vertical"] = plan.get("vertical", "web")
+            source["query_index"] = query_index
+            source["vertical"] = plan.get("vertical", "web")
+            query_sources.append(source)
+            all_sources.append(source)
+            next_rank += 1
+        sources_by_query.append(query_sources)
+
+    total_budget = int(search_cfg.total_context_budget or 0)
+    query_budget = total_budget // len(plans) if total_budget else 0
+    per_source_chars = int(search_cfg.preview_max_chars or 0)
+    context_sections: list[str] = []
+    for plan, result, query_sources in zip(plans, results, sources_by_query):
+        query = plan["compiled_query"]
+        if query_sources:
+            context_sections.append(_build_model_context(
+                query, query_sources,
+                total_budget=query_budget,
+                per_source_chars=per_source_chars,
+            ))
+        else:
+            context_sections.append(str(result.get("model_context") or f"No results found for: {query}"))
+
+    request_queries = [
+        {
+            "vertical": str(plan.get("vertical") or "web"),
+            "compiled_query": str(plan.get("compiled_query") or ""),
+            "operators": dict(plan.get("operators") or {}),
+        }
+        for plan in plans
+    ]
+    search_request = {
+        "schema_mode": schema_mode,
+        "effort": effort,
+        "queries": request_queries,
+    }
+    if description:
+        search_request["description"] = description
+    ui = _build_ui(all_sources)
+    queries_with_sources = sum(bool(sources) for sources in sources_by_query)
+    if queries_with_sources == 0:
+        ui["status"] = "empty"
+    elif queries_with_sources < len(plans):
+        ui["status"] = "partial"
+    else:
+        ui["status"] = "done"
+    ui["query_count"] = len(plans)
+    ui["search_request"] = search_request
+    if description:
+        ui["description"] = description
+
+    queries = [plan["compiled_query"] for plan in plans]
+    payload: dict[str, Any] = {
+        "query": queries[0] if len(queries) == 1 else queries,
+        "queries": queries,
+        "batch": len(queries) > 1,
+        "search_id": search_id,
+        "search_ids": [result.get("search_id") for result in results if result.get("search_id")],
+        "effort": effort,
+        "search_request": search_request,
+        "languages": list(dict.fromkeys(
+            str(result.get("language") or "") for result in results if result.get("language")
+        )),
+        "regions": list(dict.fromkeys(
+            str(result.get("region") or "") for result in results if result.get("region")
+        )),
+        "engines_used": list(dict.fromkeys(
+            engine for result in results for engine in (result.get("engines_used") or [])
+        )),
+        "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+        "cached": all(bool(result.get("cached")) for result in results),
+        "model_context": (
+            f"Batch search results for {len(plans)} queries run concurrently:\n\n"
+            + "\n\n---\n\n".join(context_sections)
+            if len(plans) > 1
+            else context_sections[0]
+        ),
+        "sources": all_sources,
+        "ui": ui,
+        "query_results": [
+            {
+                "index": query_index,
+                "query": plan["compiled_query"],
+                "vertical": plan.get("vertical", "web"),
+                "search_id": result.get("search_id"),
+                "source_count": len(query_sources),
+                "blocked": bool(result.get("blocked")),
+                "cached": bool(result.get("cached")),
+            }
+            for query_index, (plan, result, query_sources) in enumerate(
+                zip(plans, results, sources_by_query), 1
+            )
+        ],
+    }
+    payload.update(legacy_flags or {})
+    return payload
+
+
+# Run up to three independent legacy searches concurrently.
+async def run_web_search_batch(
+    queries: list[str],
+    *,
+    effort: str = "low",
+    region: str = "",
+    safesearch: str = "moderate",
+    timelimit: str | None = None,
+    shopping: bool = False,
+    academic: bool = False,
+    onion: bool = False,
+) -> dict[str, Any]:
+    if not queries:
+        return await run_web_search(
+            "", effort=effort, region=region, safesearch=safesearch,
+            timelimit=timelimit, shopping=shopping, academic=academic, onion=onion,
+        )
+    if len(queries) == 1:
+        return await run_web_search(
+            queries[0], effort=effort, region=region, safesearch=safesearch,
+            timelimit=timelimit, shopping=shopping, academic=academic, onion=onion,
+        )
+
+    started = time.perf_counter()
+    results = await asyncio.gather(*(
+        run_web_search(
+            query, effort=effort, region=region, safesearch=safesearch,
+            timelimit=timelimit, shopping=shopping, academic=academic, onion=onion,
+        )
+        for query in queries
+    ))
+
+    vertical = "shopping" if shopping else ("academic" if academic else ("onion" if onion else "web"))
+    plans = [
+        {"vertical": vertical, "compiled_query": query, "operators": {}}
+        for query in queries
+    ]
+    return _combine_search_results(
+        plans,
+        list(results),
+        effort=effort,
+        schema_mode="legacy",
+        started=started,
+        legacy_flags={"shopping": shopping, "academic": academic, "onion": onion},
+    )
+
+
+async def run_web_search_plan(search_request: dict[str, Any]) -> dict[str, Any]:
+    """Run a prepared mixed-vertical advanced plan concurrently."""
+
+    plans = [dict(item) for item in search_request.get("queries", []) if isinstance(item, dict)]
+    effort = str(search_request.get("effort") or "medium")
+    started = time.perf_counter()
+
+    async def run_item(plan: dict[str, Any]) -> dict[str, Any]:
+        vertical = str(plan.get("vertical") or "web")
+        return await run_web_search(
+            str(plan.get("compiled_query") or ""),
+            effort=effort,
+            timelimit=plan.get("timelimit"),
+            shopping=vertical == "shopping",
+            academic=vertical == "academic",
+            onion=vertical == "onion",
+            dates_resolved=True,
+            query_text=str(plan.get("text") or ""),
+            operators=dict(plan.get("operators") or {}),
+        )
+
+    results = await asyncio.gather(*(run_item(plan) for plan in plans))
+    return _combine_search_results(
+        plans,
+        list(results),
+        effort=effort,
+        schema_mode="advanced",
+        started=started,
+        description=str(search_request.get("description") or ""),
+    )

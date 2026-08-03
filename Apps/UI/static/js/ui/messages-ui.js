@@ -1,14 +1,16 @@
 // Copyright NGGT.LightKeeper. All Rights Reserved.
 
 import { postJson } from '../main/api.js';
-import { escHtml, escapeAttributeValue, timeNow } from '../main/utils.js';
+import { escHtml, escapeAttributeValue, markdownToPlainText, timeNow } from '../main/utils.js';
 import {
+  addCitationSource,
   addSegmentCitationSources,
   addSegmentsCitationSources,
   createCitationRegistry,
   decorateCitationsInHtml as decorateCitationHandlesInHtml,
   normalizeCitationBrackets as normalizeCitationHandleBrackets,
-  normalizeCitationSpacing as normalizeCitationHandleSpacing
+  normalizeCitationSpacing as normalizeCitationHandleSpacing,
+  replaceCitationHandlesWithSourceUrls
 } from './citations-ui.js';
 import { bindCitationPreviewCards } from './citation-preview-ui.js';
 import { messageDialog } from './dialogs.js';
@@ -21,13 +23,18 @@ let markedStrikethroughDoubleTildeOnlyInstalled = false;
 // Message UI.
 // Create helpers for rendering messages, activity timelines, and message actions.
 export function createMessagesUi(context, dependencies) {
-  const { attachmentUi, browserPortalUi, toolInspector } = dependencies;
+  const { attachmentUi, browserPortalUi, deepResearchUi, toolInspector } = dependencies;
   const { dom, icons, state } = context;
   const MORE_LABEL = t('messages.more', {}, 'More');
   const HIDE_LABEL = t('messages.hide', {}, 'Hide');
   const SEARCH_BATCH_FIRST_CALL_HOLD_MS = 0;
   const SEARCH_BATCH_MULTI_CALL_SETTLE_MS = 0;
   const PRE_TOOL_TEXT_HOLD_MS = 0;
+  const STREAM_TEXT_REVEAL_INITIAL_DELAY_MS = 180;
+  const STREAM_TEXT_REVEAL_CHARACTER_MS = 7;
+  const STREAM_TEXT_REVEAL_FINAL_CHARACTER_MS = 3;
+  const STREAM_TEXT_REVEAL_FRAME_MS = 28;
+  const STREAM_TEXT_REVEAL_TAIL_CHARS = 18;
   const WRITE_PREVIEW_COLLAPSED_LINES = 4;
   const WRITE_PREVIEW_EXPANDED_LINES = 80;
   const EDIT_PREVIEW_COLLAPSED_ROWS = 4;
@@ -35,6 +42,46 @@ export function createMessagesUi(context, dependencies) {
   const SANDBOX_INPUT_PREVIEW_CHARS = 12000;
   const REASONING_CHUNK_TARGET_CHARS = 132;
   const REASONING_CHUNK_MAX_CHARS = 168;
+  const REASONING_LABEL_CHANGE_DELAY_MS = 1400;
+  const REASONING_LABEL_MAX_TYPING_DURATION_MS = 700;
+  const REASONING_LABEL_MAX_CHARACTER_DELAY_MS = 26;
+  const REASONING_LABEL_MIN_CHARACTER_DELAY_MS = 10;
+  const REASONING_LABEL_TYPING_SPEED_MULTIPLIER = 1.4;
+  const REASONING_LABEL_DELETE_SPEED_MULTIPLIER = 3.3;
+  const REASONING_LABEL_MIN_CHARS = 12;
+  const REASONING_LABEL_MIN_WORDS = 3;
+  const REASONING_LABEL_MAX_CHARS = 140;
+  const REASONING_PREVIEW_BRACKET_PAIRS = {
+    '(': ')',
+    '[': ']',
+    '{': '}',
+    '\uFF08': '\uFF09',
+    '\uFF3B': '\uFF3D',
+    '\uFF5B': '\uFF5D',
+    '\u3010': '\u3011',
+    '\u3014': '\u3015',
+    '\u3016': '\u3017',
+    '\u27E6': '\u27E7'
+  };
+  const REASONING_PREVIEW_QUOTE_PAIRS = {
+    '"': '"',
+    '\u00AB': '\u00BB',
+    '\u201C': '\u201D',
+    '\u201E': '\u201C',
+    '\u2018': '\u2019'
+  };
+  const REASONING_PREVIEW_NAMED_CITATION_HANDLE_SOURCE = String.raw`(?:s\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3,}-\d+)`;
+  const REASONING_PREVIEW_BRACKETED_CITATION_HANDLE_SOURCE = String.raw`(?:\d{4,}-\d+|${REASONING_PREVIEW_NAMED_CITATION_HANDLE_SOURCE})`;
+  const REASONING_PREVIEW_BRACKETED_CITATION_PATTERN = new RegExp(
+    String.raw`[\[\u3010\uFF3B\u3014\u3016\u27E6]\s*${REASONING_PREVIEW_BRACKETED_CITATION_HANDLE_SOURCE}(?:\s*,\s*${REASONING_PREVIEW_BRACKETED_CITATION_HANDLE_SOURCE})*\s*[\]\u3011\uFF3D\u3015\u3017\u27E7]`,
+    'gi'
+  );
+  const REASONING_PREVIEW_INTERNAL_MARKER_PATTERN = new RegExp(
+    String.raw`\b(?:source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{3,}-\d+|turn\d+(?:search|fetch|view|open|click|image|news)\d+)\b`,
+    'gi'
+  );
+  const REASONING_PREVIEW_PRIVATE_MARKER_PATTERN = /\uE200[^\uE201]*(?:\uE201|$)/g;
+  const REASONING_PREVIEW_INVISIBLE_PATTERN = /[\u034f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g;
   const DOWNLOAD_FILE_ICON = icons.DOWNLOAD_FILE_ICON || '';
   const SHARED_FILE_FOLDER_ICON = icons.SKILLS_FOLDER_ICON || '';
   const OPEN_FILE_LOCATION_LABEL = t('messages.openFileLocation', null, 'Open file location');
@@ -64,11 +111,20 @@ export function createMessagesUi(context, dependencies) {
     edit: ['content', 'new_str', 'old_str'],
     write: ['content']
   };
+  const REASONING_TAG_PAIRS = [
+    { start: '<think>', end: '</think>' },
+    { start: '<thinking>', end: '</thinking>' },
+    { start: '<reasoning>', end: '</reasoning>' },
+    { start: '<analysis>', end: '</analysis>' }
+  ];
+  const REASONING_BOUNDARY_PUNCTUATION_PATTERN = /\p{P}/u;
   const STREAMING_ACTIVITY_MARKERS = [
     '<tool_call>',
     '</tool_call>',
     '<tool_result>',
     '</tool_result>',
+    '<tool_activity>',
+    '</tool_activity>',
     '<context_compression>',
     '</context_compression>',
     '<think>',
@@ -81,6 +137,41 @@ export function createMessagesUi(context, dependencies) {
     '</analysis>'
   ];
   let mermaidRenderSeq = 0;
+
+  // A real reasoning tag begins at a text boundary, not in the middle of prose.
+  function isReasoningStartBoundary(value, tagIndex) {
+    const source = String(value || '');
+    let cursor = Number(tagIndex) - 1;
+    while (cursor >= 0 && /[ \t\f\v]/.test(source.charAt(cursor))) {
+      cursor -= 1;
+    }
+    if (cursor < 0) {
+      return true;
+    }
+    const previous = source.charAt(cursor);
+    return previous === '\n'
+      || previous === '\r'
+      || previous === '>'
+      || REASONING_BOUNDARY_PUNCTUATION_PATTERN.test(previous);
+  }
+
+  // Find the next opening tag that is positioned like a control block.
+  function findNextReasoningStart(value, fromIndex) {
+    const source = String(value || '');
+    const lowerSource = source.toLowerCase();
+    let best = null;
+
+    REASONING_TAG_PAIRS.forEach(function checkPair(pair) {
+      let pos = lowerSource.indexOf(pair.start, fromIndex);
+      while (pos !== -1 && !isReasoningStartBoundary(source, pos)) {
+        pos = lowerSource.indexOf(pair.start, pos + pair.start.length);
+      }
+      if (pos !== -1 && (!best || pos < best.pos)) {
+        best = { pos, kind: 'thought', pair };
+      }
+    });
+    return best;
+  }
 
   // Composer state.
   // Sync both send buttons with the current generation and attachment state.
@@ -786,6 +877,7 @@ export function createMessagesUi(context, dependencies) {
     return findOpenActivityMarker(rawText, [
       { open: '<tool_call>', close: '</tool_call>' },
       { open: '<tool_result>', close: '</tool_result>' },
+      { open: '<tool_activity>', close: '</tool_activity>' },
       { open: '<context_compression>', close: '</context_compression>' }
     ]);
   }
@@ -988,12 +1080,6 @@ export function createMessagesUi(context, dependencies) {
     const lowerSource = source.toLowerCase();
     const segments = [];
     const toolSegmentByAlias = {};
-    const reasoningTagPairs = [
-      { start: '<think>', end: '</think>' },
-      { start: '<thinking>', end: '</thinking>' },
-      { start: '<reasoning>', end: '</reasoning>' },
-      { start: '<analysis>', end: '</analysis>' }
-    ];
     let cursor = 0;
 
     // Strip control tokens that should never reach the visible transcript.
@@ -1019,29 +1105,17 @@ export function createMessagesUi(context, dependencies) {
       segments.push({ type: 'text', content: sanitizedValue.trim() });
     }
 
-    function findNextReasoningStart(fromIndex) {
-      let best = null;
-      reasoningTagPairs.forEach(function checkPair(pair) {
-        const pos = lowerSource.indexOf(pair.start, fromIndex);
-        if (pos === -1) {
-          return;
-        }
-        if (!best || pos < best.pos) {
-          best = { pos, kind: 'thought', pair };
-        }
-      });
-      return best;
-    }
-
     while (cursor < source.length) {
-      const reasoningStart = findNextReasoningStart(cursor);
+      const reasoningStart = findNextReasoningStart(source, cursor);
       const toolCallStart = lowerSource.indexOf('<tool_call>', cursor);
       const toolResultStart = lowerSource.indexOf('<tool_result>', cursor);
+      const toolActivityStart = lowerSource.indexOf('<tool_activity>', cursor);
       const compressionStart = lowerSource.indexOf('<context_compression>', cursor);
       const candidates = [
         reasoningStart,
         toolCallStart !== -1 ? { pos: toolCallStart, kind: 'tool' } : null,
         toolResultStart !== -1 ? { pos: toolResultStart, kind: 'result' } : null,
+        toolActivityStart !== -1 ? { pos: toolActivityStart, kind: 'activity' } : null,
         compressionStart !== -1 ? { pos: compressionStart, kind: 'compression' } : null
       ].filter(Boolean);
 
@@ -1101,7 +1175,8 @@ export function createMessagesUi(context, dependencies) {
             toolId: String(parsed.tool_id || '').trim(),
             toolName: String(parsed.tool_name || parsed.tool_display_name || '').trim(),
             arguments: parsed.arguments && typeof parsed.arguments === 'object' ? parsed.arguments : {},
-            result: null
+            result: null,
+            toolUi: parsed.tool_ui && typeof parsed.tool_ui === 'object' ? parsed.tool_ui : null
           };
 
           segments.push(segment);
@@ -1147,6 +1222,26 @@ export function createMessagesUi(context, dependencies) {
         }
 
         cursor = compressionEnd + closeTag.length;
+        continue;
+      }
+
+      if (next.kind === 'activity') {
+        const openTag = '<tool_activity>';
+        const closeTag = '</tool_activity>';
+        const activityEnd = lowerSource.indexOf(closeTag, next.pos + openTag.length);
+        if (activityEnd === -1) {
+          break;
+        }
+
+        const payload = source.substring(next.pos + openTag.length, activityEnd);
+        try {
+          const parsed = JSON.parse(payload);
+          segments.push({ type: 'tool_activity', event: parsed });
+        } catch (_error) {
+          // Ignore malformed activity payloads.
+        }
+
+        cursor = activityEnd + closeTag.length;
         continue;
       }
 
@@ -1371,6 +1466,36 @@ export function createMessagesUi(context, dependencies) {
   }
 
 
+  // Read the set of expanded sandbox cards for one row.
+  function getExpandedSandboxIndices($msgRow) {
+    const rawValue = String($msgRow.attr('data-expanded-sandboxes') || '').trim();
+    if (!rawValue) {
+      return new Set();
+    }
+
+    return new Set(
+      rawValue
+        .split(',')
+        .map(function toNumber(value) { return parseInt(value, 10); })
+        .filter(function isValid(value) { return Number.isInteger(value) && value >= 0; })
+    );
+  }
+
+  // Persist expanded sandbox cards back to the row element.
+  function setExpandedSandboxIndices($msgRow, expandedIndices) {
+    const normalized = Array.from(expandedIndices)
+      .filter(function isValid(value) { return Number.isInteger(value) && value >= 0; })
+      .sort(function sortValues(left, right) { return left - right; });
+
+    if (normalized.length === 0) {
+      $msgRow.removeAttr('data-expanded-sandboxes');
+      return;
+    }
+
+    $msgRow.attr('data-expanded-sandboxes', normalized.join(','));
+  }
+
+
   // Activity timeline rendering.
   // Render thoughts, tool calls, and visible text into the assistant timeline.
 
@@ -1385,10 +1510,74 @@ export function createMessagesUi(context, dependencies) {
       || !!(segment.toolUi && segment.toolUi.compact);
   }
 
-  // Extract the search query string from one tool segment.
+  // Source-bearing orchestrator tools (for example Deep Research) must feed
+  // the same citation registry even though they are not rendered as search cards.
+  function hasCitationSources(segment) {
+    return !!(
+      segment
+      && segment.type === 'tool'
+      && searchSourcesFromSegment(segment).some(function hasCitableSource(source) {
+        return !!String((source && (source.id || source.url)) || '').trim();
+      })
+    );
+  }
+
+  // Read the backend-normalized request attached during tool preflight or execution.
+  function normalizedSearchRequestFromSegment(segment) {
+    const candidates = [
+      segment && segment.toolUi && segment.toolUi.search_request,
+      segment && segment.structuredContent && segment.structuredContent.search_request,
+      segment && segment.structuredContent && segment.structuredContent.ui
+        && segment.structuredContent.ui.search_request
+    ];
+    return candidates.find(function findRequest(candidate) {
+      return candidate && typeof candidate === 'object' && Array.isArray(candidate.queries);
+    }) || null;
+  }
+
+  // Return one display row per normalized query; legacy raw data is only a fallback.
+  function searchQueryEntriesFromSegment(segment) {
+    const request = normalizedSearchRequestFromSegment(segment);
+    if (request) {
+      return request.queries.map(function normalizePreparedQuery(item) {
+        const query = item && typeof item === 'object' ? item : {};
+        return {
+          query: String(query.compiled_query || '').replace(/\s+/g, ' ').trim(),
+          vertical: String(query.vertical || 'web').trim().toLowerCase()
+        };
+      }).filter(function keepPreparedQuery(item) { return !!item.query; });
+    }
+
+    const args = segment && segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    const raw = args.query || args.q || '';
+    if (Array.isArray(raw)) {
+      return raw.map(function normalizeLegacyQuery(value) {
+        return { query: formatSearchQueryValue(value).trim(), vertical: '' };
+      }).filter(function keepLegacyQuery(item) { return !!item.query; });
+    }
+    const query = formatSearchQueryValue(raw).trim();
+    return query ? [{ query, vertical: '' }] : [];
+  }
+
+  // Prefer the backend-normalized activity description over raw model arguments.
+  function searchDescriptionFromSegment(segment) {
+    const request = normalizedSearchRequestFromSegment(segment);
+    const toolUi = segment && segment.toolUi && typeof segment.toolUi === 'object'
+      ? segment.toolUi
+      : {};
+    const args = segment && segment.arguments && typeof segment.arguments === 'object'
+      ? segment.arguments
+      : {};
+    return String((request && request.description) || toolUi.description || args.description || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  // Extract a stable query summary from one tool segment.
   function searchQueryFromSegment(segment) {
-    const args = segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
-    return formatSearchQueryValue(args.query || args.q || '').trim();
+    return searchQueryEntriesFromSegment(segment).map(function mapEntry(item) {
+      return item.query;
+    }).join(' | ');
   }
 
   // Append one query fragment without duplicates.
@@ -1673,8 +1862,8 @@ export function createMessagesUi(context, dependencies) {
   function addAllSearchSourcesToCitationRegistry(registry, segments) {
     addSegmentsCitationSources(
       registry,
-      (Array.isArray(segments) ? segments : []).filter(function onlySearchToolSegment(segment) {
-        return segment && segment.type === 'tool' && isSearchToolSegment(segment);
+      (Array.isArray(segments) ? segments : []).filter(function onlySourceBearingToolSegment(segment) {
+        return hasCitationSources(segment);
       })
     );
   }
@@ -1723,6 +1912,90 @@ export function createMessagesUi(context, dependencies) {
     });
   }
 
+  // Collect every source attached to one assistant response, including direct
+  // search results and citation blocks embedded in tool output.
+  function messageSourcesFromSegments(segments, citationRegistry) {
+    const safeSegments = Array.isArray(segments) ? segments : [];
+    const directSources = [];
+    safeSegments.forEach(function collectMessageSource(segment) {
+      if (!segment || segment.type !== 'tool') {
+        return;
+      }
+      directSources.push(...searchSourcesFromSegment(segment));
+      if (isReadPageToolSegment(segment)) {
+        directSources.push(...readPageSourcesFromSegment(segment));
+      }
+    });
+
+    const messageSourceRegistry = createCitationRegistry();
+    addSegmentsCitationSources(
+      messageSourceRegistry,
+      safeSegments.filter(function onlyToolSourceSegments(segment) {
+        return segment && segment.type === 'tool';
+      })
+    );
+    const registeredSources = [
+      ...(citationRegistry && typeof citationRegistry === 'object' ? Object.values(citationRegistry) : []),
+      ...Object.values(messageSourceRegistry)
+    ];
+    return dedupeSearchSources(
+      [...directSources, ...registeredSources]
+        .map(function normalizeMessageSource(source, index) {
+          return normalizeSearchSourceItem(source, index + 1);
+        })
+        .filter(Boolean)
+    );
+  }
+
+  // Render the compact favicon stack shown inside the Sources action button.
+  function renderMessageSourcesButtonContents(sources) {
+    const label = t('sources.title', null, 'Sources');
+    const iconsHtml = (Array.isArray(sources) ? sources : []).slice(0, 2).map(function renderButtonSource(source) {
+      const domain = String(source.display_domain || source.domain || source.url || '').trim();
+      const faviconUrl = sourceFaviconUrl(source);
+      const fallbackLetter = (domain.charAt(0) || '?').toUpperCase();
+      const imgHtml = faviconUrl
+        ? `<img class="msg-sources-btn-favicon" src="${escapeAttributeValue(faviconUrl)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';">`
+        : '';
+      const fallbackStyle = domainAccentStyle(domain, faviconUrl ? 'display:none;' : '');
+      return `<span class="msg-sources-btn-icon">${imgHtml}<span class="msg-sources-btn-fallback" style="${escapeAttributeValue(fallbackStyle)}">${escHtml(fallbackLetter)}</span></span>`;
+    }).join('');
+
+    return `<span class="msg-sources-btn-icons" aria-hidden="true">${iconsHtml || icons.GLOBE_ICON}</span><span class="msg-sources-btn-label">${escHtml(label)}</span>`;
+  }
+
+  // Refresh one row's Sources action after timeline rendering or after the
+  // action bar is attached at the end of a streamed response.
+  function syncMessageSourcesButton($msgRow) {
+    if (!$msgRow || !$msgRow.length) {
+      return;
+    }
+    const sources = $msgRow.data('messageSources') || [];
+    const hasSources = Array.isArray(sources) && sources.length > 0;
+    const $button = $msgRow.find('.msg-sources-btn').first();
+    if ($button.length) {
+      const label = t('sources.title', null, 'Sources');
+      $button
+        .prop('hidden', !hasSources)
+        .attr('title', label)
+        .attr('aria-label', label)
+        .html(hasSources ? renderMessageSourcesButtonContents(sources) : '');
+    }
+
+    if ($activeSourcesMessageRow && $activeSourcesMessageRow[0] === $msgRow[0]) {
+      if (hasSources) {
+        syncSourcesDrawer($msgRow);
+      } else {
+        closeSourcesDrawer();
+      }
+    }
+  }
+
+  function setMessageSources($msgRow, sources) {
+    $msgRow.data('messageSources', Array.isArray(sources) ? sources : []);
+    syncMessageSourcesButton($msgRow);
+  }
+
   // Render source chips with a More overflow control.
   function renderSearchSourcesWithOverflow(sources, maxVisible) {
     const items = Array.isArray(sources) ? sources : [];
@@ -1743,9 +2016,58 @@ export function createMessagesUi(context, dependencies) {
     };
   }
 
+  // Render a canonical request produced by backend preflight without reparsing its schema.
+  function renderPreparedSearchToolCard(segment, toolSegmentIndex, options, entries) {
+    const renderOptions = options || {};
+    const hasResult = segment.result !== null && segment.result !== undefined;
+    const status = segment.toolUi && segment.toolUi.status ? String(segment.toolUi.status) : '';
+    const isRejected = status === 'rejected' || /^INVALID_SEARCH_PLAN:/i.test(String(segment.result || '').trim());
+    const sources = searchSourcesFromSegment(segment);
+    const renderedSources = renderSearchSourcesWithOverflow(sources, 3);
+    const isExpanded = !!renderOptions.expanded;
+    const queriesHtml = entries.map(function renderPreparedQuery(entry) {
+      const pendingDot = hasResult || isRejected ? '' : '<span class="msg-search-pending-dot"></span>';
+      return `<div class="msg-search-batch-query${isRejected ? ' is-error' : ''}"><span class="msg-search-batch-query-text">${escHtml(entry.query)}</span>${pendingDot}</div>`;
+    }).join('');
+    const moreCount = renderedSources.hiddenCount;
+    const moreButtonAttrs = `type="button" data-search-more-count="${moreCount}" aria-expanded="${isExpanded ? 'true' : 'false'}"`;
+    const collapsedMoreHtml = moreCount > 0
+      ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-collapsed" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(`${MORE_LABEL} ${moreCount}`)}</span></button>`
+      : '';
+    const expandedMoreHtml = moreCount > 0
+      ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-expanded" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(HIDE_LABEL)}</span></button>`
+      : '';
+    const iconHtml = status === 'error' || status === 'timeout' || isRejected
+      ? (icons.WEB_SEARCH_ERROR_ICON || icons.GLOBE_ICON)
+      : (icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON);
+    const searchKey = searchSegmentKey(segment, toolSegmentIndex);
+    const searchKeyAttr = searchKey ? ` data-search-key="${escapeAttributeValue(searchKey)}"` : '';
+
+    return `
+      <div class="msg-search-card msg-search-card--batch${hasResult ? ' is-done' : ' is-pending'}${isRejected ? ' is-error' : ''}${isExpanded ? ' is-expanded' : ''}" data-tool-segment-index="${toolSegmentIndex}"${searchKeyAttr}>
+        <div class="msg-search-batch-head">
+          <span class="msg-search-icon msg-search-batch-icon">${iconHtml}</span>
+          <div class="msg-search-batch-queries">${queriesHtml}</div>
+        </div>
+        ${renderedSources.visibleHtml || collapsedMoreHtml ? `<div class="msg-search-chips msg-search-chips--batch">${renderedSources.visibleHtml}${collapsedMoreHtml}</div>` : ''}
+        ${renderedSources.hiddenHtml || expandedMoreHtml ? `<div class="msg-search-extra-chips msg-search-extra-chips--batch">${renderedSources.hiddenHtml}${expandedMoreHtml}</div>` : ''}
+      </div>
+    `;
+  }
+
   // Render one search tool activity card.
   function renderSearchToolCard(segment, toolSegmentIndex, options) {
     const renderOptions = options || {};
+    const normalizedRequest = normalizedSearchRequestFromSegment(segment);
+    const preparedEntries = searchQueryEntriesFromSegment(segment);
+    if (normalizedRequest && preparedEntries.length > 0) {
+      return renderPreparedSearchToolCard(
+        segment,
+        toolSegmentIndex,
+        renderOptions,
+        preparedEntries
+      );
+    }
     const hasResult = segment.result !== null && segment.result !== undefined;
     const compact = segment.toolUi && segment.toolUi.compact && typeof segment.toolUi.compact === 'object'
       ? segment.toolUi.compact
@@ -1818,18 +2140,22 @@ export function createMessagesUi(context, dependencies) {
       return item.segment.result === null || item.segment.result === undefined;
     });
     const hasPending = activePendingIndex !== -1;
-    const queriesHtml = searchItems.map(function renderBatchQuery(item, itemIndex) {
-      const query = searchQueryFromSegment(item.segment);
+    const queriesHtml = searchItems.flatMap(function renderBatchQuery(item, itemIndex) {
+      const entries = searchQueryEntriesFromSegment(item.segment);
       const itemStatus = item.segment.toolUi && item.segment.toolUi.status ? String(item.segment.toolUi.status) : '';
       const itemRejected = itemStatus === 'rejected' || /^BAD_QUERY:/i.test(String(item.segment.result || '').trim());
       const compact = item.segment.toolUi && item.segment.toolUi.compact && typeof item.segment.toolUi.compact === 'object'
         ? item.segment.toolUi.compact
         : null;
-      const labelBase = query || (compact && compact.label ? String(compact.label).replace(/^Searching for\s+/i, '') : 'sources');
-      const label = itemRejected ? `Bad query: ${labelBase}` : labelBase;
-      const activeClass = itemIndex === activePendingIndex ? ' is-active' : '';
-      const activeDot = itemIndex === activePendingIndex ? '<span class="msg-search-pending-dot"></span>' : '';
-      return `<div class="msg-search-batch-query${activeClass}"><span class="msg-search-batch-query-text">${escHtml(label)}</span>${activeDot}</div>`;
+      const displayEntries = entries.length > 0
+        ? entries
+        : [{ query: compact && compact.label ? String(compact.label).replace(/^Searching for\s+/i, '') : 'sources', vertical: '' }];
+      return displayEntries.map(function renderEntry(entry) {
+        const label = itemRejected ? `Bad query: ${entry.query}` : entry.query;
+        const activeClass = itemIndex === activePendingIndex ? ' is-active' : '';
+        const activeDot = itemIndex === activePendingIndex ? '<span class="msg-search-pending-dot"></span>' : '';
+        return `<div class="msg-search-batch-query${activeClass}"><span class="msg-search-batch-query-text">${escHtml(label)}</span>${activeDot}</div>`;
+      });
     }).join('');
     const combinedSources = dedupeSearchSources(searchItems.flatMap(function collectSources(item) {
       return searchSourcesFromSegment(item.segment);
@@ -3443,6 +3769,12 @@ export function createMessagesUi(context, dependencies) {
     return reasoningToolDetail(segment);
   }
 
+  // Return the complete model-provided description for a compact sandbox call.
+  function sandboxDescription(segment) {
+    const args = segment && segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    return String(args.description || '').trim().replace(/\s+/g, ' ');
+  }
+
   // Handle sandbox language.
   function sandboxLanguage(segment) {
     const identity = toolIdentityText(segment);
@@ -3558,6 +3890,23 @@ export function createMessagesUi(context, dependencies) {
         </div>
         ${renderSandboxStreamBlock('stdin', inputText, 'is-stdin', language)}
         ${stdoutHtml || stderrHtml ? `${stdoutHtml}${stderrHtml}` : renderSandboxStreamBlock('stdout', 'No output.', 'is-stdout is-empty', 'plaintext')}
+      </div>
+    `;
+  }
+
+  // Render a sandbox call as a clean, collapsed line outside reasoning mode.
+  function renderCollapsedSandboxToolBlock(segment, toolSegmentIndex, isExpanded) {
+    const description = sandboxDescription(segment) || 'Sandbox';
+    const dataIndex = Number.isInteger(toolSegmentIndex) ? ` data-sandbox-segment-index="${toolSegmentIndex}"` : '';
+    return `
+      <div class="msg-sandbox-collapsible${isExpanded ? ' is-expanded' : ''}"${dataIndex}>
+        <button type="button" class="msg-sandbox-toggle" aria-expanded="${isExpanded ? 'true' : 'false'}">
+          <span class="msg-sandbox-toggle-label">${escHtml(description)}</span>
+          <span class="msg-sandbox-toggle-chevron" aria-hidden="true">&gt;</span>
+        </button>
+        <div class="msg-sandbox-collapsible-content"${isExpanded ? '' : ' hidden'}>
+          ${renderSandboxToolBlock(segment, toolSegmentIndex)}
+        </div>
       </div>
     `;
   }
@@ -4365,6 +4714,9 @@ export function createMessagesUi(context, dependencies) {
 
   // Handle tool display name.
   function toolDisplayName(segment) {
+    if (deepResearchUi && deepResearchUi.isDeepResearchSegment(segment)) {
+      return 'Deep Research';
+    }
     if (isSearchToolSegment(segment)) {
       return 'Search';
     }
@@ -4511,6 +4863,9 @@ export function createMessagesUi(context, dependencies) {
       return '';
     }
 
+    if (deepResearchUi && deepResearchUi.isDeepResearchSegment(segment)) {
+      return deepResearchUi.renderCard(segment, toolIndex);
+    }
     if (isSearchToolSegment(segment)) {
       return renderSearchToolCard(segment, toolIndex, { compactLabel: true, hideIcon: false, expanded: !!item.expanded });
     }
@@ -4541,7 +4896,8 @@ export function createMessagesUi(context, dependencies) {
   // Handle reasoning tool step title.
   function reasoningToolStepTitle(segment) {
     if (isSearchToolSegment(segment)) {
-      return toolStatusText(segment) === 'Done' ? 'Searched sources' : 'Searching sources';
+      const description = searchDescriptionFromSegment(segment);
+      return description || (toolStatusText(segment) === 'Done' ? 'Searched sources' : 'Searching sources');
     }
     if (isReadPageToolSegment(segment)) {
       return 'Reading source page';
@@ -4574,9 +4930,260 @@ export function createMessagesUi(context, dependencies) {
     return toolDisplayName(segment);
   }
 
-  // Handle reasoning toggle label.
-  function reasoningToggleLabel() {
-    return 'Thought';
+  // Return a short action description explicitly supplied for a tool call.
+  function reasoningToolActionDescription(segment) {
+    if (isSearchToolSegment(segment)) {
+      return searchDescriptionFromSegment(segment);
+    }
+
+    const toolUi = segment && segment.toolUi && typeof segment.toolUi === 'object' ? segment.toolUi : {};
+    const compact = toolUi.compact && typeof toolUi.compact === 'object' ? toolUi.compact : {};
+    const structured = segment && segment.structuredContent && typeof segment.structuredContent === 'object'
+      ? segment.structuredContent
+      : {};
+    const structuredUi = structured.ui && typeof structured.ui === 'object' ? structured.ui : {};
+    const args = segment && segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {};
+    return String(
+      toolUi.description
+      || compact.description
+      || structured.description
+      || structuredUi.description
+      || args.description
+      || ''
+    ).replace(/\s+/g, ' ').trim();
+  }
+
+  // Browser-agent activity has its own portal and must not drive the Thought label.
+  function isIgnoredReasoningActivity(segment) {
+    return !!(
+      segment
+      && (
+        isSharedFileToolSegment(segment)
+        || segment.type === 'browser_portal'
+        || (browserPortalUi
+          && typeof browserPortalUi.isBrowserToolSegment === 'function'
+          && browserPortalUi.isBrowserToolSegment(segment))
+      )
+    );
+  }
+
+  // Remove parenthetical/service-only details from the compact live label.
+  // Quoted prose remains readable, including bracket characters inside quotes.
+  function stripReasoningPreviewBracketedText(value) {
+    const output = [];
+    const expectedClosers = [];
+    const closingBrackets = new Set(Object.values(REASONING_PREVIEW_BRACKET_PAIRS));
+    let activeQuoteCloser = '';
+
+    Array.from(String(value || '')).forEach(function filterReasoningPreviewCharacter(character) {
+      if (activeQuoteCloser) {
+        output.push(character);
+        if (character === activeQuoteCloser) {
+          activeQuoteCloser = '';
+        }
+        return;
+      }
+
+      if (!expectedClosers.length && REASONING_PREVIEW_QUOTE_PAIRS[character]) {
+        activeQuoteCloser = REASONING_PREVIEW_QUOTE_PAIRS[character];
+        output.push(character);
+        return;
+      }
+
+      const bracketCloser = REASONING_PREVIEW_BRACKET_PAIRS[character];
+      if (bracketCloser) {
+        if (!expectedClosers.length && output.length && !/\s/u.test(output[output.length - 1])) {
+          output.push(' ');
+        }
+        expectedClosers.push(bracketCloser);
+        return;
+      }
+
+      if (expectedClosers.length) {
+        const matchingCloserIndex = expectedClosers.lastIndexOf(character);
+        if (matchingCloserIndex >= 0) {
+          expectedClosers.length = matchingCloserIndex;
+        }
+        return;
+      }
+
+      if (!closingBrackets.has(character)) {
+        output.push(character);
+      }
+    });
+
+    return output.join('');
+  }
+
+  // Markdown from reasoning models is frequently partial or malformed while
+  // streaming. Remove syntax characters that can survive the normal plain-text
+  // conversion instead of exposing unfinished emphasis, lists, or tables.
+  function stripResidualReasoningMarkdownSyntax(value) {
+    return String(value || '')
+      .replace(/[\*_~`#|]+/g, ' ')
+      .replace(/(^|\s)>{1,}(?=\s|$)/g, '$1')
+      .replace(/(^|\s)[+-](?=\s)/g, '$1')
+      .replace(/\\(?=[\\`*_{}\[\]()#+\-.!>|~])/g, '')
+      .replace(/[\[\]{}]/g, ' ')
+      .replace(/\s+([,.;:!?\u2026])/gu, '$1')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function sanitizeReasoningDisplayText(value) {
+    return String(value || '')
+      .replace(/\r\n?/g, '\n')
+      .split('\n')
+      .map(function sanitizeReasoningDisplayLine(line) {
+        return stripResidualReasoningMarkdownSyntax(markdownToPlainText(line));
+      })
+      .join('\n')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  function sanitizeReasoningPreviewText(value) {
+    const plainText = markdownToPlainText(value)
+      .replace(REASONING_PREVIEW_PRIVATE_MARKER_PATTERN, ' ')
+      .replace(REASONING_PREVIEW_BRACKETED_CITATION_PATTERN, ' ')
+      .replace(REASONING_PREVIEW_INTERNAL_MARKER_PATTERN, ' ')
+      .replace(REASONING_PREVIEW_INVISIBLE_PATTERN, ' ');
+    return stripResidualReasoningMarkdownSyntax(stripReasoningPreviewBracketedText(plainText))
+      .replace(/\s+([,.;:!?\u2026])/gu, '$1')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function reasoningPreviewWordCount(value) {
+    const words = String(value || '').match(/\p{L}[\p{L}\p{M}]*(?:[-'\u2019][\p{L}\p{M}]+)*/gu);
+    return words ? words.length : 0;
+  }
+
+  // Pick the latest complete clause so the label changes at punctuation, not per token.
+  function reasoningThoughtExcerpt(content) {
+    const text = sanitizeReasoningPreviewText(content);
+    if (!text) {
+      return '';
+    }
+
+    const clauses = text.match(/[^.!?,\u2026;:\n]+[.!?,\u2026;:]+(?:["'»”\)\]]+)?/g) || [];
+    const readableClauses = clauses.map(function normalizeReasoningClause(clause) {
+      return String(clause || '').trim();
+    }).filter(function keepReadableReasoningClause(clause) {
+      return clause.length >= REASONING_LABEL_MIN_CHARS
+        && clause.length <= REASONING_LABEL_MAX_CHARS
+        && reasoningPreviewWordCount(clause) >= REASONING_LABEL_MIN_WORDS;
+    });
+    return readableClauses.length
+      ? normalizeReasoningPreviewPunctuation(readableClauses[readableClauses.length - 1])
+      : '';
+  }
+
+  // Replace sentence-ending punctuation with one calm preview ellipsis while
+  // preserving any closing quote or bracket after it.
+  function normalizeReasoningPreviewPunctuation(label) {
+    return sanitizeReasoningPreviewText(label).replace(/[.!?,\u2026;:]+(["'»”\)\]]*)$/u, '\u2026$1');
+  }
+
+  // Gather sources belonging to the currently displayed search or read activity.
+  function reasoningActivitySources(items, activeSegment, activeItemIndex) {
+    const isSearchActivity = isSearchToolSegment(activeSegment);
+    const isReadActivity = isReadPageToolSegment(activeSegment);
+    if (!isSearchActivity && !isReadActivity) {
+      return [];
+    }
+
+    const sources = [];
+    (Array.isArray(items) ? items.slice(0, activeItemIndex + 1) : []).forEach(function collectActivitySources(item) {
+      const segment = item && item.segment ? item.segment : item;
+      if (!segment || isIgnoredReasoningActivity(segment)) {
+        return;
+      }
+      if (isSearchActivity && isSearchToolSegment(segment)) {
+        sources.push(...searchSourcesFromSegment(segment));
+      } else if (isReadActivity && isReadPageToolSegment(segment)) {
+        sources.push(...readPageSourcesFromSegment(segment));
+      }
+    });
+
+    return dedupeSearchSources(sources.map(function normalizeActivitySource(source, index) {
+      return normalizeSearchSourceItem(source, index + 1);
+    }).filter(Boolean));
+  }
+
+  // Build the live Thought label and optional source stack.
+  function reasoningTogglePresentation(items, options) {
+    const renderOptions = options || {};
+    const safeItems = Array.isArray(items) ? items : [];
+    if (renderOptions.streaming !== true || renderOptions.reasoningComplete === true) {
+      return { label: 'Thought', sources: [], dynamic: false };
+    }
+
+    for (let index = safeItems.length - 1; index >= 0; index -= 1) {
+      const item = safeItems[index];
+      if (!item) {
+        continue;
+      }
+      if (item.type === 'thought') {
+        const excerpt = reasoningThoughtExcerpt(item.content);
+        if (excerpt) {
+          return { label: excerpt, sources: [], dynamic: true };
+        }
+        continue;
+      }
+      if (item.type === 'tool_pending') {
+        return { label: 'Preparing tool call', sources: [], dynamic: true };
+      }
+      if (item.type !== 'tool') {
+        continue;
+      }
+
+      const segment = item.segment || item;
+      if (isIgnoredReasoningActivity(segment)) {
+        continue;
+      }
+      const sources = reasoningActivitySources(safeItems, segment, index);
+      const description = normalizeReasoningPreviewPunctuation(reasoningToolActionDescription(segment));
+      let label = description;
+      if (!label && isReadPageToolSegment(segment)) {
+        label = sources.length > 1 ? `Reading ${sources.length} sources` : 'Reading source';
+      }
+      if (!label) {
+        label = reasoningToolStepTitle(segment);
+      }
+      return { label: label || 'Using tool', sources, dynamic: true };
+    }
+
+    return { label: 'Thinking', sources: [], dynamic: true };
+  }
+
+  // Render up to three overlapping source favicons and a leading overflow count.
+  function renderReasoningSourceStack(sources) {
+    const safeSources = Array.isArray(sources) ? sources : [];
+    if (!safeSources.length) {
+      return '';
+    }
+
+    const visibleSources = safeSources.slice(0, 3);
+    const overflowCount = Math.max(0, safeSources.length - visibleSources.length);
+    const avatarsHtml = visibleSources.map(function renderReasoningSource(source) {
+      const domain = String(source.display_domain || source.domain || source.url || '').trim();
+      const faviconUrl = sourceFaviconUrl(source);
+      const fallbackLetter = (domain.charAt(0) || '?').toUpperCase();
+      const imgHtml = faviconUrl
+        ? `<img class="msg-reasoning-source-favicon" src="${escapeAttributeValue(faviconUrl)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';">`
+        : '';
+      const fallbackStyle = domainAccentStyle(domain, faviconUrl ? 'display:none;' : '');
+      return `<span class="msg-reasoning-source" title="${escapeAttributeValue(domain)}">${imgHtml}<span class="msg-reasoning-source-fallback" style="${escapeAttributeValue(fallbackStyle)}">${escHtml(fallbackLetter)}</span></span>`;
+    }).join('');
+
+    return `
+      <span class="msg-reasoning-sources" aria-label="${safeSources.length} sources">
+        ${overflowCount > 0 ? `<span class="msg-reasoning-source-overflow">+${overflowCount}</span>` : ''}
+        <span class="msg-reasoning-source-stack has-${visibleSources.length}">${avatarsHtml}</span>
+      </span>
+    `;
   }
 
   // Report whether  thought segments.
@@ -4588,7 +5195,7 @@ export function createMessagesUi(context, dependencies) {
 
   // Report whether  reasoning marker.
   function hasReasoningMarker(rawText) {
-    return /<\/?(?:think|thinking|reasoning|analysis)>/i.test(String(rawText || ''));
+    return !!findNextReasoningStart(rawText, 0);
   }
 
   // Handle should use reasoning shell.
@@ -4685,7 +5292,7 @@ export function createMessagesUi(context, dependencies) {
 
   // Render reasoning thought text.
   function renderReasoningThoughtText(content) {
-    const text = String(content || '').trim();
+    const text = sanitizeReasoningDisplayText(content);
     if (!text) {
       return '';
     }
@@ -4707,9 +5314,12 @@ export function createMessagesUi(context, dependencies) {
   }
 
   // Render reasoning group.
-  function renderReasoningGroup(items, thoughtIndex, isExpanded, toggleLabel, options) {
+  function renderReasoningGroup(items, thoughtIndex, isExpanded, togglePresentation, options) {
     const safeItems = Array.isArray(items) ? items : [];
     const groupOptions = options || {};
+    const presentation = togglePresentation && typeof togglePresentation === 'object'
+      ? togglePresentation
+      : { label: String(togglePresentation || 'Thought'), sources: [], dynamic: false };
     const thoughtCount = safeItems.filter(function countThoughts(item) { return item && item.type === 'thought'; }).length;
     const toolCount = safeItems.filter(function countTools(item) {
       return item && (item.type === 'tool' || item.type === 'tool_pending');
@@ -4730,6 +5340,11 @@ export function createMessagesUi(context, dependencies) {
           return '';
         }
         if (item.type === 'tool') {
+          const segment = item && item.segment ? item.segment : item;
+          const toolIndex = item && Number.isInteger(item.toolIndex) ? item.toolIndex : undefined;
+          if (isSandboxToolSegment(segment) && !isImageViewToolSegment(segment)) {
+            return renderCollapsedSandboxToolBlock(segment, toolIndex, !!item.expanded);
+          }
           return renderReasoningToolItem(item);
         }
         if (item.type === 'tool_pending') {
@@ -4765,14 +5380,15 @@ export function createMessagesUi(context, dependencies) {
         const status = toolStatusText(segment || {});
         const iconHtml = toolIconHtml(segment || {});
         const hideStepTitle = isWriteToolSegment(segment || {}) || isEditToolSegment(segment || {});
+        const isDeepResearch = !!(deepResearchUi && deepResearchUi.isDeepResearchSegment(segment || {}));
         return `
-          <div class="msg-reasoning-step msg-reasoning-step--tool${toolStatusClass(segment || {})}">
-            <div class="msg-reasoning-step-dot" aria-hidden="true">${iconHtml}</div>
+          <div class="msg-reasoning-step msg-reasoning-step--tool${toolStatusClass(segment || {})}${isDeepResearch ? ' is-deep-research' : ''}">
+            ${isDeepResearch ? '' : `<div class="msg-reasoning-step-dot" aria-hidden="true">${iconHtml}</div>`}
             <div class="msg-reasoning-step-body">
-              <div class="msg-reasoning-step-title">
+              ${isDeepResearch ? '' : `<div class="msg-reasoning-step-title">
                 ${hideStepTitle ? '' : `<span>${escHtml(title)}</span>`}
                 <span class="msg-reasoning-step-status">${escHtml(status)}</span>
-              </div>
+              </div>`}
               ${renderReasoningToolItem(item)}
             </div>
           </div>
@@ -4791,8 +5407,9 @@ export function createMessagesUi(context, dependencies) {
     return `
       <div class="msg-thoughts-wrapper msg-reasoning-wrapper${isExpanded ? ' expanded' : ''}" data-thought-index="${thoughtIndex}">
         <button type="button" class="msg-thoughts-toggle msg-reasoning-toggle" aria-expanded="${isExpanded ? 'true' : 'false'}">
-          <span class="msg-reasoning-title">${escHtml(toggleLabel || 'Thought')}</span>
-          ${summaryParts.length ? `<span class="msg-reasoning-summary">${escHtml(summaryParts.join(' · '))}</span>` : ''}
+          ${renderReasoningSourceStack(presentation.sources)}
+          <span class="msg-reasoning-title" data-reasoning-label="${escapeAttributeValue(presentation.label || 'Thought')}" title="${escapeAttributeValue(presentation.label || 'Thought')}">${escHtml(presentation.label || 'Thought')}</span>
+          ${!presentation.dynamic && summaryParts.length ? `<span class="msg-reasoning-summary">${escHtml(summaryParts.join(' · '))}</span>` : ''}
         </button>
         <div class="msg-thoughts-content msg-reasoning-content" style="display:${isExpanded ? 'block' : 'none'};">${contentHtml}</div>
       </div>
@@ -4820,6 +5437,65 @@ export function createMessagesUi(context, dependencies) {
     };
   }
 
+  // Wrap only the freshly revealed text nodes after markdown has been parsed.
+  // This keeps markdown structure intact while giving the advancing edge a
+  // soft gradient instead of flashing a whole new network chunk at once.
+  function decorateStreamingRevealTail(html, tailCharacterCount, revealFrame) {
+    const count = Math.max(0, Math.floor(Number(tailCharacterCount) || 0));
+    if (!count || typeof document === 'undefined') {
+      return html;
+    }
+
+    const template = document.createElement('template');
+    template.innerHTML = String(html || '');
+    const walker = document.createTreeWalker(template.content, 4);
+    const textNodes = [];
+    let node = walker.nextNode();
+    while (node) {
+      if (node.nodeValue && node.nodeValue.trim()) {
+        textNodes.push(node);
+      }
+      node = walker.nextNode();
+    }
+
+    let remaining = count;
+    let processedFromEnd = 0;
+    for (let index = textNodes.length - 1; index >= 0 && remaining > 0; index -= 1) {
+      const textNode = textNodes[index];
+      const value = String(textNode.nodeValue || '');
+      const take = Math.min(remaining, Array.from(value).length);
+      if (!take) {
+        continue;
+      }
+
+      const characters = Array.from(value);
+      const prefix = characters.slice(0, characters.length - take).join('');
+      const tail = characters.slice(characters.length - take).join('');
+      const fragment = document.createDocumentFragment();
+      if (prefix) {
+        fragment.appendChild(document.createTextNode(prefix));
+      }
+      const tailCharacters = Array.from(tail);
+      tailCharacters.forEach(function wrapCleanRevealCharacter(character, characterIndex) {
+        const distanceFromEnd = processedFromEnd + (tailCharacters.length - characterIndex - 1);
+        const gradientProgress = count > 1 ? Math.min(1, distanceFromEnd / (count - 1)) : 1;
+        const startOpacity = 0.28 + (gradientProgress * 0.68);
+        const delayMs = Math.max(0, Math.round((count - distanceFromEnd - 1) * 2));
+        const span = document.createElement('span');
+        span.className = `msg-stream-reveal-tail msg-stream-reveal-tail--${Number(revealFrame) % 2 === 0 ? 'even' : 'odd'}`;
+        span.style.setProperty('--stream-reveal-start-opacity', startOpacity.toFixed(2));
+        span.style.setProperty('--stream-reveal-delay', `${delayMs}ms`);
+        span.textContent = character;
+        fragment.appendChild(span);
+      });
+      textNode.parentNode.replaceChild(fragment, textNode);
+      processedFromEnd += take;
+      remaining -= take;
+    }
+
+    return template.innerHTML;
+  }
+
   // Return a stable identity key for an element so the morpher can match it
   // across re-renders without destroying the DOM node.
   function getElementMorphKey(el) {
@@ -4831,6 +5507,12 @@ export function createMessagesUi(context, dependencies) {
       : null;
     if (searchKey) {
       return 'search:' + searchKey;
+    }
+    const researchKey = el.classList.contains('msg-deep-research-card')
+      ? el.getAttribute('data-research-key')
+      : null;
+    if (researchKey) {
+      return 'research:' + researchKey;
     }
     const writeIdx = el.getAttribute('data-write-segment-index');
     if (writeIdx !== null) {
@@ -5054,12 +5736,225 @@ export function createMessagesUi(context, dependencies) {
     }
   }
 
+  // Keep live reasoning labels stable across stream morphs. Each status is
+  // typed in, held briefly, then erased before the next status is typed.
+  function stopReasoningLabelAnimator($msgRow) {
+    const state = $msgRow.data('reasoningLabelAnimator');
+    if (!state) {
+      return;
+    }
+    if (state.typingTimer) {
+      clearTimeout(state.typingTimer);
+    }
+    if (state.delayTimer) {
+      clearTimeout(state.delayTimer);
+    }
+    $msgRow.removeData('reasoningLabelAnimator');
+  }
+
+  function updateReasoningLabelElement($msgRow, state) {
+    const titleEl = $msgRow.find('.msg-reasoning-title[data-reasoning-label]').first()[0];
+    if (!titleEl) {
+      return false;
+    }
+    titleEl.textContent = state.currentText || '\u00a0';
+    titleEl.classList.toggle('is-typing', !!state.typing);
+    titleEl.classList.toggle('is-deleting', !!state.deleting);
+    return true;
+  }
+
+  function prefersReducedReasoningLabelMotion() {
+    return typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+
+  function reasoningLabelCharacterDelay(characterCount, reduceMotion) {
+    if (reduceMotion) {
+      return 0;
+    }
+    const baseDelay = Math.min(
+      REASONING_LABEL_MAX_CHARACTER_DELAY_MS,
+      Math.max(
+        REASONING_LABEL_MIN_CHARACTER_DELAY_MS,
+        Math.floor(REASONING_LABEL_MAX_TYPING_DURATION_MS / Math.max(1, characterCount))
+      )
+    );
+    return baseDelay / REASONING_LABEL_TYPING_SPEED_MULTIPLIER;
+  }
+
+  function beginReasoningLabelTyping($msgRow, state, nextLabel, reduceMotion, options) {
+    const typingOptions = options || {};
+    if (typingOptions.preserveActiveLabel !== true) {
+      state.activeLabel = nextLabel;
+    }
+    state.currentText = '';
+    state.deleting = false;
+    state.typing = true;
+    state.holdCurrentLabel = typingOptions.holdAfterTyping === true;
+    const characters = Array.from(nextLabel);
+    let characterIndex = 0;
+    const characterDelay = reasoningLabelCharacterDelay(characters.length, reduceMotion);
+    state.characterDelay = characterDelay;
+
+    function typeNextCharacter() {
+      if (!$msgRow[0] || (typeof document !== 'undefined' && !document.documentElement.contains($msgRow[0]))) {
+        stopReasoningLabelAnimator($msgRow);
+        return;
+      }
+      if (reduceMotion) {
+        characterIndex = characters.length;
+      } else {
+        characterIndex += 1;
+      }
+      state.currentText = characters.slice(0, characterIndex).join('');
+      updateReasoningLabelElement($msgRow, state);
+
+      if (characterIndex < characters.length) {
+        state.typingTimer = setTimeout(typeNextCharacter, characterDelay);
+        return;
+      }
+
+      state.typingTimer = null;
+      state.typing = false;
+      state.lastCompletedAt = Date.now();
+      updateReasoningLabelElement($msgRow, state);
+      scheduleReasoningLabel($msgRow, state, false);
+    }
+
+    updateReasoningLabelElement($msgRow, state);
+    state.typingTimer = setTimeout(typeNextCharacter, reduceMotion ? 0 : characterDelay);
+  }
+
+  function scheduleReasoningLabel($msgRow, state, immediate) {
+    const canDeleteCurrentLabel = state.streaming === true
+      && !!state.currentText
+      && state.holdCurrentLabel !== true;
+    if (state.typing || state.deleting || (!state.queuedLabel && !canDeleteCurrentLabel)) {
+      return;
+    }
+    if (state.delayTimer) {
+      clearTimeout(state.delayTimer);
+      state.delayTimer = null;
+    }
+
+    const reduceMotion = prefersReducedReasoningLabelMotion();
+    const currentCharacters = Array.from(state.currentText || '');
+    const typingDelay = state.characterDelay
+      || reasoningLabelCharacterDelay(currentCharacters.length, reduceMotion);
+    const deletionDelay = reduceMotion
+      ? 0
+      : Math.max(1, typingDelay / REASONING_LABEL_DELETE_SPEED_MULTIPLIER);
+    const deletionDuration = currentCharacters.length * deletionDelay;
+    const elapsed = state.lastCompletedAt ? Date.now() - state.lastCompletedAt : REASONING_LABEL_CHANGE_DELAY_MS;
+    // Count deletion inside the hold so it does not make the transition longer.
+    const waitMs = immediate
+      ? 0
+      : Math.max(0, REASONING_LABEL_CHANGE_DELAY_MS - elapsed - deletionDuration);
+    state.delayTimer = setTimeout(function beginReasoningLabelTransition() {
+      state.delayTimer = null;
+      if (!state.queuedLabel && (!state.streaming || !state.currentText)) {
+        return;
+      }
+
+      let remainingCharacters = Array.from(state.currentText || '');
+      function deleteNextCharacter() {
+        if (!$msgRow[0] || (typeof document !== 'undefined' && !document.documentElement.contains($msgRow[0]))) {
+          stopReasoningLabelAnimator($msgRow);
+          return;
+        }
+        if (reduceMotion) {
+          remainingCharacters = [];
+        } else {
+          remainingCharacters.pop();
+        }
+        state.currentText = remainingCharacters.join('');
+        updateReasoningLabelElement($msgRow, state);
+
+        if (remainingCharacters.length > 0) {
+          state.typingTimer = setTimeout(deleteNextCharacter, deletionDelay);
+          return;
+        }
+
+        state.typingTimer = null;
+        state.deleting = false;
+        updateReasoningLabelElement($msgRow, state);
+        const nextLabel = state.queuedLabel;
+        state.queuedLabel = '';
+        if (nextLabel) {
+          beginReasoningLabelTyping($msgRow, state, nextLabel, reduceMotion);
+        } else if (state.streaming) {
+          // Never leave the compact reasoning header blank while waiting for
+          // another sentence or tool call. Keep the source label identity so
+          // repeated stream renders do not queue the erased sentence again.
+          beginReasoningLabelTyping($msgRow, state, 'Thinking', reduceMotion, {
+            preserveActiveLabel: true,
+            holdAfterTyping: true
+          });
+        }
+      }
+
+      if (!remainingCharacters.length || reduceMotion) {
+        deleteNextCharacter();
+        return;
+      }
+      state.deleting = true;
+      updateReasoningLabelElement($msgRow, state);
+      state.typingTimer = setTimeout(deleteNextCharacter, deletionDelay);
+    }, waitMs);
+  }
+
+  function syncReasoningLabelAnimator($msgRow, streaming) {
+    const $title = $msgRow.find('.msg-reasoning-title[data-reasoning-label]').first();
+    if (!$title.length) {
+      stopReasoningLabelAnimator($msgRow);
+      return;
+    }
+
+    const desiredLabel = String($title.attr('data-reasoning-label') || 'Thought');
+    let animator = $msgRow.data('reasoningLabelAnimator');
+    if (streaming !== true) {
+      stopReasoningLabelAnimator($msgRow);
+      $title.text(desiredLabel).removeClass('is-typing is-deleting');
+      return;
+    }
+
+    if (!animator) {
+      animator = {
+        activeLabel: '',
+        queuedLabel: desiredLabel,
+        currentText: '',
+        typing: false,
+        deleting: false,
+        typingTimer: null,
+        delayTimer: null,
+        lastCompletedAt: 0,
+        characterDelay: 0,
+        holdCurrentLabel: false,
+        streaming: true
+      };
+      $msgRow.data('reasoningLabelAnimator', animator);
+      updateReasoningLabelElement($msgRow, animator);
+      scheduleReasoningLabel($msgRow, animator, true);
+      return;
+    }
+
+    updateReasoningLabelElement($msgRow, animator);
+    if (desiredLabel === animator.activeLabel) {
+      animator.queuedLabel = '';
+      return;
+    }
+
+    animator.queuedLabel = desiredLabel;
+    scheduleReasoningLabel($msgRow, animator, false);
+  }
+
   // Render activity timeline.
   function renderActivityTimeline($msgRow, segments, options) {
     const renderOptions = options || {};
     const useMarkdown = renderOptions.markdown !== false;
     const hideTextSegments = renderOptions.hideTextSegments === true;
-    const suppressSharedFileToolRows = renderOptions.reasoningMode !== true;
+    const suppressSharedFileToolRows = true;
     const $stream = $msgRow.find('.msg-activity-stream');
     const $bubble = $msgRow.find('.msg-bubble');
     rememberLoadedSandboxImages($msgRow);
@@ -5081,6 +5976,9 @@ export function createMessagesUi(context, dependencies) {
         return !(segment && segment.type === 'thought');
       });
     }
+    if (deepResearchUi && typeof deepResearchUi.ingestTimeline === 'function') {
+      deepResearchUi.ingestTimeline(renderSegments);
+    }
     const forceReasoningShell = shouldUseReasoningShell(
       $msgRow,
       renderSegments,
@@ -5095,6 +5993,8 @@ export function createMessagesUi(context, dependencies) {
 
     if (renderSegments.length === 0) {
       if (!renderOptions.pendingTool) {
+        stopReasoningLabelAnimator($msgRow);
+        setMessageSources($msgRow, []);
         $stream.hide().empty();
         $bubble.html('');
         $msgRow.removeAttr('data-expanded-thoughts');
@@ -5103,6 +6003,7 @@ export function createMessagesUi(context, dependencies) {
         $msgRow.removeData('expandedSearchKeys');
         $msgRow.removeAttr('data-expanded-writes');
         $msgRow.removeAttr('data-expanded-edits');
+        $msgRow.removeAttr('data-expanded-sandboxes');
         $msgRow.removeData('toolSegments');
         return;
       }
@@ -5120,19 +6021,30 @@ export function createMessagesUi(context, dependencies) {
     const expandedSearchKeys = getExpandedSearchKeys($msgRow);
     const expandedWrites = getExpandedWriteIndices($msgRow);
     const expandedEdits = getExpandedEditIndices($msgRow);
+    const expandedSandboxes = getExpandedSandboxIndices($msgRow);
     let thoughtIndex = -1;
     let toolSegmentIndex = 0;
     const citationRegistry = createCitationRegistry();
     addAllSearchSourcesToCitationRegistry(citationRegistry, segments);
+    setMessageSources($msgRow, messageSourcesFromSegments(segments, citationRegistry));
     const toolSegments = segments.filter(function onlyToolSegments(segment) {
       return segment.type === 'tool';
+    });
+    const standaloneDeepResearchCards = [];
+    let standaloneToolIndex = 0;
+    segments.forEach(function collectStandaloneResearchCard(segment) {
+      if (!segment || segment.type !== 'tool') {
+        return;
+      }
+      if (deepResearchUi && deepResearchUi.isDeepResearchSegment(segment)) {
+        standaloneDeepResearchCards.push(deepResearchUi.renderCard(segment, standaloneToolIndex));
+      }
+      standaloneToolIndex += 1;
     });
     const lastToolSegmentIndex = segments.reduce(function findLastToolIndex(lastIndex, segment, index) {
       return segment && segment.type === 'tool' ? index : lastIndex;
     }, -1);
     let reasoningGroupIndex = -1;
-    const thoughtToggleLabel = reasoningToggleLabel($msgRow);
-
     const blocks = [];
     function pushBlock(key, html) {
       if (!html || !String(html).trim()) {
@@ -5143,11 +6055,19 @@ export function createMessagesUi(context, dependencies) {
 
     function pushTextSegmentBlock(segment, segmentIndex) {
       const liveClass = renderOptions.streaming === true ? ' is-live' : '';
+      const revealTailChars = Number(segment && segment.streamRevealTailChars) || 0;
+      const revealingClass = revealTailChars > 0 ? ' is-revealing' : '';
+      const renderedText = useMarkdown
+        ? renderMarkdownSegment(segment.content, citationRegistry)
+        : renderPlainTextSegment(segment.content);
+      const visibleText = revealTailChars > 0
+        ? decorateStreamingRevealTail(renderedText, revealTailChars, segment.streamRevealFrame)
+        : renderedText;
       pushBlock(
         `text-${segmentIndex}`,
         `
-        <div class="msg-stream-text${liveClass}">
-          <div class="markdown-body${useMarkdown ? '' : ' is-streaming'}">${useMarkdown ? renderMarkdownSegment(segment.content, citationRegistry) : renderPlainTextSegment(segment.content)}</div>
+        <div class="msg-stream-text${liveClass}${revealingClass}">
+          <div class="markdown-body${useMarkdown ? '' : ' is-streaming'}">${visibleText}</div>
         </div>
       `
       );
@@ -5159,11 +6079,15 @@ export function createMessagesUi(context, dependencies) {
       const lastActivitySegmentIndex = segments.reduce(function findLastActivityIndex(lastIndex, segment, index) {
         return segment
           && (segment.type === 'thought' || segment.type === 'tool' || segment.type === 'tool_pending')
+          && !isIgnoredReasoningActivity(segment)
           ? index
           : lastIndex;
       }, -1);
       const finalReasoningAnchorTextIndex = segments.reduce(function findReasoningAnchor(lastIndex, segment, index) {
         if (hideTextSegments || index >= lastActivitySegmentIndex || !segment) {
+          return lastIndex;
+        }
+        if (segment.type === 'tool_activity') {
           return lastIndex;
         }
         return segment.type === 'thought' || segment.type === 'tool' || segment.type === 'tool_pending'
@@ -5186,7 +6110,10 @@ export function createMessagesUi(context, dependencies) {
           reasoningItems,
           0,
           expandedThoughts.has(0),
-          thoughtToggleLabel,
+          reasoningTogglePresentation(reasoningItems, {
+            streaming: renderOptions.streaming === true,
+            reasoningComplete: isStreamingTextAfterReasoning
+          }),
           { forceWrapper: true }
         );
       }
@@ -5197,6 +6124,10 @@ export function createMessagesUi(context, dependencies) {
         }
 
         if (segment.type === 'browser_portal') {
+          return;
+        }
+
+        if (segment.type === 'tool_activity') {
           return;
         }
 
@@ -5212,8 +6143,16 @@ export function createMessagesUi(context, dependencies) {
 
         if (segment.type === 'tool') {
           const currentToolIndex = activeToolSegmentIndex;
-          if (isSearchToolSegment(segment)) {
+          if (isSharedFileToolSegment(segment)) {
+            activeToolSegmentIndex += 1;
+            return;
+          }
+          if (hasCitationSources(segment)) {
             addSearchSourcesToCitationRegistry(citationRegistry, segment);
+          }
+          if (deepResearchUi && deepResearchUi.isDeepResearchSegment(segment)) {
+            activeToolSegmentIndex += 1;
+            return;
           }
           reasoningItems.push({
             type: 'tool',
@@ -5229,7 +6168,15 @@ export function createMessagesUi(context, dependencies) {
         }
       });
 
-      if (reasoningItems.length > 0 && reasoningAnchorTextIndex === -1 && !isStreamingTextAfterReasoning) {
+      // Deep Research is a first-class chat artifact. Keep it outside the
+      // collapsible Thought/Reasoning shell regardless of model output order.
+      if (standaloneDeepResearchCards.length) {
+        pushBlock(
+          'deep-research-pinned',
+          `<div class="msg-tool-only-group msg-tool-only-group--deep-research">${standaloneDeepResearchCards.join('')}</div>`
+        );
+      }
+      if (reasoningItems.length > 0 && reasoningAnchorTextIndex === -1) {
         pushBlock('reasoning-active', renderActiveReasoningBlock());
       }
 
@@ -5239,13 +6186,17 @@ export function createMessagesUi(context, dependencies) {
           continue;
         }
 
+        if (segment.type === 'tool_activity') {
+          continue;
+        }
+
         if (segment.type === 'thought' || segment.type === 'tool' || segment.type === 'tool_pending') {
           continue;
         }
 
         if (segment.type === 'browser_portal') {
           pushBlock(segment.key || `browser-portal-${segmentIndex}`, segment.html);
-          if (segmentIndex === reasoningAnchorTextIndex && reasoningItems.length > 0 && !isStreamingTextAfterReasoning) {
+          if (segmentIndex === reasoningAnchorTextIndex && reasoningItems.length > 0) {
             pushBlock('reasoning-active', renderActiveReasoningBlock());
           }
           continue;
@@ -5255,7 +6206,7 @@ export function createMessagesUi(context, dependencies) {
           pushTextSegmentBlock(segment, segmentIndex);
         }
 
-        if (segmentIndex === reasoningAnchorTextIndex && reasoningItems.length > 0 && !isStreamingTextAfterReasoning) {
+        if (segmentIndex === reasoningAnchorTextIndex && reasoningItems.length > 0) {
           pushBlock('reasoning-active', renderActiveReasoningBlock());
         }
       }
@@ -5270,6 +6221,7 @@ export function createMessagesUi(context, dependencies) {
 
       $bubble.empty();
       applyActivityBlocks($stream, blocks);
+      syncReasoningLabelAnimator($msgRow, renderOptions.streaming === true);
       $stream.css('display', 'flex');
       setExpandedThoughtIndices($msgRow, expandedThoughts);
       setExpandedSearchIndices($msgRow, expandedSearches);
@@ -5277,6 +6229,9 @@ export function createMessagesUi(context, dependencies) {
       setExpandedWriteIndices($msgRow, expandedWrites);
       setExpandedEditIndices($msgRow, expandedEdits);
       $msgRow.data('toolSegments', toolSegments);
+      $msgRow.data('toolActivityEvents', segments
+        .filter(function onlyToolActivity(segment) { return segment && segment.type === 'tool_activity'; })
+        .map(function activityEvent(segment) { return segment.event; }));
       if (renderOptions.streaming !== true) {
         hydrateMermaidDiagrams($stream);
       }
@@ -5296,15 +6251,26 @@ export function createMessagesUi(context, dependencies) {
           $nextActiveWrapper.addClass('is-active');
           $nextActiveWrapper.find('.msg-reasoning-toggle, .msg-thoughts-toggle').attr('aria-expanded', 'true');
           syncReasoningDrawerFromWrapper($nextActiveWrapper);
-        } else if (!isStreamingTextAfterReasoning) {
+        } else {
           closeReasoningDrawer();
         }
       }
       return;
     }
 
+    if (standaloneDeepResearchCards.length) {
+      pushBlock(
+        'deep-research-pinned',
+        `<div class="msg-tool-only-group msg-tool-only-group--deep-research">${standaloneDeepResearchCards.join('')}</div>`
+      );
+    }
+
     for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 1) {
       const segment = segments[segmentIndex];
+
+      if (segment && segment.type === 'tool_activity') {
+        continue;
+      }
 
       if (segment && segment.type === 'browser_portal') {
         pushBlock(segment.key || `browser-portal-${segmentIndex}`, segment.html);
@@ -5336,7 +6302,12 @@ export function createMessagesUi(context, dependencies) {
               continue;
             }
             const currentToolIndex = toolSegmentIndex;
-            if (isSearchToolSegment(groupSegment)) {
+            if (deepResearchUi && deepResearchUi.isDeepResearchSegment(groupSegment)) {
+              toolSegmentIndex += 1;
+              segmentIndex += 1;
+              continue;
+            }
+            if (hasCitationSources(groupSegment)) {
               addSearchSourcesToCitationRegistry(citationRegistry, groupSegment);
             }
             groupItems.push({
@@ -5347,7 +6318,9 @@ export function createMessagesUi(context, dependencies) {
                 ? expandedSearches.has(currentToolIndex)
                 : (isWriteToolSegment(groupSegment)
                   ? expandedWrites.has(currentToolIndex)
-                  : (isEditToolSegment(groupSegment) ? expandedEdits.has(currentToolIndex) : false))
+                  : (isEditToolSegment(groupSegment)
+                    ? expandedEdits.has(currentToolIndex)
+                    : (isSandboxToolSegment(groupSegment) ? expandedSandboxes.has(currentToolIndex) : false)))
             });
             toolSegmentIndex += 1;
           }
@@ -5355,6 +6328,9 @@ export function createMessagesUi(context, dependencies) {
         }
 
         segmentIndex -= 1;
+        if (!groupItems.length) {
+          continue;
+        }
         if (
           groupItems.some(function hasToolItem(item) {
             return item && (item.type === 'tool' || item.type === 'tool_pending');
@@ -5368,7 +6344,10 @@ export function createMessagesUi(context, dependencies) {
               groupItems,
               reasoningGroupIndex,
               expandedThoughts.has(reasoningGroupIndex),
-              thoughtToggleLabel,
+              reasoningTogglePresentation(groupItems, {
+                streaming: renderOptions.streaming === true,
+                reasoningComplete: false
+              }),
               { forceWrapper: forceReasoningShell }
             )
           );
@@ -5397,13 +6376,18 @@ export function createMessagesUi(context, dependencies) {
 
     $bubble.empty();
     applyActivityBlocks($stream, blocks);
+    syncReasoningLabelAnimator($msgRow, renderOptions.streaming === true);
     $stream.css('display', 'flex');
     setExpandedThoughtIndices($msgRow, expandedThoughts);
     setExpandedSearchIndices($msgRow, expandedSearches);
     setExpandedSearchKeys($msgRow, expandedSearchKeys);
     setExpandedWriteIndices($msgRow, expandedWrites);
     setExpandedEditIndices($msgRow, expandedEdits);
+    setExpandedSandboxIndices($msgRow, expandedSandboxes);
     $msgRow.data('toolSegments', toolSegments);
+    $msgRow.data('toolActivityEvents', segments
+      .filter(function onlyToolActivity(segment) { return segment && segment.type === 'tool_activity'; })
+      .map(function activityEvent(segment) { return segment.event; }));
     if (renderOptions.streaming !== true) {
       hydrateMermaidDiagrams($stream);
     }
@@ -5558,13 +6542,268 @@ export function createMessagesUi(context, dependencies) {
     return true;
   }
 
+  // Return the text segments that belong to the streamed reasoning/tool
+  // sequence. Text before the first activity is ordinary answer text and must
+  // not suddenly become buffered if a reasoning marker appears later.
+  function streamingRevealTextKeys($msgRow, segments) {
+    const keys = new Set();
+    let sawReasoningActivity = !!$msgRow.data('sawReasoning');
+    (Array.isArray(segments) ? segments : []).forEach(function collectRevealKey(segment, index) {
+      if (!segment) {
+        return;
+      }
+      if (
+        segment.type === 'thought'
+        || segment.type === 'tool_pending'
+        || (segment.type === 'tool' && !isIgnoredReasoningActivity(segment))
+      ) {
+        sawReasoningActivity = true;
+        return;
+      }
+      if (sawReasoningActivity && segment.type === 'text') {
+        keys.add(`text-${index}`);
+      }
+    });
+    return keys;
+  }
+
+  // Advance all buffered text cursors. The normal cadence is a little faster
+  // than the Thought-label preview; final catch-up is bounded so actions do not
+  // remain in a streaming state after the network response has closed.
+  function advanceStreamingTextRevealState(revealState, now) {
+    let pending = false;
+    revealState.entries.forEach(function advanceEntry(entry) {
+      const targetCharacters = Array.from(entry.target || '');
+      const lag = Math.max(0, targetCharacters.length - entry.visibleLength);
+      entry.revealedNow = 0;
+      if (!lag) {
+        entry.lastAdvancedAt = now;
+        return;
+      }
+
+      if (now < entry.readyAt) {
+        pending = true;
+        return;
+      }
+
+      const interval = revealState.finalizing
+        ? STREAM_TEXT_REVEAL_FINAL_CHARACTER_MS
+        : STREAM_TEXT_REVEAL_CHARACTER_MS;
+      const elapsedFrom = Math.max(entry.lastAdvancedAt || entry.readyAt, entry.readyAt);
+      const elapsed = Math.max(0, now - elapsedFrom);
+      entry.credit = (entry.credit || 0) + (elapsed / interval);
+      let revealCount = Math.floor(entry.credit);
+      if (revealState.finalizing) {
+        revealCount = Math.max(revealCount, Math.ceil(lag / 10));
+      }
+      revealCount = Math.min(lag, revealCount);
+      entry.lastAdvancedAt = now;
+      if (!revealCount) {
+        pending = true;
+        return;
+      }
+
+      entry.credit = Math.max(0, entry.credit - revealCount);
+      entry.visibleLength += revealCount;
+      entry.revealedNow = revealCount;
+      entry.revealFrame = (entry.revealFrame || 0) + 1;
+      if (entry.visibleLength < targetCharacters.length) {
+        pending = true;
+      }
+    });
+    return pending || Array.from(revealState.entries.values()).some(function hasRemainingText(entry) {
+      return entry.visibleLength < Array.from(entry.target || '').length;
+    });
+  }
+
+  // Build one display snapshot while retaining the complete segment list for
+  // layout. Empty buffered text blocks already occupy their correct ordering,
+  // allowing the reasoning toggle to move before the first character appears.
+  function streamingTextRevealSnapshot(revealState) {
+    return revealState.segments.map(function revealSegment(segment, index) {
+      if (!segment || segment.type !== 'text') {
+        return segment;
+      }
+      const entry = revealState.entries.get(`text-${index}`);
+      if (!entry) {
+        return segment;
+      }
+      const characters = Array.from(entry.target || '');
+      return {
+        ...segment,
+        content: characters.slice(0, entry.visibleLength).join(''),
+        streamRevealTailChars: Math.min(STREAM_TEXT_REVEAL_TAIL_CHARS, entry.revealedNow || 0),
+        streamRevealFrame: entry.revealFrame || 0
+      };
+    });
+  }
+
+  function clearStreamingTextReveal($msgRow) {
+    const revealState = $msgRow.data('streamingTextRevealState');
+    if (revealState && revealState.timer) {
+      window.clearTimeout(revealState.timer);
+    }
+    $msgRow.removeData('streamingTextRevealState');
+  }
+
+  function renderMessageHtmlNow($msgRow, rawText, parsed) {
+    clearStreamingTextReveal($msgRow);
+    const safeParsed = parsed || parseMessageTimeline(rawText);
+    renderActivityTimeline($msgRow, safeParsed.segments, { rawText });
+    $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', safeParsed.visibleText);
+  }
+
+  // Paint the next buffered frame without waiting for another network chunk.
+  function scheduleStreamingTextRevealFrame($msgRow) {
+    const revealState = $msgRow.data('streamingTextRevealState');
+    if (!revealState || revealState.timer) {
+      return;
+    }
+    const hasPendingText = Array.from(revealState.entries.values()).some(function hasPendingEntry(entry) {
+      return entry.visibleLength < Array.from(entry.target || '').length;
+    });
+    if (!hasPendingText) {
+      return;
+    }
+
+    revealState.timer = window.setTimeout(function renderStreamingTextRevealFrame() {
+      const currentState = $msgRow.data('streamingTextRevealState');
+      if (!currentState || currentState !== revealState) {
+        return;
+      }
+      currentState.timer = null;
+      if (!$msgRow[0] || (typeof document !== 'undefined' && !document.documentElement.contains($msgRow[0]))) {
+        clearStreamingTextReveal($msgRow);
+        return;
+      }
+
+      const messagesArea = dom.$messagesArea && dom.$messagesArea[0];
+      const shouldFollowReveal = !!messagesArea
+        && messagesArea.scrollHeight - messagesArea.clientHeight <= messagesArea.scrollTop + 50;
+      const pending = advanceStreamingTextRevealState(currentState, Date.now());
+      renderActivityTimeline($msgRow, streamingTextRevealSnapshot(currentState), {
+        rawText: currentState.rawText,
+        streaming: true
+      });
+      $msgRow.find('.msg-bubble')
+        .attr('data-raw', currentState.rawText)
+        .attr('data-copy', currentState.visibleText);
+      if (shouldFollowReveal) {
+        scrollBottom();
+      }
+
+      if (!pending && currentState.finalizing) {
+        renderMessageHtmlNow(
+          $msgRow,
+          currentState.rawText,
+          { segments: currentState.segments, visibleText: currentState.visibleText }
+        );
+        return;
+      }
+      scheduleStreamingTextRevealFrame($msgRow);
+    }, STREAM_TEXT_REVEAL_FRAME_MS);
+  }
+
+  // Update targets from the latest parse and return the currently revealed
+  // segment snapshot. Structural tool changes are applied immediately.
+  function bufferStreamingTextSegments($msgRow, parsed, rawText, finalizing) {
+    const reduceMotion = typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion) {
+      clearStreamingTextReveal($msgRow);
+      return null;
+    }
+    const revealKeys = streamingRevealTextKeys($msgRow, parsed.segments);
+    let revealState = $msgRow.data('streamingTextRevealState');
+    if (!revealState && !revealKeys.size) {
+      return null;
+    }
+    if (!revealState) {
+      revealState = {
+        entries: new Map(),
+        segments: [],
+        rawText: '',
+        visibleText: '',
+        finalizing: false,
+        timer: null
+      };
+      $msgRow.data('streamingTextRevealState', revealState);
+    }
+
+    const now = Date.now();
+    const activeKeys = new Set();
+    parsed.segments.forEach(function updateRevealTarget(segment, index) {
+      const key = `text-${index}`;
+      if (!segment || segment.type !== 'text' || !revealKeys.has(key)) {
+        return;
+      }
+      activeKeys.add(key);
+      const target = String(segment.content || '');
+      const targetLength = Array.from(target).length;
+      let entry = revealState.entries.get(key);
+      if (!entry) {
+        entry = {
+          target,
+          visibleLength: 0,
+          revealedNow: 0,
+          readyAt: now + STREAM_TEXT_REVEAL_INITIAL_DELAY_MS,
+          lastAdvancedAt: now + STREAM_TEXT_REVEAL_INITIAL_DELAY_MS,
+          credit: 0,
+          revealFrame: 0
+        };
+        revealState.entries.set(key, entry);
+        return;
+      }
+
+      const oldTarget = String(entry.target || '');
+      if (!target.startsWith(oldTarget)) {
+        entry.visibleLength = Math.min(entry.visibleLength, targetLength);
+      }
+      entry.target = target;
+      entry.visibleLength = Math.min(entry.visibleLength, targetLength);
+      entry.revealedNow = 0;
+    });
+    Array.from(revealState.entries.keys()).forEach(function removeStaleEntry(key) {
+      if (!activeKeys.has(key)) {
+        revealState.entries.delete(key);
+      }
+    });
+
+    revealState.segments = parsed.segments;
+    revealState.rawText = rawText;
+    revealState.visibleText = parsed.visibleText;
+    revealState.finalizing = revealState.finalizing || finalizing === true;
+    advanceStreamingTextRevealState(revealState, now);
+    scheduleStreamingTextRevealFrame($msgRow);
+    return streamingTextRevealSnapshot(revealState);
+  }
+
   // Parse and render one assistant transcript string.
   function renderMessageHtml($msgRow, rawText) {
     clearSearchBatchHold($msgRow);
     clearPreToolTextHold($msgRow);
     const parsed = parseMessageTimeline(rawText);
-    renderActivityTimeline($msgRow, parsed.segments, { rawText });
-    $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
+    const revealState = $msgRow.data('streamingTextRevealState');
+    if (revealState) {
+      const displaySegments = bufferStreamingTextSegments($msgRow, parsed, rawText, true);
+      const activeRevealState = $msgRow.data('streamingTextRevealState');
+      if (!activeRevealState) {
+        renderMessageHtmlNow($msgRow, rawText, parsed);
+        return;
+      }
+      const hasPendingText = Array.from(activeRevealState.entries.values()).some(function hasPendingEntry(entry) {
+        return entry.visibleLength < Array.from(entry.target || '').length;
+      });
+      if (!hasPendingText) {
+        renderMessageHtmlNow($msgRow, rawText, parsed);
+        return;
+      }
+      renderActivityTimeline($msgRow, displaySegments || parsed.segments, { rawText, streaming: true });
+      $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
+      return;
+    }
+    renderMessageHtmlNow($msgRow, rawText, parsed);
   }
 
   // Parse and render one assistant transcript during active streaming.
@@ -5580,7 +6819,8 @@ export function createMessagesUi(context, dependencies) {
     if (hasPendingToolPayload) {
       clearSearchBatchHold($msgRow);
       clearPreToolTextHold($msgRow);
-      renderActivityTimeline($msgRow, parsed.segments, {
+      const displaySegments = bufferStreamingTextSegments($msgRow, parsed, renderRawText, false);
+      renderActivityTimeline($msgRow, displaySegments || parsed.segments, {
         markdown: false,
         pendingTool: true,
         rawText: renderRawText,
@@ -5602,7 +6842,8 @@ export function createMessagesUi(context, dependencies) {
       return;
     }
 
-    renderActivityTimeline($msgRow, parsed.segments, { rawText: renderRawText, streaming: true });
+    const displaySegments = bufferStreamingTextSegments($msgRow, parsed, renderRawText, false);
+    renderActivityTimeline($msgRow, displaySegments || parsed.segments, { rawText: renderRawText, streaming: true });
     $msgRow.find('.msg-bubble').attr('data-raw', rawText).attr('data-copy', parsed.visibleText);
   }
 
@@ -5663,6 +6904,10 @@ export function createMessagesUi(context, dependencies) {
 
     const segment = toolSegments[index];
     if (segment) {
+      if (deepResearchUi && deepResearchUi.isDeepResearchSegment(segment)) {
+        deepResearchUi.openSegment(segment);
+        return;
+      }
       toolInspector.open(segment);
     }
   }
@@ -5753,6 +6998,28 @@ export function createMessagesUi(context, dependencies) {
         morphDomChildren($preview[0], $newPreview[0]);
       }
     }
+  }
+
+  // Expand or collapse one compact sandbox call.
+  function toggleSandboxCard($toggle) {
+    const $wrapper = $toggle.closest('.msg-sandbox-collapsible');
+    const $row = sourceMessageRowForActivityCard($wrapper);
+    const cardIndex = parseInt($wrapper.attr('data-sandbox-segment-index') || '-1', 10);
+    const expandedSandboxes = getExpandedSandboxIndices($row);
+    const willExpand = !$wrapper.hasClass('is-expanded');
+
+    if (Number.isInteger(cardIndex) && cardIndex >= 0) {
+      if (willExpand) {
+        expandedSandboxes.add(cardIndex);
+      } else {
+        expandedSandboxes.delete(cardIndex);
+      }
+      setExpandedSandboxIndices($row, expandedSandboxes);
+    }
+
+    $wrapper.toggleClass('is-expanded', willExpand);
+    $toggle.attr('aria-expanded', willExpand ? 'true' : 'false');
+    $wrapper.find('.msg-sandbox-collapsible-content').first().prop('hidden', !willExpand);
   }
 
   // Expand or collapse one compression context card.
@@ -5888,6 +7155,16 @@ export function createMessagesUi(context, dependencies) {
     const messageKey = viewOptions.messageKey || '';
     const messageId = viewOptions.messageId || '';
 
+    const branchLinks = Array.isArray(viewOptions.branchLinks) ? viewOptions.branchLinks : [];
+    const branchLinksHtml = branchLinks.map(function renderBranchLink(link) {
+      const direction = link && link.direction === 'to_origin' ? 'to_origin' : 'to_branch';
+      const title = String(link && link.title || 'Chat');
+      const label = direction === 'to_origin'
+        ? t('messages.branchedFrom', { title }, `Branched from ${title}`)
+        : t('messages.openBranch', { title }, `Branch: ${title}`);
+      return `<a class="msg-branch-link" href="/chat/${escapeAttributeValue(link.chat_id || '')}/" data-chat-link="${escapeAttributeValue(link.chat_id || '')}">${escHtml(label)}</a>`;
+    }).join('');
+
     let attachmentsHtml = '';
 
     const normalizedActivitySegments = Array.isArray(viewOptions.activitySegments)
@@ -5928,8 +7205,9 @@ export function createMessagesUi(context, dependencies) {
           </div>
           ${!isUser ? '<div class="msg-activity-stream" style="display:none;"></div>' : ''}
           <div class="msg-bubble${userBubbleAttachmentClass}">${attachmentsHtml}</div>
-          ${icons.buildMessageActionsHtml()}
+          ${icons.buildMessageActionsHtml(isUser)}
         </div>
+        ${branchLinksHtml ? `<div class="msg-branch-divider"><span></span><div>${branchLinksHtml}</div><span></span></div>` : ''}
       </div>
     `);
 
@@ -6076,8 +7354,20 @@ export function createMessagesUi(context, dependencies) {
   // Copy the visible message content to the clipboard.
   function copyMessage($button) {
     const $btn = $button || $();
-    const $bubble = $btn.closest('.msg-body').find('.msg-bubble');
-    const text = $bubble.attr('data-copy') || $bubble.attr('data-raw') || $bubble.text();
+    const $messageBody = $btn.closest('.msg-body');
+    const $bubble = $messageBody.find('.msg-bubble');
+    const rawText = $bubble.attr('data-copy') || $bubble.attr('data-raw') || $bubble.text();
+    const citationRegistry = createCitationRegistry();
+
+    // The rendered chips are the source of truth for citations visible in this message.
+    $messageBody.find('.msg-citation-chip[data-citation-id][href]').each(function registerRenderedCitation() {
+      addCitationSource(citationRegistry, {
+        id: this.getAttribute('data-citation-id'),
+        url: this.getAttribute('href')
+      });
+    });
+
+    const text = replaceCitationHandlesWithSourceUrls(rawText, citationRegistry);
 
     // Swap the icon briefly to confirm the copy action.
     function onCopied() {
@@ -6275,6 +7565,7 @@ export function createMessagesUi(context, dependencies) {
   let $activeReasoningWrapper = null;
   let $activeReasoningMessageRow = null;
   let $activeReasoningIndex = '';
+  let $activeSourcesMessageRow = null;
   const REASONING_DRAWER_DEFAULT_WIDTH = 340;
   const REASONING_DRAWER_MIN_WIDTH = 300;
   const REASONING_DRAWER_MAX_WIDTH = 720;
@@ -6345,6 +7636,7 @@ export function createMessagesUi(context, dependencies) {
       return;
     }
 
+    closeSourcesDrawer();
     resetReasoningDrawerWidth();
 
     // Deactivate previously active pill.
@@ -6391,6 +7683,112 @@ export function createMessagesUi(context, dependencies) {
     setTimeout(function clearDrawerBody() {
       if (!$drawer.hasClass('is-open')) {
         $('#reasoningDrawerBody').empty().removeData('toolSegments').removeData('messageRow');
+      }
+    }, 250);
+  }
+
+  // Return only safe HTTP(S) links for clickable source cards.
+  function safeMessageSourceUrl(value) {
+    try {
+      const parsed = new URL(String(value || '').trim(), window.location.href);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : '';
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  // Render one source as a compact domain/title/preview card.
+  function renderSourcesDrawerItem(source) {
+    const safeSource = source && typeof source === 'object' ? source : {};
+    const domain = String(safeSource.display_domain || safeSource.domain || safeSource.url || '').trim();
+    if (!domain) {
+      return '';
+    }
+
+    const url = safeMessageSourceUrl(safeSource.url || safeSource.link || safeSource.href || '');
+    const title = String(safeSource.title || domain).replace(/\s+/g, ' ').trim();
+    const preview = String(
+      safeSource.preview
+      || safeSource.snippet
+      || safeSource.summary
+      || safeSource.content
+      || safeSource.text
+      || ''
+    ).replace(/\s+/g, ' ').trim();
+    const date = String(safeSource.date || safeSource.published_date || safeSource.published_at || '').trim();
+    const faviconUrl = sourceFaviconUrl(safeSource);
+    const fallbackLetter = (domain.charAt(0) || '?').toUpperCase();
+    const imgHtml = faviconUrl
+      ? `<img class="sources-drawer-favicon" src="${escapeAttributeValue(faviconUrl)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';">`
+      : '';
+    const fallbackStyle = domainAccentStyle(domain, faviconUrl ? 'display:none;' : '');
+    const tagName = url ? 'a' : 'div';
+    const linkAttrs = url ? ` href="${escapeAttributeValue(url)}" target="_blank" rel="noopener noreferrer"` : '';
+    const previewText = [date, preview].filter(Boolean).join(date && preview ? ' — ' : '');
+
+    return `
+      <${tagName} class="sources-drawer-item"${linkAttrs}>
+        <div class="sources-drawer-domain-row">
+          ${imgHtml}<span class="sources-drawer-fallback" style="${escapeAttributeValue(fallbackStyle)}">${escHtml(fallbackLetter)}</span>
+          <span class="sources-drawer-domain">${escHtml(domain)}</span>
+        </div>
+        <div class="sources-drawer-item-title">${escHtml(title)}</div>
+        ${previewText ? `<div class="sources-drawer-item-preview">${escHtml(previewText)}</div>` : ''}
+      </${tagName}>
+    `;
+  }
+
+  // Keep an open Sources drawer synchronized with its response row.
+  function syncSourcesDrawer($msgRow) {
+    const $drawer = $('#sourcesDrawer');
+    const $body = $('#sourcesDrawerBody');
+    if (!$drawer.hasClass('is-open') || !$body.length || !$msgRow || !$msgRow.length) {
+      return;
+    }
+    const sources = $msgRow.data('messageSources') || [];
+    const safeSources = Array.isArray(sources) ? sources : [];
+    $('#sourcesDrawerCount').text(`· ${safeSources.length}`);
+    $body.html(safeSources.map(renderSourcesDrawerItem).join(''));
+  }
+
+  // Open or toggle the Sources drawer for one assistant response.
+  function openSourcesDrawer($button) {
+    const $msgRow = $button && $button.length ? $button.closest('.msg.assistant') : $();
+    const sources = $msgRow.data('messageSources') || [];
+    const $drawer = $('#sourcesDrawer');
+    if (!$msgRow.length || !Array.isArray(sources) || !sources.length || !$drawer.length) {
+      return;
+    }
+
+    if ($activeSourcesMessageRow && $activeSourcesMessageRow[0] === $msgRow[0] && $drawer.hasClass('is-open')) {
+      closeSourcesDrawer();
+      return;
+    }
+
+    closeReasoningDrawer();
+    if ($activeSourcesMessageRow) {
+      $activeSourcesMessageRow.find('.msg-sources-btn').removeClass('is-active').attr('aria-expanded', 'false');
+    }
+    $activeSourcesMessageRow = $msgRow;
+    $msgRow.find('.msg-sources-btn').addClass('is-active').attr('aria-expanded', 'true');
+    $drawer.addClass('is-open');
+    $('#sourcesDrawerBackdrop').addClass('is-visible');
+    syncSourcesDrawer($msgRow);
+  }
+
+  // Close the Sources drawer and clear its active action button.
+  function closeSourcesDrawer() {
+    const $drawer = $('#sourcesDrawer');
+    $drawer.removeClass('is-open');
+    $('#sourcesDrawerBackdrop').removeClass('is-visible');
+    if ($activeSourcesMessageRow) {
+      $activeSourcesMessageRow.find('.msg-sources-btn').removeClass('is-active').attr('aria-expanded', 'false');
+    }
+    $activeSourcesMessageRow = null;
+    setTimeout(function clearSourcesDrawerBody() {
+      if (!$drawer.hasClass('is-open')) {
+        $('#sourcesDrawerBody').empty();
+        $('#sourcesDrawerCount').empty();
       }
     }, 250);
   }
@@ -6484,6 +7882,33 @@ export function createMessagesUi(context, dependencies) {
     configureMermaid();
   }
 
+  // Let Deep Research reuse the exact web-search and Markdown/citation renderers
+  // instead of maintaining visually divergent copies in its inspector.
+  if (deepResearchUi && typeof deepResearchUi.setCanonicalRenderers === 'function') {
+    deepResearchUi.setCanonicalRenderers({
+      search(segment, index, options) {
+        return renderSearchToolCard(segment, index, options);
+      },
+      report(report, sources) {
+        const citationRegistry = createCitationRegistry();
+        (Array.isArray(sources) ? sources : []).forEach(function registerResearchSource(source, index) {
+          addCitationSource(citationRegistry, source, index + 1);
+          const aliases = source && (
+            source.citation_aliases || source.citationAliases || source.aliases
+          );
+          (Array.isArray(aliases) ? aliases : []).forEach(function registerResearchAlias(alias) {
+            addCitationSource(citationRegistry, { ...source, id: alias }, index + 1);
+          });
+        });
+        return renderMarkdownSegment(report, citationRegistry);
+      },
+      hydrate(root) {
+        const $root = root ? $(root) : dom.$messagesInner;
+        hydrateMermaidDiagrams($root);
+      }
+    });
+  }
+
   bindReasoningDrawerResize();
   bindAttachmentMediaEvents();
   bindCitationPreviewCards(document);
@@ -6506,11 +7931,15 @@ export function createMessagesUi(context, dependencies) {
     setQueuedMessageState,
     toggleSearchSources,
     toggleEditCard,
+    toggleSandboxCard,
     toggleCompressionContext,
     toggleWriteCard,
     startWritePreviewPan,
     toggleThoughtSection,
     closeReasoningDrawer,
+    openSourcesDrawer,
+    closeSourcesDrawer,
+    syncMessageSourcesButton,
     updateRegenButtons,
     updateSendButtons
   };

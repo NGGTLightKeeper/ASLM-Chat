@@ -2,23 +2,15 @@
 
 import { escHtml, escapeAttributeValue } from '../main/utils.js';
 
-const CITATION_ID_PATTERN = /^(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{2,16}-\d+)$/;
-const CITATION_SCAN_PATTERN = /\b(?:S\d+|SOURCE-(?:[A-Z0-9]+-)?\d+|C[A-Z0-9]{2,16}-\d+)\b/gi;
 const CITATION_INLINE_NOISE_PATTERN = /[\u034f\u061c\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g;
-const CITATION_HANDLE_SOURCE = String.raw`(?:S\d+|source-(?:[a-z0-9]+-)?\d+|c[a-z0-9]{2,16}-\d+)`;
+// Keep legacy three-character search namespaces while accepting the backend's unbounded
+// monotonic namespace. One shared source keeps validation, scanning, and rendering aligned.
+const SEARCH_CITATION_HANDLE_SOURCE = String.raw`c[a-z0-9]{3,}-\d+`;
+const CITATION_HANDLE_SOURCE = String.raw`(?:S\d+|source-(?:[a-z0-9]+-)?\d+|${SEARCH_CITATION_HANDLE_SOURCE})`;
+const CITATION_ID_PATTERN = new RegExp(String.raw`^${CITATION_HANDLE_SOURCE}$`, 'i');
+const CITATION_SCAN_PATTERN = new RegExp(String.raw`\b${CITATION_HANDLE_SOURCE}\b`, 'gi');
 const CITATION_HANDLE_LIST_SOURCE = String.raw`${CITATION_HANDLE_SOURCE}(?:\s*,\s*${CITATION_HANDLE_SOURCE})*`;
 const CITATION_HANDLE_LIST_PATTERN = new RegExp(String.raw`^\s*${CITATION_HANDLE_LIST_SOURCE}\s*$`, 'i');
-const CITATION_BRACKET_SOURCE = String.raw`\[\s*${CITATION_HANDLE_LIST_SOURCE}\s*\]`;
-const CITATION_GAP_SOURCE = String.raw`[\s\u00a0\u1680\u180e\u2000-\u200d\u2028\u2029\u202f\u205f\u2060\u3000\ufeff]*`;
-const CITATION_JUNK_CLASS_SOURCE = String.raw`.,;:!?(){}<>|/\\'"\-\u00ad\u058a\u05be\u1400\u1806\u2010-\u2015\u2053\u207b\u208b\u2212\u2796\u2e17\u2e1a\u2e3a-\u2e3b\u2e40\u2e5d\u30a0\ufe31-\ufe32\ufe58\ufe63\uff0d`;
-const CITATION_LEADING_JUNK_PATTERN = new RegExp(
-  String.raw`([^\s\[(])${CITATION_GAP_SOURCE}[${CITATION_JUNK_CLASS_SOURCE}]+${CITATION_GAP_SOURCE}(?=${CITATION_BRACKET_SOURCE})`,
-  'gi'
-);
-const CITATION_INTER_BLOCK_JUNK_PATTERN = new RegExp(
-  String.raw`(${CITATION_BRACKET_SOURCE})${CITATION_GAP_SOURCE}[${CITATION_JUNK_CLASS_SOURCE}]+${CITATION_GAP_SOURCE}(?=${CITATION_BRACKET_SOURCE})`,
-  'gi'
-);
 const CITATION_ATTACHED_PATTERN = new RegExp(String.raw`([^\s\[(])\[(${CITATION_HANDLE_LIST_SOURCE})\]`, 'gi');
 const CITATION_TITLE_MAX_CHARS = 180;
 const CITATION_PREVIEW_MAX_CHARS = 520;
@@ -90,11 +82,9 @@ export function normalizeCitationBrackets(value) {
     });
 }
 
-// Insert spaces between adjacent citation blocks and attached punctuation.
+// Insert a separator before an attached citation without deleting surrounding prose.
 export function normalizeCitationSpacing(value) {
   return String(value || '')
-    .replace(CITATION_INTER_BLOCK_JUNK_PATTERN, '$1 ')
-    .replace(CITATION_LEADING_JUNK_PATTERN, '$1 ')
     .replace(
       CITATION_ATTACHED_PATTERN,
       '$1 [$2]'
@@ -372,6 +362,33 @@ export function addSegmentsCitationSources(citationRegistry, segments) {
     addSegmentCitationSources(citationRegistry, segment);
   });
   return citationRegistry;
+}
+
+// Replace registered citation handles with their direct source URLs for plain-text export.
+export function replaceCitationHandlesWithSourceUrls(value, citationRegistry) {
+  const text = normalizeCitationSpacing(normalizeCitationBrackets(value));
+  const bracketPattern = /\[\s*([^\]]+)\s*\]/gi;
+
+  return text.replace(bracketPattern, function replaceCitationGroup(match, body) {
+    const normalizedBody = normalizeCitationHandleGlyphs(body);
+    if (!CITATION_HANDLE_LIST_PATTERN.test(normalizedBody)) {
+      return match;
+    }
+
+    let replaced = false;
+    const links = normalizedBody.split(',').map(function resolveCitationUrl(candidate) {
+      const id = normalizeCitationId(candidate);
+      const source = citationSourceForId(citationRegistry, id);
+      const url = safeExternalUrl(source && source.url);
+      if (!url) {
+        return `[${id}]`;
+      }
+      replaced = true;
+      return url;
+    });
+
+    return replaced ? links.join(' ') : match;
+  });
 }
 
 

@@ -41,6 +41,7 @@
                                     <button class="composer-menu-btn" id="composerMenuBtn" type="button" title="{% t "composer.menu" %}" aria-label="{% t "composer.menu" %}" aria-expanded="false" aria-controls="composerMenuPopover">
                                         <svg width="18" height="18" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"><use href="{% static 'img/ui/add-2.svg' %}#icon"></use></svg>
                                     </button>
+                                    <div class="composer-mode-pills" aria-live="polite"></div>
                                     <div class="composer-menu-popover" id="composerMenuPopover" role="menu" aria-label="{% t "composer.menu" %}" style="display:none;">
                                         <button class="composer-menu-action attach-btn" id="attachBtn" type="button" style="display:none;" role="menuitem" title="{% t "composer.attachFiles" %}" aria-label="{% t "composer.attachFiles" %}">
                                             <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/paperclip.svg' %}#icon"></use></svg>
@@ -61,11 +62,11 @@
                                     <div class="composer-trailing-actions">
                                         <div class="think-level-selector" id="thinkLevelSelector" style="display:none;">
                                             <button class="think-toggle-btn" id="thinkToggleBtn" type="button" title="{% t "composer.reasoningEffort" %}" aria-haspopup="menu" aria-expanded="false">
-                                                <span class="think-toggle-label">{% t "composer.off" %}</span>
+                                                <span class="think-toggle-label">{% t "think.instant" %}</span>
                                                 <svg class="think-toggle-chevron" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                                             </button>
                                             <div class="think-level-menu" role="menu" aria-label="{% t "composer.reasoningEffort" %}" style="display:none;">
-                                                <div class="think-level-menu-title">{% t "composer.intelligence" %}</div>
+                                                <div class="think-level-menu-title">{% t "composer.effort" %}</div>
                                             </div>
                                         </div>
                                         <button class="send-btn" id="sendBtn" disabled aria-label="{% t "composer.sendMessage" %}">
@@ -93,6 +94,7 @@
                         <button class="composer-menu-btn" id="composerMenuBtnConv" type="button" title="{% t "composer.menu" %}" aria-label="{% t "composer.menu" %}" aria-expanded="false" aria-controls="composerMenuPopoverConv">
                             <svg width="18" height="18" fill="currentColor" viewBox="0 -960 960 960" aria-hidden="true"><use href="{% static 'img/ui/add-2.svg' %}#icon"></use></svg>
                         </button>
+                        <div class="composer-mode-pills" aria-live="polite"></div>
                         <div class="composer-menu-popover" id="composerMenuPopoverConv" role="menu" aria-label="{% t "composer.menu" %}" style="display:none;">
                             <button class="composer-menu-action attach-btn" id="attachBtnConv" type="button" style="display:none;" role="menuitem" title="{% t "composer.attachFiles" %}" aria-label="{% t "composer.attachFiles" %}">
                                 <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/paperclip.svg' %}#icon"></use></svg>
@@ -119,11 +121,11 @@
                             </button>
                             <div class="think-level-selector" id="thinkLevelSelectorConv" style="display:none;">
                                 <button class="think-toggle-btn" id="thinkToggleBtnConv" type="button" title="{% t "composer.reasoningEffort" %}" aria-haspopup="menu" aria-expanded="false">
-                                    <span class="think-toggle-label">{% t "composer.off" %}</span>
+                                    <span class="think-toggle-label">{% t "think.instant" %}</span>
                                     <svg class="think-toggle-chevron" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                                 </button>
                                 <div class="think-level-menu" role="menu" aria-label="{% t "composer.reasoningEffort" %}" style="display:none;">
-                                    <div class="think-level-menu-title">{% t "composer.intelligence" %}</div>
+                                    <div class="think-level-menu-title">{% t "composer.effort" %}</div>
                                 </div>
                             </div>
                             <button class="send-btn" id="sendBtnConv" disabled aria-label="{% t "composer.sendMessage" %}">
@@ -155,6 +157,21 @@
         <div class="reasoning-drawer-body" id="reasoningDrawerBody"></div>
     </div>
     <div class="reasoning-drawer-backdrop" id="reasoningDrawerBackdrop"></div>
+
+    {# Sources side drawer. #}
+    <div class="reasoning-drawer sources-drawer" id="sourcesDrawer" aria-label="{% t "sources.panel" %}" role="dialog" aria-modal="false">
+        <div class="reasoning-drawer-header">
+            <div class="reasoning-drawer-header-left">
+                <span class="reasoning-drawer-title">{% t "sources.title" %}</span>
+                <span class="reasoning-drawer-summary" id="sourcesDrawerCount"></span>
+            </div>
+            <button class="reasoning-drawer-close" id="sourcesDrawerClose" type="button" aria-label="{% t "sources.closePanel" %}">
+                <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/x.svg' %}#icon"></use></svg>
+            </button>
+        </div>
+        <div class="reasoning-drawer-body sources-drawer-body" id="sourcesDrawerBody"></div>
+    </div>
+    <div class="reasoning-drawer-backdrop" id="sourcesDrawerBackdrop"></div>
 
     <aside class="sidebar sidebar-right" id="sidebarRight">
         <div class="sidebar-header">
@@ -324,18 +341,19 @@
 <div id="floating-media-root"></div>
 
 {# Tool execution inspector. #}
-<div class="tool-inspector-overlay" id="toolInspectorModal">
-    <div class="tool-inspector-panel">
+<div class="tool-inspector-overlay" id="toolInspectorModal" aria-hidden="true">
+    <div class="tool-inspector-panel" role="dialog" aria-modal="true" aria-labelledby="toolInspectorTitle" tabindex="-1">
         <div class="tool-inspector-header">
             <div class="tool-inspector-header-left">
-                <span class="tool-inspector-title"></span>
+                <span class="tool-inspector-title" id="toolInspectorTitle"></span>
                 <span class="tool-inspector-server"></span>
             </div>
-            <button class="tool-inspector-close" id="toolInspectorClose" aria-label="{% t "toolInspector.close" %}">
+            <div class="tool-inspector-research-tools"></div>
+            <button class="tool-inspector-close" id="toolInspectorClose" type="button" aria-label="{% t "toolInspector.close" %}">
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><use href="{% static 'img/ui/x.svg' %}#icon"></use></svg>
             </button>
         </div>
-        <div class="tool-inspector-body">
+        <div class="tool-inspector-body tool-inspector-generic-body">
             <div class="tool-inspector-section">
                 <div class="tool-inspector-section-label">{% t "toolInspector.in" %}</div>
                 <pre class="tool-inspector-in tool-inspector-pre"></pre>
@@ -343,6 +361,23 @@
             <div class="tool-inspector-section">
                 <div class="tool-inspector-section-label">{% t "toolInspector.out" %}</div>
                 <pre class="tool-inspector-out tool-inspector-pre"></pre>
+            </div>
+        </div>
+        <div class="tool-inspector-research" style="display:none;">
+            <div class="tool-inspector-research-main">
+                <div class="tool-inspector-research-body" aria-live="polite"></div>
+                <div class="tool-inspector-research-error" role="alert" style="display:none;"></div>
+                <div class="tool-inspector-research-footer"></div>
+            </div>
+            <div class="deep-research-plan-editor" style="display:none;">
+                <label class="deep-research-plan-editor-label" for="deepResearchPlanTextarea">Edit research plan</label>
+                <p class="deep-research-plan-editor-help">Keep the plan focused. Use one checklist item per line.</p>
+                <textarea class="deep-research-plan-textarea" id="deepResearchPlanTextarea" spellcheck="true"></textarea>
+                <div class="tool-inspector-research-error" role="alert" style="display:none;"></div>
+                <div class="deep-research-plan-editor-actions">
+                    <button type="button" class="deep-research-btn deep-research-btn--secondary" data-deep-research-editor-action="cancel">Cancel</button>
+                    <button type="button" class="deep-research-btn deep-research-btn--primary" data-deep-research-editor-action="save">Save changes</button>
+                </div>
             </div>
         </div>
     </div>

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import io
@@ -9,6 +10,7 @@ import os
 import subprocess
 import tempfile
 import textwrap
+import threading
 import zipfile
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -22,6 +24,8 @@ from django.urls import reverse
 from API import google_genai as google_genai_api
 from API import llm_api
 from API import mcp as tool_registry
+from API import ollama as ollama_api
+from API import openai as openai_api
 from API.google_genai import (
     generate as generate_google_genai,
     get_model_settings as get_google_genai_model_settings,
@@ -44,6 +48,7 @@ from Settings.mcp_json import UserMcpServerEntry
 from Settings import skills as skills_config
 from Apps.Data.models import (
     Chat,
+    ChatBranch,
     LmsPreset,
     Message,
     MessageAttachment,
@@ -66,6 +71,7 @@ from Apps.UI.views import (
     _build_model_info_payload,
     _build_uploaded_file_context_entry,
     _build_uploaded_file_prompt_block,
+    _apply_uploaded_file_manifests_to_llm_entry,
     _clear_model_metadata_caches,
     _chat_is_first_user_turn,
     _compose_system_prompt,
@@ -83,10 +89,35 @@ from Apps.UI.views import (
     _reveal_file_in_file_manager,
     _resolve_history_char_budget,
     _serialize_attachment_record,
+    _serialize_tool_call_marker,
+    _serialize_tool_activity_marker,
     _selected_tools_include_sandbox,
     _stream_chat_response,
     _strip_llm_control_tokens,
 )
+
+
+class ToolActivityStreamTests(SimpleTestCase):
+    def test_activity_marker_keeps_structured_realtime_event(self):
+        activity = {
+            "alias": "deep_research__research",
+            "server_id": "deep_research",
+            "tool_id": "research",
+            "event": {
+                "sequence": 7,
+                "phase": "research",
+                "iteration": 2,
+                "type": "model_output_delta",
+                "data": {"channel": "reasoning", "content": "Checking sources"},
+            },
+        }
+
+        marker = _serialize_tool_activity_marker(activity)
+
+        self.assertTrue(marker.startswith("<tool_activity>"))
+        self.assertTrue(marker.endswith("</tool_activity>"))
+        payload = json.loads(marker.removeprefix("<tool_activity>").removesuffix("</tool_activity>"))
+        self.assertEqual(payload, activity)
 
 
 # Small structured error helper for Google GenAI adapter tests.
@@ -111,6 +142,58 @@ class FakeGoogleError(Exception):
             }
         }
         super().__init__(f"{code} {status}. {self.details}")
+
+
+# Keep literal inline reasoning tags visible while preserving real control blocks.
+class ReasoningTextParserBoundaryTests(SimpleTestCase):
+    PARSER_MODULES = ("API.openai", "API.lms", "API.google_genai")
+
+    def _parsers(self):
+        for module_name in self.PARSER_MODULES:
+            module = importlib.import_module(module_name)
+            yield module_name, module._ReasoningTextParser()
+
+    def test_inline_quoted_reasoning_block_stays_visible(self):
+        source = "The token <think>quoted text</think> stays visible."
+
+        for module_name, parser in self._parsers():
+            with self.subTest(module=module_name):
+                thinking, visible = parser.feed(source)
+                self.assertEqual(thinking, "")
+                self.assertEqual(visible, source)
+
+    def test_inline_tag_boundary_survives_stream_chunking(self):
+        for module_name, parser in self._parsers():
+            with self.subTest(module=module_name):
+                first_thinking, first_visible = parser.feed("The token <thi")
+                second_thinking, second_visible = parser.feed("nk>quoted</think> stays visible.")
+                self.assertEqual(first_thinking + second_thinking, "")
+                self.assertEqual(
+                    first_visible + second_visible,
+                    "The token <think>quoted</think> stays visible.",
+                )
+
+    def test_reasoning_block_after_clear_separator_is_parsed(self):
+        for module_name, parser in self._parsers():
+            with self.subTest(module=module_name):
+                source = "Preface:\n  <think>plan</think>Answer"
+                thinking, visible = parser.feed(source)
+                self.assertEqual(thinking, "plan")
+                self.assertEqual(visible, "Preface:\n  Answer")
+
+        for prefix in ("Preface: ", 'Preface: "'):
+            for module_name, parser in self._parsers():
+                with self.subTest(module=module_name, prefix=prefix):
+                    thinking, visible = parser.feed(f"{prefix}<think>plan</think>Answer")
+                    self.assertEqual(thinking, "plan")
+                    self.assertEqual(visible, f"{prefix}Answer")
+
+    def test_reasoning_block_at_response_start_is_parsed(self):
+        for module_name, parser in self._parsers():
+            with self.subTest(module=module_name):
+                thinking, visible = parser.feed("<think>plan</think>Answer")
+                self.assertEqual(thinking, "plan")
+                self.assertEqual(visible, "Answer")
 
 
 # Shared test helpers.
@@ -243,6 +326,38 @@ class UserMcpPersistentSessionTests(SimpleTestCase):
         self.assertIn("transport stopped", failed)
         self.assertEqual(recovered, "reconnected")
         self.assertEqual(counters["entered"], 2)
+
+    def test_cancel_entry_stops_active_call(self):
+        started = threading.Event()
+        exited = threading.Event()
+        result = {}
+
+        class FakeSession:
+            async def call_tool(self, _name, _arguments):
+                started.set()
+                await asyncio.Event().wait()
+
+        @asynccontextmanager
+        async def fake_connect(_entry):
+            try:
+                yield FakeSession()
+            finally:
+                exited.set()
+
+        def invoke() -> None:
+            result["value"] = user_mcp_client.call_user_mcp_tool(self._entry(), "echo", {})
+
+        with patch.object(user_mcp_client, "_connect_session", fake_connect):
+            caller = threading.Thread(target=invoke, daemon=True)
+            caller.start()
+            self.assertTrue(started.wait(timeout=1))
+
+            user_mcp_client.cancel_entry(self._entry())
+            caller.join(timeout=1)
+
+        self.assertFalse(caller.is_alive())
+        self.assertTrue(exited.is_set())
+        self.assertIn("closed", result.get("value", "").lower())
 
 
 # MCP reload endpoint tests.
@@ -865,6 +980,393 @@ class SkillsSandboxDispatchTests(SimpleTestCase):
         self.assertIn("x.txt", str(result))
 
 
+class ToolCancellationTests(SimpleTestCase):
+    def tearDown(self):
+        tool_registry.abort_active_tools()
+        with tool_registry._ACTIVE_TOOL_EXECUTIONS_LOCK:
+            tool_registry._ACTIVE_TOOL_EXECUTIONS.clear()
+
+    def test_abort_active_tools_only_cancels_matching_generation(self):
+        first = tool_registry.ActiveToolExecution("generation-a")
+        second = tool_registry.ActiveToolExecution("generation-b")
+        first_callback = Mock()
+        second_callback = Mock()
+        first.set_cancel_callback(first_callback)
+        second.set_cancel_callback(second_callback)
+        tool_registry._register_active_tool(first)
+        tool_registry._register_active_tool(second)
+
+        cancelled_count = tool_registry.abort_active_tools("generation-a")
+
+        self.assertEqual(cancelled_count, 1)
+        self.assertTrue(first.cancelled.is_set())
+        self.assertFalse(second.cancelled.is_set())
+        first_callback.assert_called_once_with()
+        second_callback.assert_not_called()
+
+    def test_abort_active_research_only_cancels_matching_session(self):
+        first = tool_registry.ActiveToolExecution(
+            "generation-a",
+            research_session_id="deep-research:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        second = tool_registry.ActiveToolExecution(
+            "generation-a",
+            research_session_id="deep-research:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
+        unrelated = tool_registry.ActiveToolExecution("generation-a")
+        first_callback = Mock()
+        second_callback = Mock()
+        unrelated_callback = Mock()
+        first.set_cancel_callback(first_callback)
+        second.set_cancel_callback(second_callback)
+        unrelated.set_cancel_callback(unrelated_callback)
+        tool_registry._register_active_tool(first)
+        tool_registry._register_active_tool(second)
+        tool_registry._register_active_tool(unrelated)
+
+        cancelled_count = tool_registry.abort_active_research(
+            "deep-research:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        )
+
+        self.assertEqual(cancelled_count, 1)
+        self.assertTrue(first.cancelled.is_set())
+        self.assertFalse(second.cancelled.is_set())
+        self.assertFalse(unrelated.cancelled.is_set())
+        first_callback.assert_called_once_with()
+        second_callback.assert_not_called()
+        unrelated_callback.assert_not_called()
+
+    def test_streamed_in_process_tool_receives_cancel_event_and_stops(self):
+        started = threading.Event()
+        stopped = threading.Event()
+
+        def blocking_handler(_arguments, context):
+            started.set()
+            context["cancel_event"].wait(timeout=2)
+            stopped.set()
+            return "finished"
+
+        tool = {
+            "id": "wait",
+            "alias": "local__wait",
+            "name": "Wait",
+            "description": "",
+        }
+        server = {
+            "id": "local",
+            "name": "Local",
+            "external": False,
+            "server_file": Path("Tools/local/mcp-server.py"),
+            "tool_handlers": {"wait": blocking_handler},
+            "server_callable": None,
+        }
+        lookup = {"local__wait": {"server": server, "tool": tool}}
+        outcome = {}
+
+        def consume() -> None:
+            stream = tool_registry.stream_ollama_tool(
+                lookup,
+                "local__wait",
+                {},
+                context={"generation_id": "generation-a"},
+            )
+            try:
+                while True:
+                    next(stream)
+            except StopIteration as exc:
+                outcome["result"] = exc.value
+
+        consumer = threading.Thread(target=consume, daemon=True)
+        consumer.start()
+        self.assertTrue(started.wait(timeout=1))
+
+        self.assertEqual(tool_registry.abort_active_tools("generation-a"), 1)
+        consumer.join(timeout=1)
+
+        self.assertFalse(consumer.is_alive())
+        self.assertTrue(stopped.wait(timeout=1))
+        self.assertTrue(tool_registry.is_tool_execution_cancelled(outcome.get("result")))
+
+    def test_research_stop_maps_interrupted_worker_error_to_cancelled_result(self):
+        session_id = "deep-research:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        started = threading.Event()
+        outcome = {}
+
+        def interrupted_call(*_args, **kwargs):
+            cancellation = kwargs["cancellation"]
+            started.set()
+            cancellation.cancelled.wait(timeout=2)
+            raise RuntimeError("worker process was terminated")
+
+        def consume() -> None:
+            with patch.object(tool_registry, "call_ollama_tool", side_effect=interrupted_call):
+                stream = tool_registry.stream_ollama_tool(
+                    {},
+                    "deep_research__deep_research",
+                    {"session_id": session_id},
+                    context={"generation_id": "generation-a"},
+                )
+                try:
+                    while True:
+                        next(stream)
+                except StopIteration as exc:
+                    outcome["result"] = exc.value
+
+        consumer = threading.Thread(target=consume, daemon=True)
+        consumer.start()
+        self.assertTrue(started.wait(timeout=1))
+
+        self.assertEqual(tool_registry.abort_active_research(session_id), 1)
+        consumer.join(timeout=1)
+
+        self.assertFalse(consumer.is_alive())
+        self.assertTrue(tool_registry.is_tool_execution_cancelled(outcome.get("result")))
+
+    def test_research_worker_monitors_durable_stop_while_provider_is_blocked(self):
+        session_id = "deep-research:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        provider_started = threading.Event()
+        stop_requested = threading.Event()
+        cancellation_checkpointed = threading.Event()
+        outcome = {}
+
+        def blocked_provider(*_args, **kwargs):
+            cancellation = kwargs["cancellation"]
+            provider_started.set()
+            cancellation.cancelled.wait(timeout=2)
+            raise RuntimeError("blocked provider interrupted")
+
+        def consume() -> None:
+            def checkpoint_cancelled(*_args, **_kwargs):
+                cancellation_checkpointed.set()
+                return {}
+
+            with (
+                patch.object(tool_registry, "call_ollama_tool", side_effect=blocked_provider),
+                patch(
+                    "Tools.deep_research.control.latest_cancel_requested",
+                    side_effect=lambda _session_id: stop_requested.is_set(),
+                ),
+                patch(
+                    "Tools.deep_research.control.update_state",
+                    side_effect=checkpoint_cancelled,
+                ),
+            ):
+                stream = tool_registry.stream_ollama_tool(
+                    {},
+                    "deep_research__deep_research",
+                    {"session_id": session_id},
+                    context={"generation_id": "generation-a"},
+                )
+                try:
+                    while True:
+                        next(stream)
+                except StopIteration as exc:
+                    outcome["result"] = exc.value
+
+        consumer = threading.Thread(target=consume, daemon=True)
+        consumer.start()
+        self.assertTrue(provider_started.wait(timeout=1))
+
+        stop_requested.set()
+        consumer.join(timeout=2)
+
+        self.assertFalse(consumer.is_alive())
+        self.assertTrue(cancellation_checkpointed.wait(timeout=1))
+        self.assertTrue(tool_registry.is_tool_execution_cancelled(outcome.get("result")))
+
+    def test_ollama_cancellation_forces_the_next_round_to_run_without_tools(self):
+        ollama_api._abort_event.clear()
+        self.addCleanup(ollama_api._abort_event.clear)
+        round_tools = []
+        round_prompts = []
+        round_results = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "function": {
+                        "name": "deep_research__deep_research",
+                        "arguments": {"topic": "Test"},
+                    }
+                }],
+            },
+            {"role": "assistant", "content": "Stopped as requested."},
+        ]
+
+        def fake_stream_round(_client, _model, conversation, _kwargs, *, tools=None):
+            round_tools.append(tools)
+            round_prompts.append(str(conversation[-1].get("content") or ""))
+            result = round_results[len(round_tools) - 1]
+
+            def stream():
+                if False:
+                    yield {}
+                return result
+
+            return stream()
+
+        def cancelled_tool_stream(*_args, **_kwargs):
+            if False:
+                yield {}
+            return tool_registry.TOOL_EXECUTION_CANCELLED
+
+        event = {
+            "alias": "deep_research__deep_research__0",
+            "server_id": "deep-research",
+            "server_name": "Deep Research",
+            "tool_id": "deep_research",
+            "tool_name": "Deep Research",
+            "arguments": {"topic": "Test"},
+        }
+        with (
+            patch.object(ollama_api, "_stream_round", side_effect=fake_stream_round),
+            patch.object(
+                tool_registry,
+                "build_ollama_tools",
+                return_value=([{"type": "function"}], {}),
+            ),
+            patch.object(tool_registry, "prepare_tool_calls", side_effect=lambda _lookup, calls: calls),
+            patch.object(
+                tool_registry,
+                "limit_tool_calls_from_context",
+                side_effect=lambda _context, calls, _lookup: calls,
+            ),
+            patch.object(ollama_api, "_build_tool_event", return_value=event),
+            patch.object(tool_registry, "stream_ollama_tool", side_effect=cancelled_tool_stream),
+        ):
+            list(
+                ollama_api._run_tool_loop(
+                    SimpleNamespace(),
+                    "gemma-test",
+                    [{"role": "user", "content": "Research this"}],
+                    {},
+                    ["deep-research"],
+                    {},
+                )
+            )
+
+        self.assertIsNotNone(round_tools[0])
+        self.assertIsNone(round_tools[1])
+        self.assertIn("Do not call any tool again", round_prompts[1])
+
+    def test_main_chat_abort_does_not_start_a_cancellation_acknowledgement_round(self):
+        ollama_api._abort_event.set()
+        self.addCleanup(ollama_api._abort_event.clear)
+        round_count = 0
+
+        def fake_stream_round(_client, _model, _conversation, _kwargs, *, tools=None):
+            nonlocal round_count
+            round_count += 1
+            if round_count > 1:
+                raise AssertionError("main abort must not start another provider request")
+
+            def stream():
+                if False:
+                    yield {}
+                return {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{
+                        "function": {
+                            "name": "deep_research__deep_research",
+                            "arguments": {"topic": "Test"},
+                        }
+                    }],
+                }
+
+            return stream()
+
+        def cancelled_tool_stream(*_args, **_kwargs):
+            if False:
+                yield {}
+            return tool_registry.TOOL_EXECUTION_CANCELLED
+
+        event = {
+            "alias": "deep_research__deep_research__0",
+            "server_id": "deep-research",
+            "server_name": "Deep Research",
+            "tool_id": "deep_research",
+            "tool_name": "Deep Research",
+            "arguments": {"topic": "Test"},
+        }
+        with (
+            patch.object(ollama_api, "_stream_round", side_effect=fake_stream_round),
+            patch.object(
+                tool_registry,
+                "build_ollama_tools",
+                return_value=([{"type": "function"}], {}),
+            ),
+            patch.object(tool_registry, "prepare_tool_calls", side_effect=lambda _lookup, calls: calls),
+            patch.object(
+                tool_registry,
+                "limit_tool_calls_from_context",
+                side_effect=lambda _context, calls, _lookup: calls,
+            ),
+            patch.object(ollama_api, "_build_tool_event", return_value=event),
+            patch.object(tool_registry, "stream_ollama_tool", side_effect=cancelled_tool_stream),
+        ):
+            list(
+                ollama_api._run_tool_loop(
+                    SimpleNamespace(),
+                    "gemma-test",
+                    [{"role": "user", "content": "Research this"}],
+                    {},
+                    ["deep-research"],
+                    {},
+                )
+            )
+
+        self.assertEqual(round_count, 1)
+
+    def test_cancelled_persistent_worker_is_not_restarted(self):
+        cancellation = tool_registry.ActiveToolExecution("generation-a")
+        session = tool_registry.ExternalWorkerSession(Path("Tools/example/mcp-server.py"), Path("python"))
+        session.process = SimpleNamespace(stdin=Mock(), stdout=Mock())
+
+        def cancelled_read(_timeout):
+            cancellation.cancelled.set()
+            return ""
+
+        with (
+            patch.object(session, "_start") as start_mock,
+            patch.object(session, "_read_response_line", side_effect=cancelled_read),
+            patch.object(session, "close") as close_mock,
+        ):
+            with self.assertRaises(tool_registry.ToolExecutionCancelled):
+                session.request("call", {}, timeout_s=1, cancellation=cancellation)
+
+        start_mock.assert_called_once_with()
+        close_mock.assert_called_once_with()
+
+    def test_cancelled_during_persistent_worker_start_is_closed_before_request(self):
+        cancellation = tool_registry.ActiveToolExecution("generation-a")
+        session = tool_registry.ExternalWorkerSession(Path("Tools/example/mcp-server.py"), Path("python"))
+
+        def cancel_during_start():
+            cancellation.cancelled.set()
+
+        with (
+            patch.object(session, "_start", side_effect=cancel_during_start) as start_mock,
+            patch.object(session, "close") as close_mock,
+        ):
+            with self.assertRaises(tool_registry.ToolExecutionCancelled):
+                session.request("call", {}, timeout_s=1, cancellation=cancellation)
+
+        start_mock.assert_called_once_with()
+        close_mock.assert_called_once_with()
+
+    @patch("API.llm_api.tool_registry.abort_active_tools")
+    @patch("API.llm_api._get_engine_module")
+    def test_llm_abort_forwards_generation_id_to_tools(self, get_module, abort_tools):
+        adapter = SimpleNamespace(abort_generation=Mock())
+        get_module.return_value = adapter
+
+        llm_api.abort_generation("ollama-service", generation_id="generation-a")
+
+        abort_tools.assert_called_once_with("generation-a")
+        adapter.abort_generation.assert_called_once_with()
+
+
 # Cover per-response tool quota guardrails.
 class ToolQuotaTests(SimpleTestCase):
     # High-effort web search is expensive, so keep it bounded per response.
@@ -890,6 +1392,261 @@ class ToolQuotaTests(SimpleTestCase):
 
         for _index in range(4):
             self.assertIsNone(tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments))
+
+
+class ToolCooldownTests(SimpleTestCase):
+    def setUp(self):
+        tool_registry._TOOL_COOLDOWNS.clear()
+
+    def tearDown(self):
+        tool_registry._TOOL_COOLDOWNS.clear()
+
+    # Identical tool arguments in separate chats must not share a cooldown.
+    def test_web_search_cooldown_is_scoped_by_chat_id(self):
+        tool_event = {"tool_id": "web_search", "tool_name": "Web search"}
+        arguments = {"query": "same query", "effort": "medium"}
+        first_chat = {"chat_id": "chat-a"}
+        second_chat = {"chat_id": "chat-b"}
+
+        tool_registry.remember_tool_cooldown(tool_event, arguments, context=first_chat)
+
+        self.assertIsNotNone(
+            tool_registry.consume_tool_cooldown(tool_event, arguments, context=first_chat)
+        )
+        self.assertIsNone(
+            tool_registry.consume_tool_cooldown(tool_event, arguments, context=second_chat)
+        )
+
+    # The scope applies to page reads as well as searches.
+    def test_read_page_cooldown_is_scoped_by_chat_id(self):
+        tool_event = {"tool_id": "read_page", "tool_name": "Read page"}
+        arguments = {"url": "https://example.com/page"}
+
+        tool_registry.remember_tool_cooldown(
+            tool_event, arguments, context={"chat_id": "chat-a"}
+        )
+
+        self.assertIsNone(
+            tool_registry.consume_tool_cooldown(
+                tool_event, arguments, context={"chat_id": "chat-b"}
+            )
+        )
+
+
+class ToolPreflightTests(SimpleTestCase):
+    def _lookup(self):
+        tool = {
+            "id": "web_search",
+            "alias": "web_search__web_search",
+            "name": "Web Search",
+            "prepares_arguments": True,
+        }
+        server = {
+            "id": "web_search",
+            "name": "Web Search",
+            "external": True,
+            "server_file": Path("Tools/mcp-web-search/mcp-server.py"),
+        }
+        return {"web_search__web_search": {"server": server, "tool": tool}}
+
+    @patch.object(tool_registry, "_run_worker")
+    def test_preflight_replaces_raw_arguments_before_tool_event(self, worker_mock):
+        worker_mock.return_value = {
+            "ok": True,
+            "arguments": {
+                "description": "Verify canonical sources",
+                "queries": [{"vertical": "web", "text": "canonical"}],
+            },
+            "tool_ui": {
+                "kind": "web_search",
+                "status": "pending",
+                "description": "Verify canonical sources",
+                "search_request": {
+                    "schema_mode": "advanced",
+                    "description": "Verify canonical sources",
+                    "effort": "medium",
+                    "queries": [{"vertical": "web", "compiled_query": "canonical", "operators": {}}],
+                },
+            },
+        }
+        raw = {"query": "raw model value"}
+        call = tool_registry.prepare_tool_call(
+            self._lookup(),
+            {"name": "web_search__web_search", "arguments": raw},
+        )
+        event = tool_registry.build_tool_event(self._lookup(), call)
+
+        self.assertEqual(call["raw_arguments"], raw)
+        self.assertNotIn("raw model value", json.dumps(event))
+        self.assertEqual(event["arguments"]["queries"][0]["text"], "canonical")
+        self.assertEqual(event["tool_ui"]["description"], "Verify canonical sources")
+        self.assertEqual(event["tool_ui"]["search_request"]["queries"][0]["compiled_query"], "canonical")
+        marker = _serialize_tool_call_marker(event)
+        self.assertIn('"tool_ui"', marker)
+        self.assertNotIn("raw model value", marker)
+
+        transcript = tool_registry.canonicalize_transcript_tool_calls(
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "function": {
+                            "name": "web_search__web_search",
+                            "arguments": json.dumps(raw),
+                        },
+                    }
+                ],
+            },
+            [call],
+        )
+        self.assertNotIn("raw model value", json.dumps(transcript))
+        transcript_arguments = transcript["tool_calls"][0]["function"]["arguments"]
+        self.assertEqual(json.loads(transcript_arguments), event["arguments"])
+
+    @patch.object(tool_registry, "_run_worker")
+    def test_rejected_preflight_keeps_structured_error_for_adapter_short_circuit(self, worker_mock):
+        error_result = {
+            "model_context": "INVALID_SEARCH_PLAN: $.queries: required",
+            "sources": [],
+            "ui": {"kind": "web_search", "status": "rejected"},
+        }
+        worker_mock.return_value = {
+            "ok": False,
+            "arguments": {},
+            "tool_ui": error_result["ui"],
+            "error_result": error_result,
+        }
+        call = tool_registry.prepare_tool_call(
+            self._lookup(),
+            {"name": "web_search__web_search", "arguments": {"query": "legacy"}},
+        )
+
+        self.assertEqual(call["arguments"], {})
+        self.assertEqual(call["preflight_error_result"], error_result)
+        self.assertEqual(call["tool_ui"]["status"], "rejected")
+
+    @patch.object(tool_registry, "_run_worker")
+    def test_parallel_advanced_search_calls_are_preflighted_as_one_batch(self, worker_mock):
+        def prepare_batch(_server_file, _operation, payload, persistent=False):
+            self.assertTrue(persistent)
+            arguments = payload["arguments"]
+            self.assertEqual(
+                [query["text"] for query in arguments["queries"]],
+                ["first query", "second query"],
+            )
+            return {
+                "ok": True,
+                "arguments": arguments,
+                "tool_ui": {
+                    "kind": "web_search",
+                    "status": "pending",
+                    "query_count": 2,
+                },
+            }
+
+        worker_mock.side_effect = prepare_batch
+        calls = [
+            {
+                "id": "call-1",
+                "name": "web_search__web_search",
+                "arguments": {
+                    "description": "Check first source",
+                    "queries": [{"vertical": "web", "text": "first query"}],
+                    "effort": "medium",
+                },
+            },
+            {
+                "id": "call-2",
+                "name": "web_search__web_search",
+                "arguments": {
+                    "description": "Check second source",
+                    "queries": [{"vertical": "web", "text": "second query"}],
+                    "effort": "medium",
+                },
+            },
+        ]
+
+        prepared = tool_registry.prepare_tool_calls(self._lookup(), calls)
+
+        self.assertEqual(len(prepared), 1)
+        self.assertEqual(prepared[0]["id"], "call-1")
+        self.assertEqual(prepared[0]["parallel_batch_size"], 2)
+        self.assertEqual([call["id"] for call in prepared[0]["absorbed_tool_calls"]], ["call-2"])
+        worker_mock.assert_called_once()
+
+    @patch.object(tool_registry, "_run_worker")
+    def test_parallel_search_batch_over_server_limit_is_one_atomic_rejection(self, worker_mock):
+        def reject_oversized_batch(_server_file, _operation, payload, persistent=False):
+            self.assertTrue(persistent)
+            query_count = len(payload["arguments"]["queries"])
+            self.assertEqual(query_count, 4)
+            error_result = {
+                "error": {
+                    "code": "INVALID_SEARCH_PLAN",
+                    "issues": [{"path": "$.queries", "message": "must contain at most 2 items"}],
+                },
+                "sources": [],
+                "model_context": "INVALID_SEARCH_PLAN: $.queries: must contain at most 2 items",
+                "ui": {"kind": "web_search", "status": "rejected", "query_count": 0},
+            }
+            return {
+                "ok": False,
+                "arguments": {},
+                "tool_ui": error_result["ui"],
+                "error_result": error_result,
+            }
+
+        worker_mock.side_effect = reject_oversized_batch
+        calls = [
+            {
+                "id": f"call-{index}",
+                "name": "web_search__web_search",
+                "arguments": {
+                    "description": f"Check source {index}",
+                    "queries": [{"vertical": "web", "text": f"query {index}"}],
+                    "effort": "medium",
+                },
+            }
+            for index in range(1, 5)
+        ]
+
+        prepared = tool_registry.prepare_tool_calls(self._lookup(), calls)
+
+        self.assertEqual(len(prepared), 1)
+        self.assertEqual(prepared[0]["tool_ui"]["status"], "rejected")
+        self.assertIn("4 parallel web_search calls", prepared[0]["preflight_error_result"]["model_context"])
+        self.assertIn("must contain at most 2 items", prepared[0]["preflight_error_result"]["model_context"])
+        worker_mock.assert_called_once()
+
+        transcript = tool_registry.canonicalize_transcript_tool_calls(
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": call["id"],
+                        "function": {
+                            "name": call["name"],
+                            "arguments": json.dumps(call["arguments"]),
+                        },
+                    }
+                    for call in calls
+                ],
+                "google_parts": [
+                    {
+                        "function_call": {
+                            "name": call["name"],
+                            "args": call["arguments"],
+                        },
+                        "thought_signature": f"signature-{call['id']}",
+                    }
+                    for call in calls
+                ],
+            },
+            prepared,
+        )
+        self.assertEqual([call["id"] for call in transcript["tool_calls"]], ["call-1"])
+        self.assertEqual(len(transcript["google_parts"]), 1)
 
 # Cover adapter-specific model list formats.
 class ModelNameExtractionTests(SimpleTestCase):
@@ -1500,6 +2257,45 @@ class UploadFilesApiTests(SimpleTestCase):
         self.assertTrue(with_sandbox["sandbox_path"].startswith(f"/workspace/_sandbox/User/{with_sandbox['sha256']}/"))
         self.assertIn("sandbox", with_sandbox["recommended_tools"])
 
+    # JSON uploads are sent as complete text context rather than a short preview.
+    def test_uploaded_json_is_added_to_model_context(self):
+        json_payload = json.dumps({"items": list(range(8000)), "tail": "context-tail"})
+        upload = SimpleUploadedFile("payload.json", json_payload.encode("utf-8"), content_type="application/json")
+        response = self.client.post(reverse("uploads_api"), {"files": [upload]})
+        file_id = response.json()["files"][0]["file_id"]
+        manifest = _load_model_upload_manifests([file_id], sandbox_enabled=False)[0]
+
+        entry = _apply_uploaded_file_manifests_to_llm_entry(
+            {"role": "user", "content": "Inspect this JSON"},
+            [manifest],
+        )
+
+        self.assertIn("JSON content:\n```json", entry["content"])
+        self.assertIn('"tail": "context-tail"', entry["content"])
+        self.assertNotIn("Text preview:", entry["content"])
+
+    # Uploaded media bytes are attached only for model-supported modalities.
+    def test_uploaded_media_is_gated_by_model_capabilities(self):
+        upload = SimpleUploadedFile("voice.mp3", b"fake-mp3-bytes", content_type="audio/mpeg")
+        response = self.client.post(reverse("uploads_api"), {"files": [upload]})
+        file_id = response.json()["files"][0]["file_id"]
+        manifest = _load_model_upload_manifests([file_id], sandbox_enabled=False)[0]
+
+        unsupported_entry = _apply_uploaded_file_manifests_to_llm_entry(
+            {"role": "user", "content": "Listen"},
+            [manifest],
+            supported_media_kinds={"image"},
+        )
+        supported_entry = _apply_uploaded_file_manifests_to_llm_entry(
+            {"role": "user", "content": "Listen"},
+            [manifest],
+            supported_media_kinds={"audio"},
+        )
+
+        self.assertNotIn("media", unsupported_entry)
+        self.assertEqual(supported_entry["media"][0]["kind"], "audio")
+        self.assertEqual(supported_entry["media"][0]["data"], "ZmFrZS1tcDMtYnl0ZXM=")
+
     # Test the private prompt block only includes sandbox path when allowed.
     def test_uploaded_file_prompt_block_hides_disabled_sandbox_path(self):
         manifest = {
@@ -1612,6 +2408,31 @@ class StaticCacheVersionTests(SimpleTestCase):
         ).render(Context({}))
         self.assertEqual(rendered, f"/static/css/main/main.css?v={STATIC_CACHE_VERSION}")
 
+    # Verify every local ES module is mapped to the same backend-generated key.
+    def test_static_import_map_versions_the_complete_module_graph(self):
+        import json
+
+        from Apps.UI import STATIC_CACHE_VERSION
+        from django.template import Context, Template
+
+        rendered = Template(
+            "{% load i18n_tags %}{% static_import_map %}"
+        ).render(Context({}))
+        imports = json.loads(rendered)["imports"]
+
+        self.assertGreater(len(imports), 20)
+        self.assertEqual(
+            imports["/static/js/ui/deep-research-ui.js"],
+            f"/static/js/ui/deep-research-ui.js?v={STATIC_CACHE_VERSION}",
+        )
+        self.assertEqual(
+            imports["/static/js/main/api.js"],
+            f"/static/js/main/api.js?v={STATIC_CACHE_VERSION}",
+        )
+        self.assertTrue(
+            all(target == f"{source}?v={STATIC_CACHE_VERSION}" for source, target in imports.items())
+        )
+
 # Verify that the main page uses the configured engine and local server helpers.
 class MainViewTests(ToolRegistryTestMixin, TestCase):
     # Test main view includes runtime settings and local servers.
@@ -1645,10 +2466,18 @@ class MainViewTests(ToolRegistryTestMixin, TestCase):
             }],
         )
         self.assertContains(response, 'id="group-load"')
-        self.assertNotContains(response, 'type="importmap"')
+        self.assertContains(response, 'type="importmap"')
+        self.assertRegex(
+            response.content.decode("utf-8"),
+            r'"/static/js/ui/deep-research-ui\.js":"/static/js/ui/deep-research-ui\.js\?v=\d{14}"',
+        )
         self.assertRegex(
             response.content.decode("utf-8"),
             r"/static/js/main/main\.js\?v=\d{14}",
+        )
+        self.assertNotRegex(
+            response.content.decode("utf-8"),
+            r"/static/[^\"']+\?v=\d{14}\?v=",
         )
         self.assertNotContains(response, "cdn.jsdelivr.net")
         self.assertContains(response, "/static/css/vendor/katex.min.css?v=")
@@ -1820,6 +2649,28 @@ class OpenAiOptionMappingTests(SimpleTestCase):
 
 # Cover extended OpenAI-compatible capability parsing and reasoning output.
 class OpenAiAdapterTests(SimpleTestCase):
+    # OpenAI-compatible messages encode supported audio as native input_audio.
+    def test_openai_messages_include_audio_media_part(self):
+        payload = openai_api._build_openai_messages(
+            [
+                {
+                    "role": "user",
+                    "content": "Transcribe",
+                    "media": [
+                        {
+                            "kind": "audio",
+                            "name": "voice.mp3",
+                            "mime_type": "audio/mpeg",
+                            "data": "ZmFrZQ==",
+                        }
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(payload[0]["content"][1]["type"], "input_audio")
+        self.assertEqual(payload[0]["content"][1]["input_audio"]["format"], "mp3")
+
     # Test get model settings reads OpenAI capabilities and reasoning.
     @patch("API.openai._get_client")
     # Verify get model settings reads openai capabilities and reasoning.
@@ -1879,7 +2730,7 @@ class OpenAiAdapterTests(SimpleTestCase):
                     "vision": True,
                     "tool_calling": True,
                     "reasoning": True,
-                    "input_modalities": ["text", "image"],
+                    "input_modalities": ["text", "image", "audio", "video"],
                 }
             ]
         )
@@ -1893,6 +2744,8 @@ class OpenAiAdapterTests(SimpleTestCase):
 
         self.assertTrue(payload["supports_tool_calling"])
         self.assertTrue(payload["supports_vision"])
+        self.assertTrue(payload["supports_audio_input"])
+        self.assertTrue(payload["supports_video_input"])
         self.assertTrue(payload["supports_thinking"])
         self.assertTrue(payload["supports_think_level"])
         self.assertFalse(payload["supports_think_toggle"])
@@ -1995,6 +2848,28 @@ class GoogleGenAiAdapterTests(SimpleTestCase):
     def tearDown(self):
         google_genai_api._reset_runtime_caches()
         super().tearDown()
+
+    # Gemini receives supported audio/video as inline_data content parts.
+    def test_google_contents_include_media_inline_data(self):
+        _system_instruction, contents = google_genai_api._build_google_contents(
+            [
+                {
+                    "role": "user",
+                    "content": "Describe",
+                    "media": [
+                        {
+                            "kind": "video",
+                            "name": "clip.mp4",
+                            "mime_type": "video/mp4",
+                            "data": "ZmFrZQ==",
+                        }
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(contents[0]["parts"][1]["inline_data"]["data"], b"fake")
+        self.assertEqual(contents[0]["parts"][1]["inline_data"]["mime_type"], "video/mp4")
 
     # Test Gemini function-call replay preserves thought signatures.
     def test_function_call_history_preserves_thought_signature(self):
@@ -2231,6 +3106,9 @@ class GoogleGenAiAdapterTests(SimpleTestCase):
         self.assertTrue(payload["supports_thinking"])
         self.assertTrue(payload["supports_think_toggle"])
         self.assertFalse(payload["supports_think_level"])
+        self.assertTrue(payload["supports_vision"])
+        self.assertTrue(payload["supports_audio_input"])
+        self.assertTrue(payload["supports_video_input"])
         self.assertEqual(payload["think_level_options"], [])
         self.assertTrue(payload["defaults"]["include_thoughts"])
         self.assertEqual(payload["defaults"]["max_output_tokens"], 8192)
@@ -2559,6 +3437,17 @@ class ViewFormattingTests(SimpleTestCase):
         self.assertEqual(extras["structured_content"]["file"]["render"]["type"], "image")
         self.assertIn("/api/shared-file/download/?", extras["structured_content"]["file"]["download_url"])
         self.assertEqual(extras["tool_ui"]["kind"], "shared_file")
+
+    def test_cancelled_tool_result_is_stable_and_tells_model_not_to_retry(self):
+        model_text, extras = tool_registry.split_tool_result_payload(
+            tool_registry.TOOL_EXECUTION_CANCELLED
+        )
+
+        self.assertTrue(model_text.startswith("TOOL_EXECUTION_CANCELLED:"))
+        self.assertIn("Do not retry", model_text)
+        self.assertNotIn("object at 0x", model_text)
+        self.assertEqual(extras["tool_ui"]["status"], "cancelled")
+        self.assertTrue(tool_registry.is_blocking_tool_result(tool_registry.TOOL_EXECUTION_CANCELLED))
 
     # Test repeated tool aliases preserve all shared files in activity segments.
     def test_build_activity_segments_keeps_repeated_share_file_aliases(self):
@@ -3628,6 +4517,14 @@ class OllamaDesiredStateTests(SimpleTestCase):
         state = ollama_service._get_desired_state("ollama-service")
         self.assertTrue(state.should_run)
 
+    def test_service_never_persists_runtime_output_in_module_settings(self):
+        ollama_service = importlib.import_module("Services.ollama-service")
+        source = Path(ollama_service.__file__).read_text(encoding="utf-8")
+
+        self.assertFalse(hasattr(ollama_service, "LOG_FILE"))
+        self.assertNotIn("ollama-service.log", source)
+        self.assertIn("stdout=subprocess.PIPE", source)
+
 
 # Verify request-level engine resolution.
 class RequestEngineResolutionTests(SimpleTestCase):
@@ -4118,6 +5015,112 @@ class ToolApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(Message.objects.filter(id=first.id).exists())
         self.assertTrue(Message.objects.filter(id=second.id).exists())
+
+    # A branch is a lossless copy through the selected turn with links on both sides.
+    def test_branch_message_api_copies_history_and_exposes_bidirectional_markers(self):
+        chat = Chat.objects.create(title="Original", active_tool_slug='["sandbox"]')
+        first = Message.objects.create(chat=chat, role="user", content="First")
+        MessageAttachment.objects.create(
+            message=first,
+            kind=MessageAttachmentKind.IMAGE,
+            name="image.png",
+            mime_type="image/png",
+            data="aW1hZ2U=",
+            size_bytes=5,
+        )
+        target = Message.objects.create(
+            chat=chat,
+            role="assistant",
+            content="Answer",
+            llm_transcript=[{"role": "assistant", "thinking": "Full thought", "content": "Answer"}],
+        )
+        Message.objects.create(chat=chat, role="user", content="Must not be copied")
+
+        response = self.client.post(reverse("branch_message_api", args=[target.id]), data="{}", content_type="application/json")
+
+        self.assertEqual(response.status_code, 201)
+        child = Chat.objects.get(id=response.json()["chat_id"])
+        self.assertEqual(child.active_tool_slug, '["sandbox"]')
+        copied = list(child.messages.order_by("created_at", "id"))
+        self.assertEqual([item.content for item in copied], ["First", "Answer"])
+        self.assertEqual(copied[1].llm_transcript[0]["thinking"], "Full thought")
+        self.assertEqual(copied[0].attachments.get().data, "aW1hZ2U=")
+        branch = ChatBranch.objects.get(child_chat=child)
+        self.assertEqual(branch.source_message_id, target.id)
+        self.assertEqual(branch.child_message_id, copied[1].id)
+
+        source_payload = self.client.get(reverse("load_chat_api", args=[chat.id])).json()
+        child_payload = self.client.get(reverse("load_chat_api", args=[child.id])).json()
+        source_target = next(item for item in source_payload["messages"] if item["id"] == target.id)
+        child_target = next(item for item in child_payload["messages"] if item["id"] == copied[1].id)
+        self.assertEqual(source_target["branch_links"][0]["direction"], "to_branch")
+        self.assertEqual(source_target["branch_links"][0]["chat_id"], str(child.id))
+        self.assertEqual(child_target["branch_links"][0]["direction"], "to_origin")
+        self.assertEqual(child_target["branch_links"][0]["chat_id"], str(chat.id))
+
+    # Editing a user message invalidates every later turn while keeping attachments.
+    def test_edit_message_api_replaces_user_text_and_truncates_continuation(self):
+        chat = Chat.objects.create(title="Chat")
+        target = Message.objects.create(chat=chat, role="user", content="Old text")
+        attachment = MessageAttachment.objects.create(
+            message=target,
+            kind=MessageAttachmentKind.FILE,
+            name="note.txt",
+            mime_type="text/plain",
+            data="bm90ZQ==",
+            size_bytes=4,
+        )
+        stale = Message.objects.create(chat=chat, role="assistant", content="Stale answer")
+
+        response = self.client.patch(
+            reverse("edit_message_api", args=[target.id]),
+            data=json.dumps({"content": "New\ntext"}),
+            content_type="application/json",
+        )
+
+        target.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(target.content, "New\ntext")
+        self.assertFalse(Message.objects.filter(id=stale.id).exists())
+        self.assertTrue(MessageAttachment.objects.filter(id=attachment.id).exists())
+
+    # The archive contains readable linked Markdown, full transcript JSON and binary assets.
+    def test_export_chat_api_returns_lossless_zip(self):
+        chat = Chat.objects.create(title="Export test")
+        message = Message.objects.create(
+            chat=chat,
+            role="assistant",
+            content="Supported claim [cabc-1]",
+            llm_transcript=[
+                {"role": "assistant", "thinking": "Do not shorten", "content": "Supported claim [cabc-1]"},
+                {
+                    "role": "tool",
+                    "content": "result",
+                    "structured_content": {"sources": [{"id": "cabc-1", "url": "https://example.com/source"}]},
+                },
+            ],
+        )
+        MessageAttachment.objects.create(
+            message=message,
+            kind=MessageAttachmentKind.IMAGE,
+            name="chart.png",
+            mime_type="image/png",
+            data="cG5nLWJ5dGVz",
+            size_bytes=9,
+        )
+
+        response = self.client.get(reverse("export_chat_api", args=[chat.id]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/zip")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            self.assertEqual(set(archive.namelist()), {"chat.md", "chat.json", "attachments/chart.png"})
+            markdown = archive.read("chat.md").decode("utf-8")
+            payload = json.loads(archive.read("chat.json"))
+            self.assertIn("[CABC-1](https://example.com/source)", markdown)
+            self.assertIn('"thinking": "Do not shorten"', markdown)
+            self.assertEqual(payload["messages"][0]["llm_transcript"][0]["thinking"], "Do not shorten")
+            self.assertEqual(archive.read("attachments/chart.png"), b"png-bytes")
 
     # Test rename chat API trims and persists the title.
     def test_rename_chat_api_updates_title(self):

@@ -99,7 +99,7 @@ PROVIDERS: tuple[AcademicProvider, ...] = (
         host="arxiv.org",
         fmt="atom",
         url_builder=lambda q, n: (
-            f"http://export.arxiv.org/api/query?search_query=all:{_q(q)}"
+            f"https://export.arxiv.org/api/query?search_query=all:{_q(q)}"
             f"&start=0&max_results={max(1, n)}&sortBy=relevance"
         ),
         weight=0.8,

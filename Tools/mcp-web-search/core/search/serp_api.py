@@ -217,6 +217,9 @@ class SerpApi:
         region: str = "us-en",
         safesearch: str = "moderate",
         timelimit: str | None = None,
+        engine_queries: dict[str, str] | None = None,
+        engine_timelimits: dict[str, str | None] | None = None,
+        engine_omitted_operators: dict[str, tuple[str, ...]] | None = None,
         deadline_seconds: float | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         query = " ".join(str(query or "").split()).strip()
@@ -229,12 +232,19 @@ class SerpApi:
 
         # Run one engine, emit each new source, then emit its full status payload.
         async def run(parser_type) -> None:
+            engine_query = (engine_queries or {}).get(parser_type.name, query)
+            engine_timelimit = (engine_timelimits or {}).get(parser_type.name, timelimit)
             payload = await self._run_engine(
                 parser_type,
-                query,
+                engine_query,
                 region=region,
                 safesearch=safesearch,
-                timelimit=timelimit,
+                timelimit=engine_timelimit,
+            )
+            payload["query"] = engine_query
+            payload["timelimit"] = engine_timelimit
+            payload["omitted_operators"] = list(
+                (engine_omitted_operators or {}).get(parser_type.name, ())
             )
             for rank, source in enumerate(payload["sources"], 1):
                 url = str(source.get("url") or "")

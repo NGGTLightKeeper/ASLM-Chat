@@ -8,6 +8,7 @@ import logging
 from types import ModuleType
 from typing import Any
 
+from API import mcp as tool_registry
 from Settings import settings
 
 logger = logging.getLogger(__name__)
@@ -79,9 +80,10 @@ def generate(engine: str | None, model_name: str, messages: list[dict[str, Any]]
 
 
 # Abort active generation for one engine or all loaded engines.
-def abort_generation(engine: str | None = None) -> None:
+def abort_generation(engine: str | None = None, *, generation_id: str | None = None) -> None:
     """Signal the active generation for one engine or every loaded adapter."""
 
+    tool_registry.abort_active_tools(generation_id)
     if engine is None:
         module_names = {module_name for module_name in ENGINE_MODULES.values()}
         for module_name in module_names:

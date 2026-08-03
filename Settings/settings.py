@@ -150,6 +150,13 @@ def normalize_setting_key(raw_key: str) -> str:
     if dashed in DEFAULTS:
         return dashed
 
+    # A few historical keys intentionally mix dashes and underscores (for
+    # example ``ollama-service_port``). Environment variable names cannot
+    # preserve that distinction, so compare a separator-normalized form too.
+    for canonical_key in DEFAULTS:
+        if canonical_key.replace("_", "-") == dashed:
+            return canonical_key
+
     underscored = key.replace("-", "_")
     if underscored in DEFAULTS:
         return underscored

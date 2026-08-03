@@ -32,7 +32,7 @@
     "tools": "Outils",
     "other": "Autre",
     "reasoningEffort": "Effort de raisonnement",
-    "intelligence": "Réflexion",
+    "effort": "Effort",
     "off": "Désactivé",
     "sendMessage": "Envoyer le message",
     "queueMessage": "Mettre le message en file d'attente",
@@ -43,6 +43,11 @@
     "panel": "Panneau de raisonnement",
     "title": "Raisonnement",
     "closePanel": "Fermer le panneau de raisonnement"
+  },
+  "sources": {
+    "panel": "Panneau des sources",
+    "title": "Sources",
+    "closePanel": "Fermer le panneau des sources"
   },
   "settings": {
     "modelSettings": "Paramètres du modèle",
@@ -104,6 +109,8 @@
   },
   "think": {
     "off": "Désactivé",
+    "instant": "Instantané",
+    "thinking": "Réflexion",
     "low": "Faible",
     "medium": "Moyen",
     "high": "Élevé",

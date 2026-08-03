@@ -14,6 +14,7 @@
     "noPreviousChats": "No previous chats",
     "chatOptions": "Chat options",
     "rename": "Rename",
+    "download": "Download chat",
     "delete": "Delete",
     "ago": "{time} ago"
   },
@@ -32,7 +33,7 @@
     "tools": "Tools",
     "other": "Other",
     "reasoningEffort": "Reasoning effort",
-    "intelligence": "Thinking",
+    "effort": "Effort",
     "off": "Off",
     "sendMessage": "Send Message",
     "queueMessage": "Queue message",
@@ -43,6 +44,11 @@
     "panel": "Reasoning panel",
     "title": "Reasoning",
     "closePanel": "Close reasoning panel"
+  },
+  "sources": {
+    "panel": "Sources panel",
+    "title": "Sources",
+    "closePanel": "Close sources panel"
   },
   "settings": {
     "modelSettings": "Model Settings",
@@ -104,6 +110,8 @@
   },
   "think": {
     "off": "Off",
+    "instant": "Instant",
+    "thinking": "Thinking",
     "low": "Low",
     "medium": "Medium",
     "high": "High",
@@ -111,6 +119,13 @@
     "extraHigh": "Extra High"
   },
   "messages": {
+    "branch": "Branch from here",
+    "editMessage": "Edit message",
+    "editTitle": "Edit message",
+    "editHint": "The later conversation will be regenerated.",
+    "saveAndRegenerate": "Save and regenerate",
+    "branchedFrom": "Branched from {title}",
+    "openBranch": "Open {title}",
     "more": "More",
     "hide": "Hide",
     "copyCode": "Copy code",

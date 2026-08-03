@@ -32,7 +32,7 @@
     "tools": "工具",
     "other": "其他",
     "reasoningEffort": "推理强度",
-    "intelligence": "思考",
+    "effort": "推理强度",
     "off": "关闭",
     "sendMessage": "发送消息",
     "queueMessage": "排队发送",
@@ -43,6 +43,11 @@
     "panel": "推理面板",
     "title": "推理",
     "closePanel": "关闭推理面板"
+  },
+  "sources": {
+    "panel": "来源面板",
+    "title": "来源",
+    "closePanel": "关闭来源面板"
   },
   "settings": {
     "modelSettings": "模型设置",
@@ -104,6 +109,8 @@
   },
   "think": {
     "off": "关闭",
+    "instant": "即时",
+    "thinking": "思考",
     "low": "低",
     "medium": "中",
     "high": "高",

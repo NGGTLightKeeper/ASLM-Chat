@@ -2,7 +2,7 @@
 
 import { deleteJson, getCsrfToken, getJson, patchJson, postJson } from './api.js';
 import { intlLocaleTag, t } from './i18n.js';
-import { confirmDialog, textDialog } from '../ui/dialogs.js';
+import { confirmDialog, largeTextDialog, textDialog } from '../ui/dialogs.js';
 
 // Chat controller.
 // Create the chat workflow controller for sending, loading, and mutating chats.
@@ -469,6 +469,9 @@ export function createChatController(context, dependencies) {
       if (request.toolServerIds && request.toolServerIds.length > 0) {
         payload.tool_server_ids = request.toolServerIds;
       }
+      if (!isRegenerate && request.deepResearch === true) {
+        payload.deep_research = true;
+      }
       if (!isRegenerate) {
         const attachmentPayloads = await buildAttachmentPayloads(request.attachments);
         if (attachmentPayloads.length > 0) {
@@ -702,6 +705,7 @@ export function createChatController(context, dependencies) {
       if ($assistantRow.find('.msg-actions').length === 0) {
         $assistantRow.find('.msg-body').append(context.icons.buildMessageActionsHtml());
       }
+      messagesUi.syncMessageSourcesButton($assistantRow);
 
       messagesUi.updateRegenButtons();
       state.isChatGenerating = false;
@@ -765,6 +769,7 @@ export function createChatController(context, dependencies) {
   // Snapshot the current UI state into one queued chat request.
   function buildQueuedRequest(text, attachmentsToSend) {
     const options = parametersUi.collectOptionsPayload();
+    const deepResearch = state.deepResearchEnabled === true;
 
     return {
       id: `queued-${++state.queuedMessageCounter}`,
@@ -775,7 +780,8 @@ export function createChatController(context, dependencies) {
       systemPrompt: dom.$systemPrompt.val(),
       options,
       reasoningModeEnabled: requestWantsReasoning(options),
-      toolServerIds: state.toolState.supported ? parametersUi.getSelectedToolServerIds() : [],
+      toolServerIds: !deepResearch && state.toolState.supported ? parametersUi.getSelectedToolServerIds() : [],
+      deepResearch,
       chatId: state.currentChatId
     };
   }
@@ -1044,7 +1050,7 @@ export function createChatController(context, dependencies) {
   // Convert one tool or MCP server into a slash palette entry.
   function buildSlashToolEntry(server, section) {
     const serverId = String(server && server.id || '').trim();
-    if (!serverId) {
+    if (!serverId || serverId.toLowerCase() === 'deep_research') {
       return null;
     }
     const unavailableReason = slashToolUnavailableReason(server);
@@ -1425,8 +1431,8 @@ export function createChatController(context, dependencies) {
 
   // Chat history loading.
   // Load one stored chat into the current page.
-  async function loadChat(chatId, pushState) {
-    if (!chatId || state.currentChatId === chatId) {
+  async function loadChat(chatId, pushState, forceReload) {
+    if (!chatId || (state.currentChatId === chatId && !forceReload)) {
       return;
     }
 
@@ -1464,7 +1470,8 @@ export function createChatController(context, dependencies) {
           options: {
             activitySegments: Array.isArray(message.activity_segments) ? message.activity_segments : [],
             reasoningMode: message.reasoning_mode === true,
-            messageId: message.id
+            messageId: message.id,
+            branchLinks: Array.isArray(message.branch_links) ? message.branch_links : []
           }
         };
       });
@@ -1553,6 +1560,81 @@ export function createChatController(context, dependencies) {
     }
   }
 
+  // Download the chat selected in the sidebar as a portable ZIP archive.
+  function downloadActiveMenuChat() {
+    const $item = historyUi.getActiveMenuTarget();
+    if (!$item) {
+      return;
+    }
+    const chatId = String($item.data('chat-id') || '');
+    historyUi.closeChatMenu();
+    if (!chatId) {
+      return;
+    }
+    const link = document.createElement('a');
+    link.href = `/api/chat/${chatId}/export/`;
+    link.download = '';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
+  // Create and immediately open a linked conversation branch.
+  async function branchFromMessage($message) {
+    if (state.isChatGenerating) {
+      return;
+    }
+    const messageId = $message && $message.length ? $message.attr('data-message-id') : '';
+    if (!messageId) {
+      return;
+    }
+    try {
+      const data = await postJson(`/api/message/${messageId}/branch/`, {});
+      if (!data.ok || !data.chat_id) {
+        return;
+      }
+      historyUi.prependChatItem(data.chat_id, data.title || 'Branch', 'just now');
+      await loadChat(data.chat_id, true);
+    } catch (error) {
+      console.error('Failed to create chat branch:', error);
+    }
+  }
+
+  // Replace a user message, truncate its stale continuation, then regenerate.
+  async function editUserMessage($message) {
+    if (!state.currentChatId || state.isChatGenerating || !$message || !$message.hasClass('user')) {
+      return;
+    }
+    const messageId = $message.attr('data-message-id');
+    if (!messageId) {
+      return;
+    }
+    const currentText = String($message.find('.msg-bubble').attr('data-raw') || '');
+    const editedText = await largeTextDialog({
+      title: t('messages.editTitle', null, 'Edit message'),
+      label: t('messages.editHint', null, 'The later conversation will be regenerated.'),
+      value: currentText,
+      confirmText: t('messages.saveAndRegenerate', null, 'Save and regenerate')
+    });
+    if (editedText === null || editedText === currentText) {
+      return;
+    }
+    try {
+      const data = await patchJson(`/api/message/${messageId}/edit/`, { content: editedText });
+      if (!data.ok) {
+        return;
+      }
+      const chatId = state.currentChatId;
+      await loadChat(chatId, false, true);
+      const $updatedRow = dom.$messagesInner.find(`.msg.user[data-message-id="${messageId}"]`).first();
+      if ($updatedRow.length) {
+        queueRegenerationRequest($updatedRow, null);
+      }
+    } catch (error) {
+      console.error('Failed to edit user message:', error);
+    }
+  }
+
   // Delete one message row and keep the local UI in sync.
   async function deleteMessage($message) {
     const messageId = $message.data('message-id');
@@ -1575,8 +1657,11 @@ export function createChatController(context, dependencies) {
 
   return {
     abortGeneration,
+    branchFromMessage,
     deleteActiveMenuChat,
     deleteMessage,
+    downloadActiveMenuChat,
+    editUserMessage,
     loadChat,
     processChatQueue,
     regenerateFromUserMessage,

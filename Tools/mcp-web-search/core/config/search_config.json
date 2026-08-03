@@ -22,10 +22,14 @@
     "prefetch_max_urls": 4
   },
   "query": {
+    "schema_mode": "advanced",
     "year_hint_mode": "timelimit",
     "year_hint_current": "m",
     "year_hint_prev": "y",
     "year_hint_older": null
+  },
+  "browser": {
+    "browser_fallback": "full"
   },
   "tor": {
     "enabled": false

@@ -27,6 +27,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from core.query.provider_compiler import compile_provider_query
+
 from .hosted_providers import HostedProvider, HostedResult, available_providers, sanitize_query_for_api
 
 logger = logging.getLogger("services.web_search")
@@ -101,18 +103,28 @@ async def hosted_search_stream(
     max_results: int = 5,
     deadline_seconds: float = 8.0,
     providers: list[HostedProvider] | None = None,
+    query_text: str = "",
+    operators: dict[str, Any] | None = None,
+    timelimit: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     providers = providers if providers is not None else available_providers()
     if not providers:
         return
 
-    sanitized = sanitize_query_for_api(query)
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     seen: set[str] = set()
     seen_lock = asyncio.Lock()
 
     async def run(provider: HostedProvider, client: httpx.AsyncClient) -> None:
         family = provider.provider_family
+        compiled = compile_provider_query(
+            query_text or query,
+            operators,
+            provider.name,
+            fallback_query=query,
+            timelimit=timelimit,
+        )
+        sanitized = sanitize_query_for_api(compiled.query)
         started = time.perf_counter()
         try:
             results = await provider.search(client, sanitized, max_results=max_results)
@@ -148,8 +160,12 @@ async def hosted_search_stream(
                     "fetch_ms": fetch_ms, "parse_ms": 0.0,
                 }
             await queue.put(item)
+        payload = _engine_payload(provider.name, family, results, fetch_ms)
+        payload["query"] = sanitized
+        payload["timelimit"] = compiled.timelimit
+        payload["omitted_operators"] = list(compiled.omitted_operators)
         await queue.put({"type": "engine", "engine": f"hosted:{provider.name}",
-                         "payload": _engine_payload(provider.name, family, results, fetch_ms)})
+                         "payload": payload})
 
     async def produce() -> None:
         try:

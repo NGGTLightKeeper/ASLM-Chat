@@ -10,7 +10,6 @@ import signal
 import subprocess
 import threading
 import time
-from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import URLError
@@ -24,10 +23,7 @@ _ollama_process: subprocess.Popen | None = None
 _log_stream_thread: threading.Thread | None = None
 _log_stream_lock = threading.Lock()
 PID_FILE = Path(__file__).resolve().parent.parent / "Settings" / "ollama-service.pid"
-LOG_FILE = Path(__file__).resolve().parent.parent / "Settings" / "ollama-service.log"
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-LOG_POLL_INTERVAL = 0.5
-RECENT_LOG_LINE_COUNT = 80
 MAX_CONSOLE_LINE_LENGTH = 220
 SERVER_CONFIG_ENV_KEYS = (
     "OLLAMA_HOST",
@@ -470,97 +466,31 @@ def _print_status(message: str) -> None:
     print(f"[ASLM-Chat] {message}", flush=True)
 
 
-# Return the latest non-empty lines from the managed Ollama log file.
-def _read_recent_log_lines(limit: int = RECENT_LOG_LINE_COUNT) -> list[str]:
-    if not LOG_FILE.exists():
-        return []
+# Forward managed Ollama output directly to the current process stdout.
+def _stream_process_output(process: subprocess.Popen) -> None:
+    output = process.stdout
+    if output is None:
+        return
 
-    recent_lines: deque[str] = deque(maxlen=max(1, limit))
-
+    _print_status(f"Streaming Ollama output for PID {process.pid}...")
     try:
-        with LOG_FILE.open("r", encoding="utf-8", errors="replace") as file:
-            for raw_line in file:
-                line = _sanitize_console_line(raw_line)
-                if line:
-                    recent_lines.append(line)
-    except OSError:
-        return []
-
-    return list(recent_lines)
-
-
-# Print managed Ollama log lines written after the given file offset.
-def _stream_new_log_lines(position: int) -> int:
-    if not LOG_FILE.exists():
-        return 0
-
-    try:
-        file_size = LOG_FILE.stat().st_size
-    except OSError:
-        return position
-
-    if file_size < position:
-        position = 0
-
-    try:
-        with LOG_FILE.open("r", encoding="utf-8", errors="replace") as file:
-            file.seek(position)
-            while True:
-                raw_line = file.readline()
-                if raw_line == "":
-                    break
-
-                line = _sanitize_console_line(raw_line)
-                rendered_line = _format_console_log_line(line)
-                if rendered_line:
-                    print(rendered_line, flush=True)
-
-            return file.tell()
-    except OSError:
-        return position
+        for raw_line in output:
+            line = _sanitize_console_line(raw_line)
+            rendered_line = _format_console_log_line(line)
+            if rendered_line:
+                print(rendered_line, flush=True)
+    except (OSError, ValueError):
+        pass
+    finally:
+        try:
+            output.close()
+        except OSError:
+            pass
+        _print_status(f"Managed Ollama output closed (PID: {process.pid}).")
 
 
-# Mirror managed Ollama log lines into the current process stdout.
-def _stream_log_file_forever() -> None:
-    last_pid: int | None = None
-    log_position = 0
-
-    while True:
-        # Read the latest tracked runtime state.
-        tracked_pid = _read_pid()
-        is_running = _is_pid_running(tracked_pid)
-
-        # Start or continue streaming when the managed runtime is alive.
-        if is_running and tracked_pid:
-            if tracked_pid != last_pid:
-                recent_lines = _read_recent_log_lines()
-                _print_status(f"Streaming Ollama logs for PID {tracked_pid}...")
-                for line in recent_lines:
-                    rendered_line = _format_console_log_line(line)
-                    if rendered_line:
-                        print(rendered_line, flush=True)
-
-                try:
-                    log_position = LOG_FILE.stat().st_size
-                except OSError:
-                    log_position = 0
-
-                last_pid = tracked_pid
-
-            log_position = _stream_new_log_lines(log_position)
-        else:
-            # Flush the tail once when the managed runtime disappears.
-            if last_pid is not None:
-                log_position = _stream_new_log_lines(log_position)
-                _print_status(f"Managed Ollama service stopped (last PID: {last_pid}).")
-                last_pid = None
-                log_position = 0
-
-        time.sleep(LOG_POLL_INTERVAL)
-
-
-# Start a single background thread that forwards Ollama logs to stdout.
-def _ensure_log_streaming() -> None:
+# Start one background thread that forwards the current managed process output.
+def _ensure_log_streaming(process: subprocess.Popen) -> None:
     global _log_stream_thread
 
     with _log_stream_lock:
@@ -568,7 +498,8 @@ def _ensure_log_streaming() -> None:
             return
 
         _log_stream_thread = threading.Thread(
-            target=_stream_log_file_forever,
+            target=_stream_process_output,
+            args=(process,),
             name="aslm-chat-ollama-log-stream",
             daemon=True,
         )
@@ -663,10 +594,9 @@ def start_ollama(engine: str | None = None) -> bool:
         _print_status(f"Ollama service is enabled but not found at: {ollama_path}")
         return False
 
-    # Prepare the launch environment and log streaming infrastructure.
+    # Prepare the launch environment. Runtime output stays in the current
+    # process stream and is never persisted inside the updatable module.
     env, ollama_port = _build_service_environment()
-    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _ensure_log_streaming()
 
     _print_status(f"Starting local Ollama service on port {ollama_port}...")
     _print_status(
@@ -675,7 +605,7 @@ def start_ollama(engine: str | None = None) -> bool:
         f"models={env.get('OLLAMA_MODELS', '(default)')}"
     )
 
-    # Spawn a detached local runtime and redirect its output into the log file.
+    # Spawn a detached local runtime and consume its output through a pipe.
     try:
         if os.name == "nt":
             creationflags = (
@@ -685,14 +615,18 @@ def start_ollama(engine: str | None = None) -> bool:
         else:
             creationflags = 0
 
-        with LOG_FILE.open("w", encoding="utf-8", errors="replace") as log_handle:
-            _ollama_process = subprocess.Popen(
-                [ollama_path, "serve"],
-                env=env,
-                stdout=log_handle,
-                stderr=subprocess.STDOUT,
-                creationflags=creationflags,
-            )
+        _ollama_process = subprocess.Popen(
+            [ollama_path, "serve"],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            creationflags=creationflags,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+        _ensure_log_streaming(_ollama_process)
 
         _write_pid(_ollama_process.pid)
 
@@ -778,8 +712,10 @@ def stop_ollama() -> None:
         _clear_pid()
 
 
-# Stream the managed Ollama log file into stdout for the console command.
+# Explain where managed Ollama output is available without creating log files.
 def run_ollama_console(log: bool = False) -> None:
     del log  # Reserved for future verbosity controls.
-    _print_status("Ollama log streaming is active.")
-    _stream_log_file_forever()
+    _print_status(
+        "Persistent Ollama logs are disabled. Live output is streamed by the "
+        "ASLM process that launches the managed runtime."
+    )

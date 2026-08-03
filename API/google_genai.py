@@ -9,6 +9,7 @@ import logging
 import re
 import threading
 import time
+import unicodedata
 from urllib.parse import urlsplit, urlunsplit
 from typing import Any
 
@@ -64,6 +65,8 @@ VISION_CAPABILITY_NAMES = {
     "multimodal_input",
     "supports_vision",
 }
+AUDIO_INPUT_CAPABILITY_NAMES = {"audio", "audio_input", "input_audio", "supports_audio_input"}
+VIDEO_INPUT_CAPABILITY_NAMES = {"video", "video_input", "input_video", "supports_video_input"}
 REASONING_CAPABILITY_NAMES = {
     "think",
     "thinking",
@@ -913,9 +916,16 @@ def _build_model_capability_snapshot(
     cached_capabilities = _get_cached_model_capabilities(model_name)
     capability_tokens = _collect_capability_tokens(raw_model)
     supported_actions = _extract_supported_actions(raw_model)
+    normalized_model_name = str(model_name or raw_model.get("name") or "").strip().lower()
+    known_gemini_multimodal = (
+        "gemini-" in normalized_model_name
+        and not any(marker in normalized_model_name for marker in ("embedding", "imagen", "veo"))
+    )
 
     explicit_tool_support = _extract_feature_flag(raw_model, TOOL_CAPABILITY_NAMES)
     explicit_vision_support = _extract_feature_flag(raw_model, VISION_CAPABILITY_NAMES)
+    explicit_audio_input_support = _extract_feature_flag(raw_model, AUDIO_INPUT_CAPABILITY_NAMES)
+    explicit_video_input_support = _extract_feature_flag(raw_model, VIDEO_INPUT_CAPABILITY_NAMES)
     explicit_reasoning_support = _extract_feature_flag(raw_model, REASONING_CAPABILITY_NAMES)
     explicit_reasoning_level_options = _extract_reasoning_level_options(raw_model)
 
@@ -952,7 +962,28 @@ def _build_model_capability_snapshot(
                 and (
                     bool(capability_tokens & VISION_CAPABILITY_NAMES)
                     or "multimodal" in capability_tokens
+                    or known_gemini_multimodal
                 )
+            )
+        )
+
+    supports_audio_input = cached_capabilities.get("supports_audio_input")
+    if not isinstance(supports_audio_input, bool):
+        supports_audio_input = (
+            bool(explicit_audio_input_support)
+            if explicit_audio_input_support is not None
+            else bool(capability_tokens & AUDIO_INPUT_CAPABILITY_NAMES) or (
+                supports_generate_content and known_gemini_multimodal
+            )
+        )
+
+    supports_video_input = cached_capabilities.get("supports_video_input")
+    if not isinstance(supports_video_input, bool):
+        supports_video_input = (
+            bool(explicit_video_input_support)
+            if explicit_video_input_support is not None
+            else bool(capability_tokens & VIDEO_INPUT_CAPABILITY_NAMES) or (
+                supports_generate_content and known_gemini_multimodal
             )
         )
 
@@ -994,6 +1025,8 @@ def _build_model_capability_snapshot(
         "supports_generate_content": bool(supports_generate_content),
         "supports_tool_calling": bool(supports_tool_calling),
         "supports_vision": bool(supports_vision),
+        "supports_audio_input": bool(supports_audio_input),
+        "supports_video_input": bool(supports_video_input),
         "supports_thinking": bool(supports_thinking),
         "supports_think_toggle": bool(supports_think_toggle),
         "supports_think_level": bool(supports_think_level),
@@ -1392,6 +1425,7 @@ def _build_google_contents(messages: list[dict[str, Any]]) -> tuple[str, list[di
         content = str(raw_content or "") if not isinstance(raw_content, (list, dict)) else ""
         images = [str(item) for item in (message.get("images") or []) if str(item).strip()]
         image_mime_types = message.get("image_mime_types") or []
+        media = message.get("media") if isinstance(message.get("media"), list) else []
 
         if role == "system":
             if content:
@@ -1460,6 +1494,23 @@ def _build_google_contents(messages: list[dict[str, Any]]) -> tuple[str, list[di
                     }
                 )
 
+        for media_item in media:
+            if not isinstance(media_item, dict):
+                continue
+            media_data = str(media_item.get("data") or "").strip()
+            if not media_data:
+                continue
+            media_bytes = _decode_image_bytes(media_data)
+            if media_bytes:
+                parts.append(
+                    {
+                        "inline_data": {
+                            "data": media_bytes,
+                            "mime_type": str(media_item.get("mime_type") or "application/octet-stream"),
+                        }
+                    }
+                )
+
         if role == "assistant" and not used_structured_parts and not has_unsigned_google_function_call:
             # Rebuild assistant tool calls from the generic transcript shape
             # when no Gemini-native parts were stored with the message.
@@ -1494,6 +1545,7 @@ def _build_google_contents(messages: list[dict[str, Any]]) -> tuple[str, list[di
 def _build_google_tools(
     tool_server_ids: list[str],
     model_name: str,
+    tool_context: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Return Gemini-compatible tool declarations for one or more servers."""
 
@@ -1502,6 +1554,7 @@ def _build_google_tools(
         engine="google-genai",
         model_name=model_name,
         tool_source_map=tool_context.get("tool_source_map") if isinstance(tool_context, dict) else None,
+        allowed_tool_aliases=tool_context.get("allowed_tool_aliases") if isinstance(tool_context, dict) else None,
     )
     if not openai_tools:
         return [], tool_lookup
@@ -1669,20 +1722,7 @@ def _strip_tools_from_config(config: dict[str, Any]) -> dict[str, Any]:
 # Serialize one tool invocation so the UI can render it during streaming.
 def _build_tool_event(tool_lookup: dict[str, dict[str, Any]], tool_call: dict[str, Any]) -> dict[str, Any]:
     """Serialize one tool invocation so the UI can render it during streaming."""
-
-    alias = tool_call.get("name", "")
-    lookup_entry = tool_lookup.get(alias, {})
-    server_definition = lookup_entry.get("server", {})
-    tool_definition = lookup_entry.get("tool", {})
-
-    return {
-        "alias": alias,
-        "server_id": server_definition.get("id") or "",
-        "server_name": server_definition.get("name") or server_definition.get("id") or "",
-        "tool_id": tool_definition.get("id") or alias,
-        "tool_name": tool_definition.get("name") or alias,
-        "arguments": tool_call.get("arguments") or {},
-    }
+    return tool_registry.build_tool_event(tool_lookup, tool_call)
 
 
 # Build a tool message payload for the shared ASLM transcript.
@@ -1727,18 +1767,43 @@ class _ReasoningTextParser:
         self._end_tags = [end for _start, end in tag_pairs]
         self._in_reasoning = False
         self._pending = ""
+        self._visible_boundary_char: str | None = None
 
     # Find next tag.
-    @staticmethod
-    def _find_next_tag(source: str, tags: list[str]) -> tuple[int, str] | None:
+    def _find_next_tag(self, source: str, tags: list[str]) -> tuple[int, str] | None:
         next_match: tuple[int, str] | None = None
         for tag in tags:
-            index = source.find(tag)
+            search_from = 0
+            index = source.find(tag, search_from)
+            while (
+                index != -1
+                and not self._in_reasoning
+                and not self._is_reasoning_start_boundary(source, index)
+            ):
+                search_from = index + len(tag)
+                index = source.find(tag, search_from)
             if index == -1:
                 continue
             if next_match is None or index < next_match[0]:
                 next_match = (index, tag)
         return next_match
+
+    # Accept opening tags only at the start of text or after a clear separator.
+    def _is_reasoning_start_boundary(self, source: str, tag_index: int) -> bool:
+        cursor = tag_index - 1
+        while cursor >= 0 and source[cursor] in " \t\f\v":
+            cursor -= 1
+        previous = source[cursor] if cursor >= 0 else self._visible_boundary_char
+        if previous is None:
+            return True
+        return previous in "\r\n>" or unicodedata.category(previous).startswith("P")
+
+    # Remember the last non-horizontal-whitespace visible character across chunks.
+    def _remember_visible_text(self, value: str) -> None:
+        for character in reversed(str(value or "")):
+            if character not in " \t\f\v":
+                self._visible_boundary_char = character
+                return
 
     # Split possible tag prefix.
     @staticmethod
@@ -1777,6 +1842,7 @@ class _ReasoningTextParser:
                     thinking_parts.append(visible)
                 else:
                     content_parts.append(visible)
+                    self._remember_visible_text(visible)
                 self._pending = pending
                 break
 
@@ -1787,6 +1853,7 @@ class _ReasoningTextParser:
                     thinking_parts.append(chunk)
                 else:
                     content_parts.append(chunk)
+                    self._remember_visible_text(chunk)
             source = source[index + len(tag):]
             self._in_reasoning = not self._in_reasoning
 
@@ -1802,6 +1869,7 @@ class _ReasoningTextParser:
             return "", ""
         if self._in_reasoning:
             return pending, ""
+        self._remember_visible_text(pending)
         return "", pending
 
 
@@ -2100,7 +2168,7 @@ def _run_tool_loop(
 ):
     """Resolve local tools through Gemini function-calling while keeping ASLM transcript markers."""
 
-    tools, tool_lookup = _build_google_tools(tool_server_ids, model_name)
+    tools, tool_lookup = _build_google_tools(tool_server_ids, model_name, tool_context)
     system_instruction, conversation = _build_google_contents(messages)
     request_config = _build_google_request_config(
         options,
@@ -2124,8 +2192,12 @@ def _run_tool_loop(
     tool_quota_counters: dict[str, int] = {}
     seen_tool_signatures: set[str] = set()
     consecutive_blocked_tool_results = 0
+    required_tool_server_ids = tool_registry.required_tool_server_ids_from_context(tool_context, tool_lookup)
+    satisfied_tool_server_ids: set[str] = set()
+    required_nudges_left = tool_registry.MAX_REQUIRED_TOOL_NUDGES if required_tool_server_ids else 0
 
-    for round_index in range(MAX_TOOL_ROUNDS):
+    max_tool_rounds = tool_registry.tool_round_limit_from_context(tool_context, MAX_TOOL_ROUNDS)
+    for round_index in range(max_tool_rounds):
         # Re-apply learned preferences each round because earlier failures may
         # have updated the runtime capability cache.
         request_config = _apply_learned_request_preferences(model_name, request_config)
@@ -2133,13 +2205,31 @@ def _run_tool_loop(
             _stream_google_round(client, model_name, conversation, request_config, stream=stream)
         )
 
-        assistant_content = _assistant_message_to_content(assistant_message)
-        if assistant_content is not None:
-            conversation.append(assistant_content)
-
         raw_tool_calls = assistant_message.get("tool_calls") or []
         if not raw_tool_calls:
+            assistant_content = _assistant_message_to_content(assistant_message)
+            if assistant_content is not None:
+                conversation.append(assistant_content)
             yield {"transcript_message": assistant_message}
+            unmet_tool_server_ids = [
+                server_id for server_id in required_tool_server_ids
+                if server_id not in satisfied_tool_server_ids
+            ]
+            if unmet_tool_server_ids and required_nudges_left > 0:
+                required_nudges_left -= 1
+                conversation.append(
+                    {
+                        "role": "user",
+                        "parts": [
+                            {
+                                "text": tool_registry.required_tools_reminder_prompt(
+                                    unmet_tool_server_ids, tool_lookup
+                                )
+                            }
+                        ],
+                    }
+                )
+                continue
             return
 
         tool_calls: list[dict[str, Any]] = []
@@ -2158,7 +2248,21 @@ def _run_tool_loop(
                 }
             )
 
-        yield {"transcript_message": assistant_message}
+        tool_calls = tool_registry.prepare_tool_calls(tool_lookup, tool_calls)
+        tool_calls = tool_registry.limit_tool_calls_from_context(tool_context, tool_calls, tool_lookup)
+
+        for tool_call in tool_calls:
+            satisfied_server_id = tool_registry.tool_server_id_for_alias(tool_lookup, tool_call["name"])
+            if satisfied_server_id:
+                satisfied_tool_server_ids.add(satisfied_server_id)
+
+        canonical_assistant_message = tool_registry.canonicalize_transcript_tool_calls(
+            assistant_message, tool_calls
+        )
+        assistant_content = _assistant_message_to_content(canonical_assistant_message)
+        if assistant_content is not None:
+            conversation.append(assistant_content)
+        yield {"transcript_message": canonical_assistant_message}
 
         tool_response_parts: list[dict[str, Any]] = []
         tool_events = [_build_tool_event(tool_lookup, tool_call) for tool_call in tool_calls]
@@ -2166,6 +2270,7 @@ def _run_tool_loop(
             _ev["alias"] = f"{_ev['alias']}__{_i}"
         yield {"tool_events": tool_events}
 
+        cancelled_tool_result_seen = False
         for tool_call_index, (tool_call, tool_event) in enumerate(zip(tool_calls, tool_events), start=1):
             call_context = dict(tool_context or {})
             call_context.update(
@@ -2174,6 +2279,7 @@ def _run_tool_loop(
                     "model_name": model_name,
                     "tool_alias": tool_call["name"],
                     "tool_arguments": tool_call.get("arguments") or {},
+                    "raw_tool_arguments": tool_call.get("raw_arguments") or {},
                     "tool_call_index": tool_call_index,
                     "tool_round_index": round_index + 1,
                 }
@@ -2185,39 +2291,49 @@ def _run_tool_loop(
                 context=call_context,
             )
 
-            tool_cooldown_error = tool_registry.consume_tool_cooldown(
-                tool_event,
-                tool_call.get("arguments") or {},
-            )
-            if tool_cooldown_error is not None:
-                tool_result = tool_cooldown_error
+            preflight_error = tool_call.get("preflight_error_result")
+            if preflight_error is not None:
+                tool_result = preflight_error
             else:
-                duplicate_error = tool_registry.consume_duplicate_tool_call(
+                tool_cooldown_error = tool_registry.consume_tool_cooldown(
                     tool_event,
                     tool_call.get("arguments") or {},
-                    seen_tool_signatures,
+                    context=call_context,
                 )
-                if duplicate_error is not None:
-                    tool_result = duplicate_error
+                if tool_cooldown_error is not None:
+                    tool_result = tool_cooldown_error
                 else:
-                    quota_error = tool_registry.consume_tool_quota(
+                    duplicate_error = tool_registry.consume_duplicate_tool_call(
                         tool_event,
-                        tool_quota_counters,
-                        arguments=tool_call.get("arguments") or {},
+                        tool_call.get("arguments") or {},
+                        seen_tool_signatures,
                     )
-                    if quota_error is not None:
-                        tool_result = quota_error
+                    if duplicate_error is not None:
+                        tool_result = duplicate_error
                     else:
-                        tool_result = tool_registry.call_ollama_tool(
-                            tool_lookup,
-                            tool_call["name"],
-                            tool_call.get("arguments") or {},
-                            context=call_context,
-                        )
-                        tool_registry.remember_tool_cooldown(
+                        quota_error = tool_registry.consume_tool_quota(
                             tool_event,
-                            tool_call.get("arguments") or {},
+                            tool_quota_counters,
+                            arguments=tool_call.get("arguments") or {},
                         )
+                        if quota_error is not None:
+                            tool_result = quota_error
+                        else:
+                            tool_result = yield from tool_registry.stream_ollama_tool(
+                                tool_lookup,
+                                tool_call["name"],
+                                tool_call.get("arguments") or {},
+                                context=call_context,
+                            )
+                            tool_registry.remember_tool_cooldown(
+                                tool_event,
+                                tool_call.get("arguments") or {},
+                                context=call_context,
+                            )
+            cancelled_tool_result_seen = (
+                cancelled_tool_result_seen
+                or tool_registry.is_tool_execution_cancelled(tool_result)
+            )
             if tool_registry.is_blocking_tool_result(tool_result):
                 consecutive_blocked_tool_results += 1
             else:
@@ -2252,11 +2368,19 @@ def _run_tool_loop(
             conversation.append({"role": "user", "parts": tool_response_parts})
 
         # Force one final answer when repeated guardrail tool results stall progress.
-        if consecutive_blocked_tool_results >= 2:
+        if cancelled_tool_result_seen and _abort_event.is_set():
+            return
+        if cancelled_tool_result_seen or consecutive_blocked_tool_results >= 2:
             conversation.append(
                 {
                     "role": "user",
-                    "parts": [{"text": tool_registry.forced_final_prompt_after_tool_blocks()}],
+                    "parts": [{
+                        "text": (
+                            tool_registry.forced_final_prompt_after_tool_cancellation()
+                            if cancelled_tool_result_seen
+                            else tool_registry.forced_final_prompt_after_tool_blocks()
+                        )
+                    }],
                 }
             )
             final_config = _strip_tools_from_config(request_config)
@@ -2265,6 +2389,10 @@ def _run_tool_loop(
             )
             yield {"transcript_message": assistant_message}
             return
+
+        conversation = tool_registry.maybe_compact_tool_conversation(
+            tool_context, conversation, provider_format="google"
+        )
 
     yield {"message": {"content": "[Error during generation: tool loop exceeded the safety limit.]"}}
 
@@ -2393,6 +2521,10 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
     capabilities: list[str] = []
     if capability_snapshot["supports_vision"]:
         capabilities.append("vision")
+    if capability_snapshot["supports_audio_input"]:
+        capabilities.append("audio_input")
+    if capability_snapshot["supports_video_input"]:
+        capabilities.append("video_input")
     if capability_snapshot["supports_tool_calling"]:
         capabilities.append("tools")
     if capability_snapshot["supports_thinking"]:
@@ -2415,6 +2547,8 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
         "think_level_param_name": "thinking_level",
         "think_level_options": list(capability_snapshot["think_level_options"]),
         "supports_vision": capability_snapshot["supports_vision"],
+        "supports_audio_input": capability_snapshot["supports_audio_input"],
+        "supports_video_input": capability_snapshot["supports_video_input"],
         "supports_tool_calling": capability_snapshot["supports_tool_calling"],
         # ASLM-Chat file attachments are serialized into universal text context.
         "supports_files": True,
@@ -2503,4 +2637,3 @@ def generate(model_name: str, messages: list[dict[str, Any]], **kwargs: Any):
             yield {"transcript_message": assistant_message}
     finally:
         _close_client(client)
-

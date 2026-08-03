@@ -52,6 +52,35 @@ class Message(models.Model):
         return f"{self.role}: {self.content[:50]}"
 
 
+# Link one copied conversation branch to the exact messages where it diverged.
+class ChatBranch(models.Model):
+    source_chat = models.ForeignKey(Chat, on_delete=models.CASCADE, related_name="outgoing_branches")
+    source_message = models.ForeignKey(
+        Message,
+        on_delete=models.SET_NULL,
+        related_name="outgoing_branches",
+        null=True,
+        blank=True,
+    )
+    child_chat = models.OneToOneField(Chat, on_delete=models.CASCADE, related_name="incoming_branch")
+    child_message = models.ForeignKey(
+        Message,
+        on_delete=models.SET_NULL,
+        related_name="incoming_branch_markers",
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+    def __str__(self) -> str:
+        """Return a readable source-to-child branch label."""
+
+        return f"{self.source_chat} -> {self.child_chat}"
+
+
 # Define supported attachment kinds.
 class MessageAttachmentKind(models.TextChoices):
     IMAGE = "image", "Image"

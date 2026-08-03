@@ -262,7 +262,7 @@ def test_shopping_engine_skips_provider_already_in_cooldown(monkeypatch) -> None
 
     monkeypatch.setattr(engine, "_fetch", fake_fetch)
 
-    result = asyncio_run(engine.search("headphones price", effort="medium", limit=10))
+    result = asyncio_run(engine.search("camera price", effort="medium", limit=10))
 
     secondary_sources = {product.source for product in result.products if product.lane == "secondary"}
     assert "bing_shopping" not in secondary_sources

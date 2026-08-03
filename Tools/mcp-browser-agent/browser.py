@@ -11,6 +11,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from camoufox import DefaultAddons
 from camoufox.async_api import AsyncCamoufox
 from mcp.types import TextContent
 from playwright.async_api import Browser, BrowserContext, Page
@@ -40,6 +41,16 @@ DOWNLOADS_DIR = _config.DOWNLOADS_DIR
 MAX_A11Y_DEPTH = _config.MAX_A11Y_DEPTH
 MAX_ELEMENTS = _config.MAX_ELEMENTS
 MAX_MAIN_INTERACTIVE = _config.MAX_MAIN_INTERACTIVE
+
+
+# Build deterministic Camoufox launch settings. The bundled uBlock addon is
+# optional and can be left half-extracted by an interrupted download.
+def _camoufox_launch_options() -> dict[str, Any]:
+    return {
+        "headless": BROWSER_HEADLESS,
+        "window": (BROWSER_WIDTH, BROWSER_HEIGHT),
+        "exclude_addons": [DefaultAddons.UBO],
+    }
 
 
 # Keep one dedicated event loop alive for all browser operations.
@@ -642,9 +653,15 @@ async def _wait_for_spa_content(page: Page, timeout_ms: int = 5000):
             has_content = await page.evaluate("""() => {
                 const main = document.querySelector('main, [role="main"]');
                 if (!main) return false;
+                const isVisible = element => {
+                    const style = window.getComputedStyle(element);
+                    return style.display !== 'none' && style.visibility !== 'hidden' &&
+                           element.getClientRects().length > 0;
+                };
+                const busy = main.matches('[aria-busy="true"], [data-loading="true"], [data-state="loading"]') ||
+                    Array.from(main.querySelectorAll('[aria-busy="true"]')).some(isVisible);
+                if (busy) return false;
                 const text = main.innerText || '';
-                // Ignore obvious loading states while content is still rendering.
-                if (text.includes('загрузка') || text.includes('Loading')) return false;
                 return text.trim().length > 100;
             }""")
             if has_content:
@@ -666,30 +683,10 @@ async def _wait_for_spa_content(page: Page, timeout_ms: int = 5000):
 
 
 # Overlay and page-state detection
-_DISMISS_ACCEPT_TEXTS = [
-    "accept all", "accept cookies", "accept", "agree", "allow all",
-    "allow cookies", "allow", "i agree", "i accept", "got it",
-    "ok", "okay", "close", "dismiss", "continue", "confirm",
-    "принять все", "принять", "согласен", "разрешить", "продолжить",
-    "хорошо", "ок", "закрыть",
-]
-
-_DISMISS_REJECT_TEXTS: list[str] = []
-
-_DISMISS_CLOSE_TEXTS = [
-    "no thanks", "no, thanks", "not now", "maybe later", "skip", "skip for now",
-    "i'll do it later", "remind me later", "not interested", "cancel",
-    "don't show again", "don't show this again", "hide", "hide this",
-    "no, i don't want", "no thanks, i don't want", "i don't want discounts",
-    "i don't want offers", "i'm not interested",
-    "нет, спасибо", "не сейчас", "пропустить", "закрыть", "отмена",
-    "не интересует", "напомнить позже",
-]
-
 _KNOWN_CLOSE_SELECTORS = [
-    "[aria-label='Close']", "[aria-label='close']",
-    "[aria-label='Close dialog']", "[aria-label='Dismiss']",
-    "[aria-label='dismiss']", "[data-dismiss='modal']",
+    "[data-dismiss='modal']", "[data-action*='close' i]",
+    "[data-action*='dismiss' i]", "[data-testid*='close' i]",
+    "[data-testid*='dismiss' i]", "[name*='close' i]",
     ".modal-close", ".popup-close", ".dialog-close",
     ".close-button", ".btn-close", ".close-btn",
     "button.close", "[class*='close'][role='button']",
@@ -702,7 +699,8 @@ _KNOWN_ACCEPT_SELECTORS = [
     "[data-testid='cookie-accept']", "[data-testid='accept-cookies']",
     "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
     ".js-accept-cookies", "#js-accept-cookies",
-    "[aria-label='Accept cookies']", "[aria-label='Accept all cookies']",
+    "[data-action*='accept' i]", "[data-consent-action*='accept' i]",
+    "[data-testid*='accept' i]", "[name*='accept' i]",
 ]
 
 
@@ -731,7 +729,7 @@ async def _auto_dismiss_overlays(page: Page) -> list[str]:
             continue
 
         try:
-            clicked = await page.evaluate("""(acceptTexts) => {
+            clicked = await page.evaluate("""() => {
                 const containers = Array.from(document.querySelectorAll(
                     '[id*="cookie"], [id*="consent"], [id*="gdpr"], [id*="banner"], [class*="cookie"], [class*="consent"], [class*="gdpr"], [class*="banner"], [class*="overlay"], [class*="modal"], [role="dialog"], [role="alertdialog"]'
                 )).filter(el => {
@@ -742,35 +740,39 @@ async def _auto_dismiss_overlays(page: Page) -> list[str]:
                     return el.offsetParent !== null;
                 });
 
-                const normalize = s => s.trim().toLowerCase().replace(/\\s+/g, ' ');
+                const identity = element => [
+                    element.id,
+                    typeof element.className === 'string' ? element.className : '',
+                    element.getAttribute('name'),
+                    element.getAttribute('data-testid'),
+                    element.getAttribute('data-action'),
+                    element.getAttribute('data-consent-action')
+                ].filter(Boolean).join(' ').toLowerCase();
+
+                const score = element => {
+                    const value = identity(element);
+                    if (/reject|decline|deny|manage|setting|preference/.test(value)) return -100;
+                    if (/accept.?all|allow.?all|accept.?cookie|cookie.?accept/.test(value)) return 20;
+                    if (/accept|agree|allow|consent|confirm/.test(value)) return 10;
+                    return /primary/.test(value) ? 1 : 0;
+                };
 
                 for (const container of containers) {
                     const btns = Array.from(container.querySelectorAll(
                         'button, [role="button"], a[href="#"], input[type="button"], input[type="submit"]'
                     )).filter(b => b.offsetParent !== null);
 
-                    for (const btn of btns) {
-                        const label = normalize(btn.innerText || btn.value || btn.getAttribute('aria-label') || '');
-                        if (acceptTexts.some(t => label === t || label.startsWith(t))) {
-                            btn.click();
-                            return label;
-                        }
-                    }
-                }
-
-                const allBtns = Array.from(document.querySelectorAll('button, [role="button"]'))
-                    .filter(b => b.offsetParent !== null);
-
-                for (const btn of allBtns) {
-                    const label = normalize(btn.innerText || btn.getAttribute('aria-label') || '');
-                    if (acceptTexts.some(t => label === t)) {
-                        btn.click();
-                        return label;
+                    const ranked = btns.map(btn => ({ btn, score: score(btn) }))
+                        .filter(candidate => candidate.score >= 10)
+                        .sort((left, right) => right.score - left.score);
+                    if (ranked.length) {
+                        ranked[0].btn.click();
+                        return identity(ranked[0].btn).slice(0, 160) || 'structured-accept-control';
                     }
                 }
 
                 return null;
-            }""", _DISMISS_ACCEPT_TEXTS)
+            }""")
 
             if clicked:
                 await page.wait_for_timeout(600)
@@ -794,12 +796,10 @@ async def _auto_dismiss_overlays(page: Page) -> list[str]:
         except Exception:
             pass
 
-    # Fall back to close-label heuristics if explicit selectors are missing.
+    # Fall back to markup heuristics if explicit selectors are missing.
     if not any(d.startswith("close-") for d in dismissed):
         try:
-            clicked = await page.evaluate("""(closeTexts) => {
-                const normalize = s => s.trim().toLowerCase().replace(/\\s+/g, ' ');
-
+            clicked = await page.evaluate("""() => {
                 const containers = Array.from(document.querySelectorAll(
                     '[role="dialog"], [role="alertdialog"], [aria-modal="true"], [class*="modal"], [class*="popup"], [class*="overlay"], [class*="lightbox"]'
                 )).filter(el => {
@@ -818,6 +818,14 @@ async def _auto_dismiss_overlays(page: Page) -> list[str]:
                 });
 
                 const allContainers = [...new Set([...containers, ...fixedHigh])];
+                const identity = element => [
+                    element.id,
+                    typeof element.className === 'string' ? element.className : '',
+                    element.getAttribute('name'),
+                    element.getAttribute('data-testid'),
+                    element.getAttribute('data-action'),
+                    element.getAttribute('data-dismiss')
+                ].filter(Boolean).join(' ').toLowerCase();
 
                 for (const container of allContainers) {
                     const btns = Array.from(container.querySelectorAll(
@@ -825,19 +833,20 @@ async def _auto_dismiss_overlays(page: Page) -> list[str]:
                     )).filter(b => b.offsetParent !== null || window.getComputedStyle(b).position === 'fixed');
 
                     for (const btn of btns) {
-                        const label = normalize(btn.innerText || btn.getAttribute('aria-label') || btn.getAttribute('title') || '');
-                        if (/^[×✕✖x]$/.test(label) || label === 'close') {
+                        const label = String(btn.innerText || '').trim().toLowerCase();
+                        if (/^[×✕✖x]$/.test(label)) {
                             btn.click();
                             return `icon:${label}`;
                         }
-                        if (closeTexts.some(t => label === t || label.startsWith(t))) {
+                        const value = identity(btn);
+                        if (/close|dismiss|cancel|skip|later/.test(value) && !/accept|confirm|submit/.test(value)) {
                             btn.click();
-                            return label;
+                            return value.slice(0, 160) || 'structured-close-control';
                         }
                     }
                 }
                 return null;
-            }""", _DISMISS_CLOSE_TEXTS)
+            }""")
 
             if clicked:
                 await page.wait_for_timeout(500)
@@ -1115,10 +1124,7 @@ class BrowserState:
         log.info("Launching camoufox browser (Firefox stealth, headless=%s)...", BROWSER_HEADLESS)
 
         try:
-            self._camoufox_cm = AsyncCamoufox(
-                headless=BROWSER_HEADLESS,
-                window=(BROWSER_WIDTH, BROWSER_HEIGHT),
-            )
+            self._camoufox_cm = AsyncCamoufox(**_camoufox_launch_options())
             browser = await self._camoufox_cm.__aenter__()
             self.browser = browser
 
@@ -1525,5 +1531,3 @@ async def _click_by_role_and_name(ref: str):
         f"Could not click element ref='{ref}' (role={role}, name='{name}'). "
         f"All click strategies failed. Last error: {last_err}"
     )
-
-

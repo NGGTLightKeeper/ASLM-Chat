@@ -32,7 +32,7 @@
     "tools": "उपकरण",
     "other": "अन्य",
     "reasoningEffort": "तर्क प्रयास",
-    "intelligence": "सोच",
+    "effort": "प्रयास",
     "off": "बंद",
     "sendMessage": "संदेश भेजें",
     "queueMessage": "संदेश कतार में डालें",
@@ -43,6 +43,11 @@
     "panel": "तर्क पैनल",
     "title": "तर्क",
     "closePanel": "तर्क पैनल बंद करें"
+  },
+  "sources": {
+    "panel": "स्रोत पैनल",
+    "title": "स्रोत",
+    "closePanel": "स्रोत पैनल बंद करें"
   },
   "settings": {
     "modelSettings": "मॉडल सेटिंग्स",
@@ -104,6 +109,8 @@
   },
   "think": {
     "off": "बंद",
+    "instant": "त्वरित",
+    "thinking": "चिंतन",
     "low": "कम",
     "medium": "मध्यम",
     "high": "उच्च",

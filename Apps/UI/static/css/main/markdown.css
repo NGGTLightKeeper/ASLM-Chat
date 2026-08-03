@@ -523,12 +523,13 @@
 .msg-thoughts-toggle.msg-reasoning-toggle {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
   min-height: 0;
   padding: 1px 0;
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--c-text-dim);
+  color: var(--activity-on-surface-muted, var(--c-text-muted));
   font-size: var(--font-size-body-2);
   font-weight: 400;
   letter-spacing: 0;
@@ -545,7 +546,7 @@
 .msg-reasoning-toggle:hover,
 .msg-thoughts-toggle.msg-reasoning-toggle:hover {
   background: transparent;
-  color: var(--c-text);
+  color: color-mix(in srgb, var(--c-text) 82%, transparent);
 }
 
 .msg-reasoning-toggle:focus,
@@ -559,7 +560,7 @@
 .msg-reasoning-wrapper.is-active .msg-reasoning-toggle,
 .msg-reasoning-wrapper.is-active .msg-thoughts-toggle.msg-reasoning-toggle {
   background: transparent;
-  color: var(--c-text);
+  color: var(--activity-on-surface-muted, var(--c-text-muted));
 }
 
 /* Dot before text */
@@ -581,9 +582,90 @@
 
 .msg-reasoning-title {
   min-width: 0;
+  overflow: hidden;
   color: inherit;
   font-size: inherit;
   font-weight: inherit;
+  text-overflow: ellipsis;
+  transition: color var(--t-fast), opacity 180ms ease;
+  white-space: nowrap;
+}
+
+.msg-reasoning-title.is-typing,
+.msg-reasoning-title.is-deleting {
+  opacity: 0.76;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-reasoning-title {
+    transition: none;
+  }
+}
+
+.msg-reasoning-sources {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 7px;
+}
+
+.msg-reasoning-source-overflow {
+  color: var(--activity-on-surface-dim);
+  font-size: var(--font-size-caption-2);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.msg-reasoning-source-stack {
+  display: inline-flex;
+  align-items: center;
+}
+
+.msg-reasoning-source {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid var(--surface-primary);
+  border-radius: 50%;
+  background: var(--surface-tertiary);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--activity-card-border) 76%, transparent);
+}
+
+.msg-reasoning-source-stack.has-2 .msg-reasoning-source + .msg-reasoning-source {
+  margin-left: -3px;
+}
+
+.msg-reasoning-source-stack.has-3 .msg-reasoning-source + .msg-reasoning-source {
+  margin-left: -6px;
+}
+
+.msg-reasoning-source-favicon,
+.msg-reasoning-source-fallback {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+}
+
+.msg-reasoning-source-favicon {
+  display: block;
+  background: #fff;
+  object-fit: cover;
+}
+
+.msg-reasoning-source-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--msg-source-accent-fg, var(--activity-on-surface));
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .msg-reasoning-summary {
@@ -656,7 +738,7 @@
 .msg-reasoning-step--tool .msg-reasoning-step-dot {
   width: 22px;
   height: 22px;
-  margin-top: 1px;
+  margin-top: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -676,13 +758,15 @@
 
 .msg-reasoning-step-title {
   min-width: 0;
+  min-height: 22px;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   margin-bottom: 5px;
   color: var(--activity-on-surface);
   font-size: var(--font-size-caption-1);
   font-weight: 650;
+  line-height: 1.25;
 }
 
 .msg-reasoning-step-title:has(> .msg-reasoning-step-status:only-child) {
@@ -698,7 +782,7 @@
 
 .msg-reasoning-text {
   padding: 0;
-  color: var(--activity-on-surface-dim);
+  color: var(--activity-on-surface);
   font-family: var(--font);
   font-size: var(--font-size-caption-1);
   line-height: 1.45;
@@ -880,6 +964,78 @@
   flex-direction: column;
   gap: 8px;
   padding: 10px;
+}
+
+/* Compact sandbox disclosure used when reasoning is disabled. */
+.msg-sandbox-collapsible {
+  width: min(100%, 900px);
+  min-width: 0;
+}
+
+.msg-sandbox-toggle {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  min-height: 0;
+  padding: 1px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--c-text-dim);
+  font: inherit;
+  font-size: var(--font-size-body-2);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-align: left;
+  cursor: pointer;
+  outline: none;
+  transition: color var(--t-fast), opacity var(--t-fast);
+}
+
+.msg-sandbox-toggle:hover,
+.msg-sandbox-toggle:focus-visible,
+.msg-sandbox-collapsible.is-expanded > .msg-sandbox-toggle {
+  color: var(--c-text);
+}
+
+.msg-sandbox-toggle:focus,
+.msg-sandbox-toggle:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.msg-sandbox-toggle-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg-sandbox-toggle-chevron {
+  flex: 0 0 auto;
+  margin-left: 6px;
+  color: inherit;
+  line-height: 1;
+  transform: rotate(0deg);
+  transform-origin: center;
+  transition: transform var(--t-fast);
+}
+
+.msg-sandbox-collapsible.is-expanded .msg-sandbox-toggle-chevron {
+  transform: rotate(90deg);
+}
+
+.msg-sandbox-collapsible-content {
+  margin-top: 8px;
+}
+
+.msg-sandbox-collapsible-content[hidden] {
+  display: none !important;
+}
+
+.msg-sandbox-collapsible-content > .msg-sandbox-card {
+  width: 100%;
+  max-width: 100%;
 }
 
 .msg-sandbox-head {

@@ -32,7 +32,7 @@
     "tools": "Araçlar",
     "other": "Diğer",
     "reasoningEffort": "Akıl yürütme düzeyi",
-    "intelligence": "Düşünme",
+    "effort": "Çaba",
     "off": "Kapalı",
     "sendMessage": "Mesaj Gönder",
     "queueMessage": "Mesajı kuyruğa al",
@@ -43,6 +43,11 @@
     "panel": "Akıl yürütme paneli",
     "title": "Akıl yürütme",
     "closePanel": "Akıl yürütme panelini kapat"
+  },
+  "sources": {
+    "panel": "Kaynaklar paneli",
+    "title": "Kaynaklar",
+    "closePanel": "Kaynaklar panelini kapat"
   },
   "settings": {
     "modelSettings": "Model Ayarları",
@@ -104,6 +109,8 @@
   },
   "think": {
     "off": "Kapalı",
+    "instant": "Anında",
+    "thinking": "Düşünme",
     "low": "Düşük",
     "medium": "Orta",
     "high": "Yüksek",

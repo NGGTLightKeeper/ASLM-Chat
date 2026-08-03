@@ -8,9 +8,9 @@ import importlib.util
 import inspect
 import json
 import re
+import socket
 import sys
 import threading
-import time
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -23,7 +23,44 @@ if str(BASE_DIR) not in sys.path:
 SERVER_DISPATCHER_NAMES = ("call_tool", "run_tool", "execute_tool", "execute")
 SERVER_METADATA_NAMES = ("MCP_SERVER", "SERVER")
 TOOL_HANDLER_NAMES = ("TOOL_HANDLERS", "TOOL_EXECUTORS")
+TOOL_PREPARER_NAMES = ("TOOL_PREPARERS", "TOOL_ARGUMENT_PREPARERS")
 WORKER_HEARTBEAT_SECONDS = 5.0
+
+
+class WorkerEventEmitter:
+    """Send structured realtime tool events over a dedicated local socket."""
+
+    def __init__(self, config: dict[str, Any] | None) -> None:
+        config = config if isinstance(config, dict) else {}
+        self.host = str(config.get("host") or "127.0.0.1")
+        self.port = int(config.get("port") or 0)
+        self.token = str(config.get("token") or "")
+        self.connection: socket.socket | None = None
+        self.lock = threading.Lock()
+        self.disabled = not (self.host == "127.0.0.1" and self.port > 0 and self.token)
+
+    def emit(self, event: dict[str, Any]) -> None:
+        if self.disabled or not isinstance(event, dict):
+            return
+        envelope = json.dumps(
+            {"token": self.token, "event": _to_jsonable(event)},
+            ensure_ascii=False,
+        ).encode("utf-8") + b"\n"
+        with self.lock:
+            try:
+                if self.connection is None:
+                    self.connection = socket.create_connection((self.host, self.port), timeout=3)
+                self.connection.sendall(envelope)
+            except (OSError, ValueError):
+                self.close()
+                self.disabled = True
+
+    def close(self) -> None:
+        connection = self.connection
+        self.connection = None
+        if connection is not None:
+            with contextlib.suppress(OSError):
+                connection.close()
 
 
 # Run async tool handlers on one persistent background event loop.
@@ -129,6 +166,8 @@ def _server_metadata(module: ModuleType, folder_name: str) -> dict[str, Any]:
     }
     if raw_server.get("requires_docker"):
         metadata["requires_docker"] = True
+    if raw_server.get("fresh_process_per_call"):
+        metadata["fresh_process_per_call"] = True
     return metadata
 
 
@@ -156,6 +195,7 @@ def _server_tools(module: ModuleType, server_id: str) -> list[dict[str, Any]]:
         raise ValueError("MCP server module must expose a non-empty TOOLS list")
 
     tools: list[dict[str, Any]] = []
+    preparers = _tool_preparers(module)
     seen_ids: set[str] = set()
     for index, raw_tool in enumerate(raw_tools, start=1):
         if not isinstance(raw_tool, dict):
@@ -166,15 +206,16 @@ def _server_tools(module: ModuleType, server_id: str) -> list[dict[str, Any]]:
             continue
 
         seen_ids.add(tool_id)
-        tools.append(
-            {
+        tool_payload = {
                 "id": tool_id,
                 "alias": f"{server_id}__{tool_id}",
                 "name": str(raw_tool.get("name") or tool_id).strip() or tool_id,
                 "description": str(raw_tool.get("description") or "").strip(),
                 "parameters": _normalize_schema(raw_tool.get("parameters")),
             }
-        )
+        if tool_id in preparers:
+            tool_payload["prepares_arguments"] = True
+        tools.append(tool_payload)
 
     return tools
 
@@ -193,6 +234,21 @@ def _tool_handlers(module: ModuleType) -> dict[str, Any]:
     return {
         _slugify(str(raw_key or "")): raw_value
         for raw_key, raw_value in raw_handlers.items()
+        if callable(raw_value)
+    }
+
+
+def _tool_preparers(module: ModuleType) -> dict[str, Any]:
+    raw_preparers: Any = None
+    for attr_name in TOOL_PREPARER_NAMES:
+        raw_preparers = getattr(module, attr_name, None)
+        if raw_preparers is not None:
+            break
+    if not isinstance(raw_preparers, dict):
+        return {}
+    return {
+        _slugify(str(raw_key or "")): raw_value
+        for raw_key, raw_value in raw_preparers.items()
         if callable(raw_value)
     }
 
@@ -274,21 +330,42 @@ def call(server_file: Path, payload: dict[str, Any]) -> Any:
     module = _load_module(server_file)
     tool_id = _slugify(str(payload.get("tool_id") or ""))
     arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
-    context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
+    context = dict(payload.get("context")) if isinstance(payload.get("context"), dict) else {}
+    event_emitter = WorkerEventEmitter(context.pop("_event_channel", None))
+    if not event_emitter.disabled:
+        context["event_callback"] = event_emitter.emit
 
-    handlers = _tool_handlers(module)
-    handler = handlers.get(tool_id)
-    if handler is not None:
-        signature = inspect.signature(handler)
-        if len(signature.parameters) <= 1:
-            return _execute_callable(handler, arguments)
-        return _execute_callable(handler, arguments, context)
+    try:
+        handlers = _tool_handlers(module)
+        handler = handlers.get(tool_id)
+        if handler is not None:
+            signature = inspect.signature(handler)
+            if len(signature.parameters) <= 1:
+                return _execute_callable(handler, arguments)
+            return _execute_callable(handler, arguments, context)
 
-    dispatcher = _server_callable(module)
-    if dispatcher is None:
-        raise ValueError(f"No handler registered for tool '{tool_id}'.")
+        dispatcher = _server_callable(module)
+        if dispatcher is None:
+            raise ValueError(f"No handler registered for tool '{tool_id}'.")
 
-    return _dispatch_server_callable(dispatcher, tool_id, arguments, context)
+        return _dispatch_server_callable(dispatcher, tool_id, arguments, context)
+    finally:
+        event_emitter.close()
+
+
+def prepare(server_file: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    """Prepare one tool call without performing its external work."""
+
+    module = _load_module(server_file)
+    tool_id = _slugify(str(payload.get("tool_id") or ""))
+    arguments = payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}
+    preparer = _tool_preparers(module).get(tool_id)
+    if preparer is None:
+        return {"ok": True, "arguments": arguments}
+    prepared = _execute_callable(preparer, arguments)
+    if not isinstance(prepared, dict):
+        raise ValueError(f"Tool preparer for '{tool_id}' must return an object.")
+    return prepared
 
 
 # Worker protocol helpers
@@ -315,6 +392,8 @@ def _execute_request(operation: str, server_file: Path, payload: dict[str, Any])
             return True, supports(server_file, payload)
         if operation == "call":
             return True, call(server_file, payload)
+        if operation == "prepare":
+            return True, prepare(server_file, payload)
         return False, f"Unknown worker operation: {operation}"
     except Exception as exc:
         return False, f"{type(exc).__name__}: {exc}"
@@ -374,7 +453,7 @@ def serve(server_file: Path) -> int:
 # CLI entry point for one-shot and persistent worker modes.
 def main() -> int:
     if len(sys.argv) < 3:
-        return _print_response(False, "Usage: tool_worker.py <describe|supports|call> <server_file>")
+        return _print_response(False, "Usage: tool_worker.py <describe|supports|prepare|call> <server_file>")
 
     operation = sys.argv[1].strip().lower()
     server_file = Path(sys.argv[2]).resolve()
