@@ -88,6 +88,7 @@ from Apps.Data.models import (
 )
 from Apps.UI.chat_export import archive_filename, build_chat_archive
 from Apps.UI import STATIC_CACHE_VERSION
+from Tools.system_prompts import get_system_prompt, is_instant_generation
 from Apps.UI.host_theme_bridge import build_host_theme_template_context
 from Apps.UI.host_locale_bridge import build_host_locale_template_context
 from Apps.UI.upload_storage import (
@@ -196,11 +197,6 @@ from context_compression.history_compressor import (  # noqa: E402
     resolve_context_window_tokens,
 )
 
-DEFAULT_SYSTEM_PROMPT_PATH = settings.BASE_DIR / "Tools" / "SYSTEM_PROMPT.md"
-_default_system_prompt_lock = threading.RLock()
-_default_system_prompt_mtime_ns: int | None = None
-_default_system_prompt_cache = ""
-
 THINK_PARAM_NAMES = {"think", "thinking", "reasoning"}
 THINK_LEVEL_PARAM_NAMES = {"think_level", "thinking_level", "reasoning_effort"}
 TOOL_CAPABILITY_NAMES = {"tools", "tool", "tool-calling", "tool_calling"}
@@ -232,32 +228,6 @@ TEXT_ATTACHMENT_EXTENSIONS = {
     ".tfvars", ".toml", ".ts", ".tsv", ".tsx", ".twig", ".txt", ".vb", ".vbs", ".vue",
     ".vtt", ".xhtml", ".xml", ".xsd", ".xsl", ".yaml", ".yml", ".zsh",
 }
-
-
-# Read the project-level system prompt file.
-def _read_default_system_prompt() -> str:
-    global _default_system_prompt_cache, _default_system_prompt_mtime_ns
-
-    try:
-        mtime_ns = DEFAULT_SYSTEM_PROMPT_PATH.stat().st_mtime_ns
-    except OSError:
-        mtime_ns = None
-
-    with _default_system_prompt_lock:
-        if mtime_ns == _default_system_prompt_mtime_ns:
-            return _default_system_prompt_cache
-
-        prompt = ""
-        if mtime_ns is not None:
-            try:
-                prompt = DEFAULT_SYSTEM_PROMPT_PATH.read_text(encoding="utf-8").strip()
-            except OSError:
-                logger.exception("Failed to read default system prompt from %s", DEFAULT_SYSTEM_PROMPT_PATH)
-                prompt = ""
-
-        _default_system_prompt_mtime_ns = mtime_ns
-        _default_system_prompt_cache = prompt
-        return prompt
 
 
 # Build dynamic runtime context injected into every system prompt.
@@ -605,10 +575,11 @@ def _compose_system_prompt(
     consume_skill_notifications: bool = True,
     include_skills_baseline: bool = False,
     forced_skill_names: list[str] | None = None,
+    instant_mode: bool = False,
 ) -> str:
     parts: list[str] = []
 
-    default_prompt = _read_default_system_prompt()
+    default_prompt = get_system_prompt(instant_mode=instant_mode)
     if default_prompt:
         parts.append(default_prompt)
 
@@ -767,6 +738,11 @@ SLASH_SEARCH_DIRECTIVE = (
     "The user selected web search for this request. Use the web_search tool first, "
     "then answer from the result. If forced tool choice is unavailable, still call web_search when possible."
 )
+INSTANT_SLASH_SEARCH_BATCH_DIRECTIVE = (
+    "Instant mode is active for this slash-command search. Every web_search call must contain "
+    "exactly three complementary query strings in the query array. Send all three at once; never "
+    "send a single query or a one/two-item batch. At most two web_search calls are allowed."
+)
 SLASH_INLINE_MARKER_DIRECTIVE = (
     "The user's message contains inline '[user command: ...]' markers. Each marker shows the exact "
     "place where the user invoked a command, so satisfy it for that part of the message."
@@ -873,6 +849,31 @@ def _append_command_directives_to_system_prompt(system_prompt: str, directives: 
         return system_prompt
     directive_block = "Request command directives:\n" + "\n".join(f"- {item}" for item in cleaned_directives)
     return "\n\n".join(part for part in [str(system_prompt or "").strip(), directive_block] if part).strip()
+
+
+def _command_directives_for_mode(command_plan: ChatCommandPlan, *, instant_mode: bool) -> list[str]:
+    """Add request-scoped mode rules without changing the baseline prompt."""
+
+    directives = list(command_plan.directives)
+    if instant_mode and command_plan.forced_tool_name == "web_search":
+        directives.append(INSTANT_SLASH_SEARCH_BATCH_DIRECTIVE)
+    return directives
+
+
+def _apply_command_tool_context(
+    tool_context: dict[str, Any],
+    command_plan: ChatCommandPlan,
+    *,
+    instant_mode: bool,
+) -> None:
+    """Apply deterministic slash-command controls to one adapter tool context."""
+
+    if command_plan.forced_tool_name:
+        tool_context["forced_tool_name"] = command_plan.forced_tool_name
+    if command_plan.required_tool_server_ids:
+        tool_context["required_tool_server_ids"] = command_plan.required_tool_server_ids
+    if instant_mode and command_plan.forced_tool_name == "web_search":
+        tool_context["instant_search_batch_size"] = tool_registry.INSTANT_SEARCH_BATCH_LIMIT
 
 _metadata_cache_lock = threading.RLock()
 _model_info_cache: dict[tuple[str, str, str, str], tuple[float, dict[str, Any]]] = {}
@@ -4234,6 +4235,7 @@ class PreparedGenerationRequest:
     upload_manifests: list[dict[str, Any]]
     think_value: Any
     think_level_value: Any
+    instant_mode: bool
     clean_options: dict[str, Any]
     sync_operation_defaults: dict[str, Any] | None
     tool_sources: list[dict[str, Any]]
@@ -4356,6 +4358,7 @@ def _prepare_generation_request(
         upload_manifests=upload_manifests,
         think_value=think_value,
         think_level_value=think_level_value,
+        instant_mode=is_instant_generation(think_value, think_level_value),
         clean_options=clean_options,
         sync_operation_defaults=_build_lms_sync_operation_defaults(
             engine,
@@ -4698,6 +4701,7 @@ def _build_generate_kwargs(
     sync_operation_defaults: dict[str, Any] | None = None,
     tool_sources: list[dict[str, Any]] | None = None,
     external_tool_context: dict[str, Any] | None = None,
+    instant_mode: bool = False,
 ) -> dict[str, Any]:
     generate_kwargs: dict[str, Any] = {
         "engine": engine,
@@ -4732,6 +4736,8 @@ def _build_generate_kwargs(
             "sandbox_enabled": _selected_tools_include_sandbox(selected_tool_servers),
             "tool_source_map": tool_source_map,
         }
+        if instant_mode:
+            tool_context["instant_mode"] = True
         if isinstance(external_tool_context, dict):
             for key, value in external_tool_context.items():
                 # Tuple membership compares with ==, so unhashable values (lists) are fine.
@@ -5296,8 +5302,12 @@ def generate_api(request):
             consume_skill_notifications=consume_skill_notifications,
             include_skills_baseline=_resolve_include_skills_baseline(data, history_messages),
             forced_skill_names=command_plan.forced_skill_names,
+            instant_mode=prepared.instant_mode,
         )
-        system_prompt = _append_command_directives_to_system_prompt(system_prompt, command_plan.directives)
+        system_prompt = _append_command_directives_to_system_prompt(
+            system_prompt,
+            _command_directives_for_mode(command_plan, instant_mode=prepared.instant_mode),
+        )
         current_entry = _build_current_user_llm_entry(
             command_plan.message,
             prepared.attachments,
@@ -5319,10 +5329,11 @@ def generate_api(request):
         )
         model_info_payload = prepared.model_info_payload
         external_tool_context = dict(prepared.external_tool_context)
-        if command_plan.forced_tool_name:
-            external_tool_context["forced_tool_name"] = command_plan.forced_tool_name
-        if command_plan.required_tool_server_ids:
-            external_tool_context["required_tool_server_ids"] = command_plan.required_tool_server_ids
+        _apply_command_tool_context(
+            external_tool_context,
+            command_plan,
+            instant_mode=prepared.instant_mode,
+        )
         generate_kwargs = _build_generate_kwargs(
             prepared.engine,
             prepared.model_name,
@@ -5337,6 +5348,7 @@ def generate_api(request):
             sync_operation_defaults=prepared.sync_operation_defaults,
             tool_sources=prepared.tool_sources,
             external_tool_context=external_tool_context,
+            instant_mode=prepared.instant_mode,
         )
 
         generation_id = uuid.uuid4().hex
@@ -5591,6 +5603,12 @@ def chat_api(request):
         )
         sandbox_enabled = _selected_tools_include_sandbox(selected_tool_servers)
         upload_manifests = _load_model_upload_manifests(uploaded_file_ids, sandbox_enabled=sandbox_enabled)
+        think_value, think_level_value, clean_options = _split_generation_options(
+            options,
+            think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
+            think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
+        )
+        instant_mode = is_instant_generation(think_value, think_level_value)
 
         persisted_upload_file_ids = _upload_manifest_file_ids(upload_manifests)
         upload_context_entry = _build_uploaded_file_context_entry(persisted_upload_file_ids)
@@ -5605,8 +5623,12 @@ def chat_api(request):
             data.get("system_prompt", ""),
             include_skills_baseline=_chat_is_first_user_turn(chat),
             forced_skill_names=command_plan.forced_skill_names,
+            instant_mode=instant_mode,
         )
-        system_prompt = _append_command_directives_to_system_prompt(system_prompt, command_plan.directives)
+        system_prompt = _append_command_directives_to_system_prompt(
+            system_prompt,
+            _command_directives_for_mode(command_plan, instant_mode=instant_mode),
+        )
 
         import json as _json
         active_slug = _json.dumps([s["id"] for s in selected_tool_servers], ensure_ascii=False)
@@ -5811,19 +5833,13 @@ def chat_api(request):
             upload_manifests,
             sandbox_enabled=sandbox_enabled,
         )
-        # Split generic options from thinking-specific controls.
-        think_value, think_level_value, clean_options = _split_generation_options(
-            options,
-            think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
-            think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
-        )
-
         # Build the final generation payload for the adapter layer.
         external_tool_context = {}
-        if command_plan.forced_tool_name:
-            external_tool_context["forced_tool_name"] = command_plan.forced_tool_name
-        if command_plan.required_tool_server_ids:
-            external_tool_context["required_tool_server_ids"] = command_plan.required_tool_server_ids
+        _apply_command_tool_context(
+            external_tool_context,
+            command_plan,
+            instant_mode=instant_mode,
+        )
         generate_kwargs = _build_generate_kwargs(
             engine,
             model_name,
@@ -5842,6 +5858,7 @@ def chat_api(request):
                 think_level_value,
             ),
             external_tool_context=external_tool_context,
+            instant_mode=instant_mode,
         )
 
         generation_id = uuid.uuid4().hex
@@ -6589,11 +6606,6 @@ def regenerate_chat_api(request, chat_id):
         except Chat.DoesNotExist:
             return JsonResponse({"error": "Chat not found"}, status=404)
 
-        system_prompt = _compose_system_prompt(
-            data.get("system_prompt", ""),
-            include_skills_baseline=False,
-        )
-
         target_id = data.get("user_message_id")
         ordered = list(chat.messages.order_by("created_at", "id"))
         if target_id:
@@ -6642,6 +6654,17 @@ def regenerate_chat_api(request, chat_id):
             chat.active_tool_slug = active_slug
             chat.save(update_fields=["active_tool_slug", "updated_at"])
 
+        think_value, think_level_value, clean_options = _split_generation_options(
+            options,
+            think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
+            think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
+        )
+        instant_mode = is_instant_generation(think_value, think_level_value)
+        system_prompt = _compose_system_prompt(
+            data.get("system_prompt", ""),
+            include_skills_baseline=False,
+            instant_mode=instant_mode,
+        )
         llm_messages, compression_event = _build_chat_history(
             chat,
             user_message_record,
@@ -6651,11 +6674,6 @@ def regenerate_chat_api(request, chat_id):
             model_name,
             model_info_payload,
             sandbox_enabled=sandbox_enabled,
-        )
-        think_value, think_level_value, clean_options = _split_generation_options(
-            options,
-            think_param_name=str(model_info_payload.get("think_param_name", "think") or "think"),
-            think_level_param_name=str(model_info_payload.get("think_level_param_name", "think_level") or "think_level"),
         )
 
         generate_kwargs = _build_generate_kwargs(
@@ -6675,6 +6693,7 @@ def regenerate_chat_api(request, chat_id):
                 think_value,
                 think_level_value,
             ),
+            instant_mode=instant_mode,
         )
 
         assistant_message_record = Message.objects.create(
@@ -7277,6 +7296,7 @@ def get_context_usage_api(request):
             str(request.GET.get("system_prompt") or ""),
             consume_skill_notifications=False,
             include_skills_baseline=_chat_is_first_user_turn(chat),
+            instant_mode=str(request.GET.get("instant_mode") or "").strip().lower() in {"1", "true", "yes", "on"},
         )
 
         estimate = _estimate_context_usage(

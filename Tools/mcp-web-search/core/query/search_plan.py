@@ -338,6 +338,7 @@ def prepare_advanced_search(
     allow_structured_queries: bool = True,
     enforce_word_limits: bool = False,
     allow_multiple_queries: bool = True,
+    max_queries: int = ADVANCED_BATCH_LIMIT,
 ) -> dict[str, Any]:
     """Validate and normalize one advanced plan, or raise PlanValidationError."""
 
@@ -417,11 +418,14 @@ def prepare_advanced_search(
             }
         )
         raw_queries = raw_queries[:1]
-    elif len(raw_queries) > ADVANCED_BATCH_LIMIT:
+    elif len(raw_queries) > max(1, int(max_queries)):
+        batch_message = f"batch permits at most {max(1, int(max_queries))} queries total"
+        if max(1, int(max_queries)) == ADVANCED_BATCH_LIMIT:
+            batch_message += ": either two in one vertical or one in each of two verticals"
         _issue(
             issues,
             "$",
-            "batch permits at most 2 queries total: either two in one vertical or one in each of two verticals",
+            batch_message,
         )
 
     prepared_queries: list[dict[str, Any]] = []

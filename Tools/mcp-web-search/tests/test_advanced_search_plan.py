@@ -12,7 +12,12 @@ import pytest
 
 import core.config as config_module
 import core.search.web_search as search_module
-from core.mcp_contract import build_search_description, build_search_schema, prepare_search_arguments
+from core.mcp_contract import (
+    build_search_description,
+    build_search_schema,
+    prepare_instant_search_arguments,
+    prepare_search_arguments,
+)
 from core.query.search_plan import PlanValidationError, prepare_advanced_search
 from core.search.query_dates import resolve_query_dates
 
@@ -51,6 +56,53 @@ def _plan():
         },
         "effort": "medium",
     }
+
+
+def test_instant_arguments_force_low_web_batch(monkeypatch):
+    monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
+
+    prepared = prepare_instant_search_arguments({
+        "query": ["alpha release", "beta release", "gamma release"],
+        "description": "Checking release status",
+        "operators": {"site_include": ["example.com"]},
+    })
+
+    assert prepared["ok"] is True
+    assert prepared["search_request"]["schema_mode"] == "instant"
+    assert prepared["search_request"]["effort"] == "low"
+    assert len(prepared["search_request"]["queries"]) == 3
+    assert prepared["tool_ui"]["instant_mode"] is True
+
+
+def test_instant_arguments_reject_more_than_three_queries(monkeypatch):
+    monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
+
+    prepared = prepare_instant_search_arguments({
+        "query": ["one", "two", "three", "four"],
+        "description": "Checking candidates",
+    })
+
+    assert prepared["ok"] is False
+    assert prepared["tool_ui"]["instant_mode"] is True
+
+
+def test_instant_plain_queries_accept_inline_quotes_without_shared_operators(monkeypatch):
+    monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
+
+    prepared = prepare_instant_search_arguments({
+        "query": [
+            'TerraFirmaGreg "owl beans" spawn',
+            'TFC "owl bean" climate',
+            'TerraFirmaGreg "owl beans" crop',
+        ],
+        "description": "Checking owl bean locations",
+    })
+
+    assert prepared["ok"] is True
+    assert len(prepared["search_request"]["queries"]) == 3
+    assert prepared["search_request"]["queries"][0]["compiled_query"] == (
+        'TerraFirmaGreg "owl beans" spawn'
+    )
 
 
 def test_config_schema_mode_defaults_and_invalid_values_fall_back_to_advanced(tmp_path, caplog):

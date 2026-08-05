@@ -25,6 +25,7 @@ _SPACE_RE = re.compile(r"\s+")
 _EFFORT_VALUES = ("low", "medium", "high")
 _EFFORT_ALIASES = {"": "medium", "normal": "medium", "default": "medium", "standard": "medium"}
 SEARCH_BATCH_LIMIT = VERTICAL_QUERY_LIMITS["web"]
+INSTANT_SEARCH_BATCH_LIMIT = 3
 LEGACY_BATCH_LIMIT = max(
     VERTICAL_QUERY_LIMITS[vertical] for vertical in ("web", "shopping", "academic")
 )
@@ -98,6 +99,7 @@ search text and must never be empty. Put compact terms and any needed search ope
 Start ordinary work at medium. Use low for quick discovery and high only after a lower-effort
 search leaves a specific high-stakes gap. After weak results, simplify the query before adding
 constraints. Cite exact source handles returned by the tool."""
+
 
 # Compatibility export for callers that do not use the config-aware builder.
 WEB_SEARCH_TOOL_DESCRIPTION = ADVANCED_WEB_SEARCH_TOOL_DESCRIPTION
@@ -445,8 +447,141 @@ def invalid_search_plan_result(
     }
 
 
-def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
+def prepare_instant_search_arguments(arguments: Any) -> dict[str, Any]:
+    """Validate the compact instant shape and compile it into a low-effort web plan."""
+
+    args = dict(arguments) if isinstance(arguments, dict) else {}
+    args.pop("_instant_mode", None)
+    issues: list[dict[str, str]] = []
+    for key in sorted(set(args) - {"query", "description", "operators"}):
+        issues.append({"path": f"$.{key}", "message": "is not allowed in instant mode"})
+
+    raw_description = args.get("description", "")
+    description = sanitize_query(raw_description)[:80] if isinstance(raw_description, str) else ""
+    if not description:
+        issues.append({"path": "$.description", "message": "must be a non-empty string"})
+
+    raw_query = args.get("query")
+    raw_queries = list(raw_query) if isinstance(raw_query, list) else [raw_query]
+    if not raw_queries or raw_queries == [None]:
+        issues.append({"path": "$.query", "message": "must contain at least one query"})
+    if len(raw_queries) > INSTANT_SEARCH_BATCH_LIMIT:
+        issues.append({
+            "path": "$.query",
+            "message": f"instant mode permits at most {INSTANT_SEARCH_BATCH_LIMIT} queries",
+        })
+
+    operators = args.get("operators", {})
+    if operators in (None, ""):
+        operators = {}
+    if not isinstance(operators, dict):
+        issues.append({"path": "$.operators", "message": "must be an object"})
+        operators = {}
+
+    if issues:
+        error_result = invalid_search_plan_result(
+            issues,
+            description=description,
+            received_arguments=args,
+        )
+        details = "; ".join(
+            f"{issue.get('path', '$')}: {issue.get('message', 'invalid value')}"
+            for issue in issues
+        )
+        error_result["model_context"] = (
+            "INVALID_SEARCH_PLAN: instant web_search rejected this call before running. "
+            f"Failures: {details}. Required shape: query (one string or up to three strings), "
+            "description (short UI label), and optional operators. Do not send effort or verticals."
+        )
+        error_result["ui"]["instant_mode"] = True
+        return {
+            "ok": False,
+            "arguments": {},
+            "tool_ui": error_result["ui"],
+            "error_result": error_result,
+        }
+
+    # Keep plain instant queries plain when no shared operator object was supplied.
+    # Models commonly put a quoted phrase directly in a query string; the advanced
+    # validator accepts that public string form, while its structured form correctly
+    # reserves operators for the separate ``operators`` object.
+    structured_queries = [
+        {"text": query, "operators": dict(operators)} if operators else query
+        for query in raw_queries
+    ]
+    advanced_arguments = {
+        "call_description": description,
+        "web": structured_queries[0] if len(structured_queries) == 1 else structured_queries,
+        "effort": "low",
+    }
+    try:
+        from core.config import load_search_config
+
+        prepared = prepare_advanced_search(
+            advanced_arguments,
+            query_config=load_search_config().query,
+            tor_enabled=False,
+            allow_structured_queries=True,
+            enforce_word_limits=False,
+            allow_multiple_queries=True,
+            max_queries=INSTANT_SEARCH_BATCH_LIMIT,
+        )
+    except PlanValidationError as exc:
+        error_result = invalid_search_plan_result(
+            exc.issues,
+            description=description,
+            received_arguments=args,
+        )
+        details = "; ".join(
+            f"{issue.get('path', '$')}: {issue.get('message', 'invalid value')}"
+            for issue in exc.issues
+        )
+        error_result["model_context"] = (
+            "INVALID_SEARCH_PLAN: instant web_search rejected this call before running. "
+            f"Failures: {details}. Correct query, description, or operators without adding "
+            "effort or vertical fields."
+        )
+        error_result["ui"]["instant_mode"] = True
+        return {
+            "ok": False,
+            "arguments": {},
+            "tool_ui": error_result["ui"],
+            "error_result": error_result,
+        }
+
+    search_request = prepared["search_request"]
+    search_request["schema_mode"] = "instant"
+    public_request = _public_search_request(search_request)
+    canonical_query: str | list[str] = (
+        str(raw_queries[0]) if len(raw_queries) == 1 else [str(query) for query in raw_queries]
+    )
+    canonical_arguments: dict[str, Any] = {
+        "query": canonical_query,
+        "description": description,
+    }
+    if operators:
+        canonical_arguments["operators"] = dict(operators)
+    return {
+        "ok": True,
+        "arguments": canonical_arguments,
+        "search_request": search_request,
+        "warnings": list(prepared.get("warnings") or []),
+        "tool_ui": {
+            "kind": "web_search",
+            "status": "pending",
+            "instant_mode": True,
+            "description": description,
+            "query_count": len(raw_queries),
+            "search_request": public_request,
+        },
+    }
+
+
+def prepare_search_arguments(arguments: Any, *, instant_mode: bool = False) -> dict[str, Any]:
     """Return canonical arguments and normalized UI data before network work."""
+
+    if instant_mode or (isinstance(arguments, dict) and arguments.get("_instant_mode") is True):
+        return prepare_instant_search_arguments(arguments)
 
     if search_schema_mode() == "advanced":
         normalized_arguments = _recover_public_query_wrappers(arguments)

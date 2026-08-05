@@ -492,6 +492,7 @@ class ReadPageService:
         markdown = ""
         raw_html: str | None = None
         winning_method = ""
+        last_http_status = 0
 
         for idx, cand in enumerate(variants):
             variant_label = _variant_label(cand)
@@ -527,13 +528,31 @@ class ReadPageService:
 
             if not html:
                 if raw is not None:
+                    if raw.method != METHOD_BROWSER and raw.status:
+                        last_http_status = raw.status
                     self._profiles.record(cand, raw.attempt(success=False))
                     # Firefox-grade verdict: the host does not speak valid TLS. Feed the
                     # reputation store and move on — no transport (or browser) will do
                     # better, they all validate the same chain.
                     if raw.tls_failed:
                         self._profiles.record_reputation(cand, tls_failed=True)
-                continue
+                        continue
+
+                # Do this at most once; browser-first failures must not recurse back here.
+                if method != METHOD_BROWSER and await self._browser_ok():
+                    logger.info(
+                        "empty HTTP fetch for %s (status=%s) — retrying via warm browser",
+                        cand, raw.status if raw is not None else 0,
+                    )
+                    browser_raw, browser_result = await _fetch_browser(cand, self._opts.timeout)
+                    if browser_raw.html:
+                        raw, cam = browser_raw, browser_result
+                        html, method = browser_raw.html, METHOD_BROWSER
+                    else:
+                        self._profiles.record(cand, browser_raw.attempt(success=False))
+                        continue
+                else:
+                    continue
 
             # Anti-bot wall — escalate to a real browser once if not already there.
             if is_antibot(html):
@@ -623,7 +642,10 @@ class ReadPageService:
                 break
 
         if not raw_html:
-            return PageResult(markdown=f"Error: Could not fetch content from: {url}", ok=False)
+            status_detail = f" (HTTP {last_http_status})" if last_http_status else ""
+            return PageResult(
+                markdown=f"Error: Could not fetch content from: {url}{status_detail}", ok=False
+            )
         if is_antibot(raw_html):
             return PageResult(
                 markdown=(

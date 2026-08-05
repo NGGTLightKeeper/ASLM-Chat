@@ -429,6 +429,8 @@ def _build_tool_message(
                 "arguments": tool_event.get("arguments") or {},
             }
         )
+        if "tool_ui" not in payload and isinstance(tool_event.get("tool_ui"), dict):
+            payload["tool_ui"] = dict(tool_event["tool_ui"])
 
     return payload
 
@@ -526,6 +528,8 @@ def _run_tool_loop(
         model_name=model_name,
         tool_source_map=tool_context.get("tool_source_map") if isinstance(tool_context, dict) else None,
         allowed_tool_aliases=tool_context.get("allowed_tool_aliases") if isinstance(tool_context, dict) else None,
+        instant_mode=bool(tool_context.get("instant_mode")) if isinstance(tool_context, dict) else False,
+        instant_search_batch_size=tool_context.get("instant_search_batch_size") if isinstance(tool_context, dict) else None,
     )
     base_kwargs = {key: value for key, value in call_kwargs.items() if key != "stream"}
 
