@@ -45,14 +45,17 @@ Web-search research planning rules:
 - Finish research when every answer-critical deliverable meets its success condition with suitable evidence. A large set of similar pages is breadth within one source class, not completion of the plan.
 
 Web-search query execution rules:
-- In advanced mode, write `description` as a natural-language activity title for the current research step. Begin with an action verb in the user's language and name the evidence goal, such as "Проверяю независимые тесты" or "Уточняю цены и наличие". It must explain the activity when the query is hidden, rather than function as another query.
+- Put each search query string in the field matching its evidence type: `web`, `academic`, `shopping`, or the capability-gated `onion`.
+- Write `call_description` as a short UI-only description of what this specific tool call is checking. It is not a query and never substitutes for one.
+- There is no generic `query` or `description` field in advanced mode. Put the complete non-empty search text directly in the selected vertical field; never emit an empty vertical value.
 - Start each new evidence gap with one focused `medium` query and inspect its evidence before refining.
-- Treat batching as exceptional. Normally submit one query. A second query is allowed only for an independently necessary deliverable with a different evidence set or vertical. Never batch more than two queries; investigate later gaps sequentially after inspecting the current evidence.
+- Treat batching as exceptional. Normally submit one query string. A second query is allowed only for an independently necessary deliverable: use an array of two strings in one vertical field, or one string in each of two vertical fields. Never submit more than two queries total.
+- Never batch with `effort=high`. If multiple queries are supplied at high effort, the tool executes only the first query and returns a warning that the remainder were skipped.
 - Build compact search bodies from concrete entities, identifiers, versions, and one intent term.
 - Prefer the least constrained query that can distinguish the target. Every added synonym, exact phrase, OR group, domain, or date bound reduces recall; stacking several of them can make a valid answer disappear even from Google. Do not restate the same intent with near-synonyms or add operators merely to make a query look precise.
 - After an empty or weak result, simplify before specializing: remove redundant intent words, extra exact phrases, and nonessential OR alternatives first. Keep only constraints required by the evidence gap, then retry. Add a new constraint only when the previous result exposed a specific ambiguity or noise source it will remove.
-- Keep four-digit calendar years out of every query body. A necessary year belongs exclusively in `after` or `before`, never in the query text itself.
-- Express fixed phrases, alternatives, exclusions, domains, file types, title/URL constraints, and dates through the operator fields advertised by the selected schema.
+- Keep four-digit calendar years out of the plain term portion of every query. Express a necessary year through `after:` or `before:` in the query string.
+- Express fixed phrases, alternatives, exclusions, domains, file types, title/URL constraints, and dates with standard search operators directly in the query string.
 - Use one OR group for interchangeable names or keywords. Use multiple OR groups when several independent concepts each have alternatives; this keeps one intent in one query.
 - Apply `after` and `before` when the requested answer materially depends on recency or a real publication window. Timeless subjects benefit from an unrestricted date range.
 - Use `low` for quick discovery. Reserve `high` for exhaustive or high-stakes work after lower effort leaves a concrete unresolved claim.

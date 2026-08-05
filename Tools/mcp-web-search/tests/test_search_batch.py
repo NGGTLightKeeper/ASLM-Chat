@@ -35,7 +35,7 @@ def test_legacy_query_schema_advertises_largest_vertical_batch(monkeypatch):
     assert string_schema["type"] == "string"
     assert batch_schema["type"] == "array"
     assert SEARCH_BATCH_LIMIT == 2
-    assert batch_schema["maxItems"] == LEGACY_BATCH_LIMIT == 8
+    assert batch_schema["maxItems"] == LEGACY_BATCH_LIMIT == 2
     assert batch_schema["items"]["type"] == "string"
     assert "calendar years are forbidden" in query_schema["description"]
 
@@ -68,7 +68,7 @@ def test_legacy_preflight_rejects_oversized_batch_instead_of_truncating(monkeypa
     ]
 
 
-def test_legacy_preflight_uses_specialized_vertical_quotas(monkeypatch):
+def test_legacy_preflight_caps_every_vertical_at_two_queries(monkeypatch):
     import core.config as config_module
 
     cfg = type("Cfg", (), {
@@ -78,40 +78,36 @@ def test_legacy_preflight_uses_specialized_vertical_quotas(monkeypatch):
     monkeypatch.setattr(config_module, "load_search_config", lambda: cfg)
 
     shopping = prepare_search_arguments({
-        "query": [f"product {index}" for index in range(4)],
+        "query": [f"product {index}" for index in range(2)],
         "shopping": True,
     })
     academic = prepare_search_arguments({
-        "query": [f"paper {index}" for index in range(8)],
+        "query": [f"paper {index}" for index in range(2)],
         "academic": True,
     })
     too_many_shopping = prepare_search_arguments({
-        "query": [f"product {index}" for index in range(5)],
+        "query": [f"product {index}" for index in range(3)],
         "shopping": True,
     })
 
     assert shopping["ok"] is True
-    assert len(shopping["search_request"]["queries"]) == 4
+    assert len(shopping["search_request"]["queries"]) == 2
     assert academic["ok"] is True
-    assert len(academic["search_request"]["queries"]) == 8
+    assert len(academic["search_request"]["queries"]) == 2
     assert too_many_shopping["ok"] is False
     assert too_many_shopping["error_result"]["error"]["issues"] == [
-        {"path": "$.query", "message": "shopping permits at most 4 queries per call"}
+        {"path": "$.query", "message": "shopping permits at most 2 queries per call"}
     ]
 
 
 def test_tool_description_documents_rare_batch_and_operator_examples():
-    for description in (
-        LEGACY_WEB_SEARCH_TOOL_DESCRIPTION,
-        ADVANCED_WEB_SEARCH_TOOL_DESCRIPTION,
-    ):
-        normalized = " ".join(description.split())
-        assert "make an internal plan before calling this tool" in normalized
-        assert "answer deliverables, evidence gaps, source classes" in normalized
-        assert "Each call executes the next plan step" in normalized
-        assert "Link count alone is not coverage" in normalized
+    normalized = " ".join(LEGACY_WEB_SEARCH_TOOL_DESCRIPTION.split())
+    assert "make an internal plan before calling this tool" in normalized
+    assert "answer deliverables, evidence gaps, source classes" in normalized
+    assert "Each call executes the next plan step" in normalized
+    assert "Link count alone is not coverage" in normalized
     assert "Arrays are reserved" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
-    assert "4 shopping queries, and 8 academic queries" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
+    assert "Every vertical permits\nat most 2 queries" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
     assert "site:docs.example.com" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
     assert "postgresql OR postgres" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
     assert "filetype:pdf" in LEGACY_WEB_SEARCH_TOOL_DESCRIPTION
@@ -123,6 +119,10 @@ def test_tool_description_documents_rare_batch_and_operator_examples():
     legacy_normalized = " ".join(LEGACY_WEB_SEARCH_TOOL_DESCRIPTION.split())
     assert "shopping=true for product discovery" in legacy_normalized
     assert "academic=true for papers" in legacy_normalized
+    advanced_normalized = " ".join(ADVANCED_WEB_SEARCH_TOOL_DESCRIPTION.split())
+    assert "Choose the query field by evidence type" in advanced_normalized
+    assert "Never submit more than two queries total" in advanced_normalized
+    assert "High effort never batches" in advanced_normalized
 
 
 def test_advanced_operators_are_recognized_without_polluting_scoring_terms():

@@ -42,9 +42,9 @@ coverage when the sources all belong to one class.
 
 Write a compact search expression built from concrete entities, identifiers, versions,
 and one intent term. A plain query string is the normal form. Arrays are reserved for
-independently necessary deliverables with distinct evidence targets. Per-call ceilings are
-2 ordinary web queries, 4 shopping queries, and 8 academic queries; alternatives for one
-claim fit one query through OR. These are ceilings, not targets.
+independently necessary deliverables with distinct evidence targets. Every vertical permits
+at most 2 queries per call; alternatives for one claim fit one query through OR. These are
+ceilings, not targets.
 
 Use the least constrained query that can identify the target. Stacking near-synonyms,
 several exact phrases, broad OR groups, and site/date restrictions can hide valid results
@@ -68,8 +68,7 @@ medium; low is quick discovery and high is the reserve tier after a lower-effort
 leaves a concrete high-stakes gap.
 
 Source allowance is per query: low up to 8, medium up to 10, high up to 16 before URL
-deduplication and filtering. Context cost scales with every query: four medium shopping
-queries can create up to 40 source records and eight academic queries up to 80.
+deduplication and filtering. Context cost scales with every query.
 
 Cite the exact handles returned by this call immediately after the supported claim.
 Parsed page content carries more weight than snippets. English is the normal search
@@ -79,52 +78,25 @@ language; regional evidence and local proper names benefit from the matching lan
 ADVANCED_WEB_SEARCH_TOOL_DESCRIPTION = """\
 Ranked web search with optional page-content extraction.
 
-For every non-atomic research task, make an internal plan before calling this tool. Define
-answer deliverables, evidence gaps, source classes, verticals, query anchors, operator
-purposes, dependencies, and success conditions. Each call executes the next plan step;
-inspect its evidence and update the plan before continuing. Link count alone is not
-coverage when the sources all belong to one class.
+Choose the query field by evidence type. MUST use `shopping` for products, prices, sellers,
+stock, availability, delivery, and purchase options. MUST use `academic` for papers, citations,
+DOI records, preprints, and primary research. Use `web` for official, independent, community,
+news, measurement, and general evidence, but never as a substitute for shopping or academic.
+Use `onion` only when that advertised field is available and Tor access is explicitly needed.
 
-Description is the visible activity title for the current research step, not a search
-expression. Write a natural 3-4 word phrase in the user's language that begins with an
-action verb and names the evidence goal. It must remain meaningful when the query text is
-hidden. Prefer titles such as "Checking independent tests", "Comparing specifications", or
-"Confirming prices and availability". Normally submit exactly one query. Per-call ceilings
-are 2 web queries, 4 shopping queries, and 8 academic queries. Additional items must serve
-independently necessary deliverables with distinct evidence targets; the ceilings are not
-targets. A mixed plan may use each matching vertical up to its own ceiling.
+Each vertical field accepts one query string. Batch only when two independent evidence gaps
+are both needed: either pass an array of two strings in one vertical field, or pass one string
+in each of two vertical fields. Never submit more than two queries total. High effort never
+batches: when multiple queries are supplied with high, only the first is executed and the
+result warns that the rest were skipped.
 
-Vertical is a required routing decision for every query, not a reserve option. Any step
-about product discovery, budgets, prices, sellers, stock, or availability must use
-shopping. Any step about papers, citations, DOI records, preprints, peer-reviewed support,
-or primary scientific literature must use academic. Use separate web steps for official
-pages, independent reviews, reporting, community experience, measurements, and currency
-references. A mixed task must include every matching vertical in its research plan.
+`call_description` is only the visible UI description of this tool invocation. It is not a
+query and never replaces one. The selected vertical field is the only place for the complete
+search text and must never be empty. Put compact terms and any needed search operators there.
 
-Put a compact search body in text and express constraints through operators. `or_terms`
-builds one alternative group; `or_groups` builds several groups such as `(A OR B) (C OR D)`.
-Exact phrases, exclusions, included or excluded domains, file types, title terms, URL
-terms, and date bounds have dedicated fields. after/before fit cases where the requested
-answer materially depends on recency or a real publication window. Keep four-digit
-calendar years out of text; a necessary year belongs exclusively in after or before.
-
-Use the least constrained query that can identify the target. Stacking near-synonyms,
-several exact phrases, broad OR groups, and site/date restrictions can hide valid results
-even from Google. Every operator must remove a known ambiguity or enforce an answer-critical
-boundary. After an empty or weak result, simplify first: remove redundant words, phrases,
-and alternatives while retaining only essential constraints; do not respond by adding more.
-
-Use shopping for prices and availability, academic for scholarly literature, and web for
-independent evidence. Start ordinary work at medium; low is quick discovery and high is
-the reserve tier after lower effort leaves a concrete high-stakes gap.
-
-Source allowance is per query: low up to 8, medium up to 10, high up to 16 before URL
-deduplication and filtering. Context cost scales with every query: four medium shopping
-queries can create up to 40 source records and eight academic queries up to 80.
-
-Cite exact handles returned by this call immediately after the supported claim. Parsed
-page content carries more weight than snippets. English is the normal search language;
-regional evidence and local proper names benefit from the matching language."""
+Start ordinary work at medium. Use low for quick discovery and high only after a lower-effort
+search leaves a specific high-stakes gap. After weak results, simplify the query before adding
+constraints. Cite exact source handles returned by the tool."""
 
 # Compatibility export for callers that do not use the config-aware builder.
 WEB_SEARCH_TOOL_DESCRIPTION = ADVANCED_WEB_SEARCH_TOOL_DESCRIPTION
@@ -132,6 +104,9 @@ WEB_SEARCH_TOOL_DESCRIPTION = ADVANCED_WEB_SEARCH_TOOL_DESCRIPTION
 
 READ_PAGE_TOOL_DESCRIPTION = """\
 Open one or more URLs and extract the readable text as markdown.
+
+The `url` input must contain an exact, non-empty URL. Never call this with an empty value or
+a search topic. If no exact URL is available yet, call web_search first.
 
 Use it when you need:
 - the full content of an article, documentation page, post, or thread;
@@ -159,7 +134,7 @@ SEARCH_QUERY_SCHEMA: dict[str, Any] = {
             ],
             "description": (
                 "One plain search query, or an array of independently necessary queries to run "
-                "concurrently. Per-call ceilings are 2 web, 4 shopping, and 8 academic queries. "
+                "concurrently. Every vertical permits at most 2 queries per call. "
                 "Keep each query short and specific: concrete names, "
                 "identifiers, version numbers, exact error text, or explicit constraints. "
                 "Four-digit calendar years are forbidden as content tokens; place a "
@@ -435,7 +410,7 @@ def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
             )
         except PlanValidationError as exc:
             raw_description = (
-                arguments.get("description", "") if isinstance(arguments, dict) else ""
+                arguments.get("call_description", "") if isinstance(arguments, dict) else ""
             )
             error_result = invalid_search_plan_result(
                 exc.issues,
@@ -448,16 +423,19 @@ def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
                 "error_result": error_result,
             }
         request = _public_search_request(prepared["search_request"])
+        warnings = list(prepared.get("warnings") or [])
         return {
             "ok": True,
             "arguments": prepared["canonical_arguments"],
             "search_request": prepared["search_request"],
+            "warnings": warnings,
             "tool_ui": {
                 "kind": "web_search",
                 "status": "pending",
                 "description": request["description"],
                 "query_count": len(request["queries"]),
                 "search_request": request,
+                **({"warnings": warnings} if warnings else {}),
             },
         }
 

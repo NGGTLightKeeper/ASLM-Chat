@@ -1454,8 +1454,9 @@ class ToolPreflightTests(SimpleTestCase):
         worker_mock.return_value = {
             "ok": True,
             "arguments": {
-                "description": "Verify canonical sources",
-                "queries": [{"vertical": "web", "text": "canonical"}],
+                "call_description": "Verify canonical sources",
+                "web": "canonical",
+                "effort": "medium",
             },
             "tool_ui": {
                 "kind": "web_search",
@@ -1469,7 +1470,10 @@ class ToolPreflightTests(SimpleTestCase):
                 },
             },
         }
-        raw = {"query": "raw model value"}
+        raw = {
+            "call_description": "Verify raw sources",
+            "web": "raw model value",
+        }
         call = tool_registry.prepare_tool_call(
             self._lookup(),
             {"name": "web_search__web_search", "arguments": raw},
@@ -1478,7 +1482,7 @@ class ToolPreflightTests(SimpleTestCase):
 
         self.assertEqual(call["raw_arguments"], raw)
         self.assertNotIn("raw model value", json.dumps(event))
-        self.assertEqual(event["arguments"]["queries"][0]["text"], "canonical")
+        self.assertEqual(event["arguments"]["web"], "canonical")
         self.assertEqual(event["tool_ui"]["description"], "Verify canonical sources")
         self.assertEqual(event["tool_ui"]["search_request"]["queries"][0]["compiled_query"], "canonical")
         marker = _serialize_tool_call_marker(event)
@@ -1507,7 +1511,7 @@ class ToolPreflightTests(SimpleTestCase):
     @patch.object(tool_registry, "_run_worker")
     def test_rejected_preflight_keeps_structured_error_for_adapter_short_circuit(self, worker_mock):
         error_result = {
-            "model_context": "INVALID_SEARCH_PLAN: $.queries: required",
+            "model_context": "INVALID_SEARCH_PLAN: $: must include a vertical query",
             "sources": [],
             "ui": {"kind": "web_search", "status": "rejected"},
         }
@@ -1532,7 +1536,7 @@ class ToolPreflightTests(SimpleTestCase):
             self.assertTrue(persistent)
             arguments = payload["arguments"]
             self.assertEqual(
-                [query["text"] for query in arguments["queries"]],
+                arguments["web"],
                 ["first query", "second query"],
             )
             return {
@@ -1551,8 +1555,8 @@ class ToolPreflightTests(SimpleTestCase):
                 "id": "call-1",
                 "name": "web_search__web_search",
                 "arguments": {
-                    "description": "Check first source",
-                    "queries": [{"vertical": "web", "text": "first query"}],
+                    "call_description": "Check first source",
+                    "web": "first query",
                     "effort": "medium",
                 },
             },
@@ -1560,8 +1564,8 @@ class ToolPreflightTests(SimpleTestCase):
                 "id": "call-2",
                 "name": "web_search__web_search",
                 "arguments": {
-                    "description": "Check second source",
-                    "queries": [{"vertical": "web", "text": "second query"}],
+                    "call_description": "Check second source",
+                    "web": "second query",
                     "effort": "medium",
                 },
             },
@@ -1579,15 +1583,15 @@ class ToolPreflightTests(SimpleTestCase):
     def test_parallel_search_batch_over_server_limit_is_one_atomic_rejection(self, worker_mock):
         def reject_oversized_batch(_server_file, _operation, payload, persistent=False):
             self.assertTrue(persistent)
-            query_count = len(payload["arguments"]["queries"])
+            query_count = len(payload["arguments"]["web"])
             self.assertEqual(query_count, 4)
             error_result = {
                 "error": {
                     "code": "INVALID_SEARCH_PLAN",
-                    "issues": [{"path": "$.queries", "message": "must contain at most 2 items"}],
+                    "issues": [{"path": "$", "message": "batch permits at most 2 queries total"}],
                 },
                 "sources": [],
-                "model_context": "INVALID_SEARCH_PLAN: $.queries: must contain at most 2 items",
+                "model_context": "INVALID_SEARCH_PLAN: $: batch permits at most 2 queries total",
                 "ui": {"kind": "web_search", "status": "rejected", "query_count": 0},
             }
             return {
@@ -1603,8 +1607,8 @@ class ToolPreflightTests(SimpleTestCase):
                 "id": f"call-{index}",
                 "name": "web_search__web_search",
                 "arguments": {
-                    "description": f"Check source {index}",
-                    "queries": [{"vertical": "web", "text": f"query {index}"}],
+                    "call_description": f"Check source {index}",
+                    "web": f"query {index}",
                     "effort": "medium",
                 },
             }
@@ -1616,7 +1620,7 @@ class ToolPreflightTests(SimpleTestCase):
         self.assertEqual(len(prepared), 1)
         self.assertEqual(prepared[0]["tool_ui"]["status"], "rejected")
         self.assertIn("4 parallel web_search calls", prepared[0]["preflight_error_result"]["model_context"])
-        self.assertIn("must contain at most 2 items", prepared[0]["preflight_error_result"]["model_context"])
+        self.assertIn("batch permits at most 2 queries total", prepared[0]["preflight_error_result"]["model_context"])
         worker_mock.assert_called_once()
 
         transcript = tool_registry.canonicalize_transcript_tool_calls(

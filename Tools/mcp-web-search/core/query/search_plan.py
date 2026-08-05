@@ -20,18 +20,15 @@ from core.search.query_dates import resolve_query_dates
 
 VERTICAL_QUERY_LIMITS = {
     "web": 2,
-    "shopping": 4,
-    "academic": 8,
+    "shopping": 2,
+    "academic": 2,
     "onion": 2,
 }
-ADVANCED_BATCH_LIMIT = sum(
-    VERTICAL_QUERY_LIMITS[vertical] for vertical in ("web", "shopping", "academic")
-)
-ADVANCED_TEXT_LIMIT = 160
+ADVANCED_BATCH_LIMIT = 2
 COMPILED_QUERY_LIMIT = 512
 DESCRIPTION_LIMIT = 80
 _EFFORTS = ("low", "medium", "high")
-_BASE_VERTICALS = ("web", "shopping", "academic")
+_BASE_VERTICALS = ("web", "academic", "shopping")
 _OPERATOR_KEYS = tuple(SEARCH_OPERATOR_BY_KEY)
 _LIST_SPECS = tuple(spec for spec in SEARCH_OPERATOR_SPECS if spec.value_kind == "list")
 _GROUP_SPECS = tuple(spec for spec in SEARCH_OPERATOR_SPECS if spec.value_kind == "groups")
@@ -64,104 +61,72 @@ def _string_schema(description: str, *, max_length: int) -> dict[str, Any]:
     }
 
 
-def _list_schema(description: str, *, max_items: int, max_length: int) -> dict[str, Any]:
-    return {
-        "type": "array",
-        "maxItems": max_items,
-        "items": _string_schema(description, max_length=max_length),
-    }
-
-
 def build_advanced_search_schema(*, tor_enabled: bool = False) -> dict[str, Any]:
     verticals = [*_BASE_VERTICALS, *(("onion",) if tor_enabled else ())]
-    batch_limit = ADVANCED_BATCH_LIMIT + (
-        VERTICAL_QUERY_LIMITS["onion"] if tor_enabled else 0
+    query_string = _string_schema(
+        "Required complete, non-empty search query for this evidence source. Put the actual "
+        "terms here. Operators such as quoted phrases, OR, exclusions, site:, filetype:, "
+        "intitle:, inurl:, after:, and before: may be included directly.",
+        max_length=COMPILED_QUERY_LIMIT,
     )
-    operator_properties: dict[str, Any] = {}
-    for spec in SEARCH_OPERATOR_SPECS:
-        if spec.value_kind == "list":
-            operator_properties[spec.key] = _list_schema(
-                spec.description,
-                max_items=spec.max_items,
-                max_length=spec.max_length,
-            )
-        elif spec.value_kind == "groups":
-            operator_properties[spec.key] = {
-                "type": "array",
-                "maxItems": spec.max_items,
-                "items": {
+    vertical_descriptions = {
+        "web": (
+            "Official, independent, community, reporting, measurement, and general web evidence. "
+            "MUST NOT be used for products, prices, sellers, stock, or availability; use shopping. "
+            "MUST NOT be used for scholarly literature; use academic."
+        ),
+        "academic": (
+            "MUST be used for papers, citations, DOI records, preprints, peer-reviewed evidence, "
+            "and primary scientific literature."
+        ),
+        "shopping": (
+            "MUST be used for products, budgets, prices, sellers, stock, availability, delivery, "
+            "and purchase options."
+        ),
+        "onion": "Censorship-resistant onion sources over Tor when explicitly required.",
+    }
+    vertical_properties: dict[str, Any] = {}
+    for vertical in verticals:
+        vertical_properties[vertical] = {
+            "oneOf": [
+                query_string,
+                {
                     "type": "array",
-                    "minItems": 2,
-                    "maxItems": spec.group_max_items,
-                    "items": _string_schema(spec.description, max_length=spec.max_length),
+                    "minItems": 1,
+                    "maxItems": ADVANCED_BATCH_LIMIT,
+                    "items": query_string,
                 },
-                "description": spec.description,
-            }
-        else:
-            operator_properties[spec.key] = {
-                "type": "string",
-                "format": "date",
-                "description": spec.description,
-            }
-    operators = {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": operator_properties,
-    }
-    query_item = {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "vertical": {
-                "type": "string",
-                "enum": verticals,
-                "description": (
-                    "Required routing from the research plan. MUST use shopping for product "
-                    "discovery, budgets, prices, sellers, stock, or availability; MUST use "
-                    "academic for papers, citations, DOI records, preprints, peer-reviewed "
-                    "support, or primary scientific literature; use web for official, "
-                    "independent, community, reporting, measurement, and general evidence."
-                ),
-            },
-            "text": _string_schema(
-                "Core search terms only. Never include a four-digit calendar year; encode "
-                "a necessary time boundary exclusively in operators.after or operators.before.",
-                max_length=ADVANCED_TEXT_LIMIT,
+            ],
+            "description": (
+                f"{vertical_descriptions[vertical]} Pass one query string, or an array of two "
+                "query strings only when both queries belong to this vertical. Across the whole "
+                "call, at most two queries are allowed."
             ),
-            "operators": operators,
-        },
-        "required": ["vertical", "text"],
-    }
+        }
     return {
         "type": "object",
         "additionalProperties": False,
+        "minProperties": 1,
         "properties": {
-            "description": _string_schema(
-                "Visible activity title for the current research step, not a query. Write "
-                "a natural 3-4 word phrase in the user's language, beginning with an action "
-                "verb and naming the evidence goal; it must make sense without the query text.",
+            "call_description": _string_schema(
+                "Required UI-only description of this tool call, not a search query. Write "
+                "a short action phrase in the user's language describing what this call is "
+                "checking. This field never replaces a non-empty vertical query field.",
                 max_length=DESCRIPTION_LIMIT,
             ),
-            "queries": {
-                "type": "array",
-                "minItems": 1,
-                "maxItems": batch_limit,
-                "items": query_item,
-                "description": (
-                    "Normally one query. Per-call ceilings are 2 web, 4 shopping, and 8 "
-                    "academic queries; when available, onion is limited to 2. Use additional "
-                    "items only for independently necessary deliverables with distinct "
-                    "evidence targets. These are ceilings, not targets."
-                ),
-            },
+            **vertical_properties,
             "effort": {
                 "type": "string",
                 "enum": list(_EFFORTS),
                 "default": "medium",
-                "description": "Shared search effort. Start with medium; high is a gated reserve tier.",
+                "description": (
+                    "Shared search effort. Start with medium. High never allows batching: if "
+                    "multiple queries are supplied, only the first is searched and the tool "
+                    "returns a warning."
+                ),
             },
         },
-        "required": ["description", "queries"],
+        "required": ["call_description"],
     }
 
 
@@ -352,18 +317,24 @@ def prepare_advanced_search(
     issues: list[dict[str, str]] = []
     if not isinstance(arguments, dict):
         raise PlanValidationError([{"path": "$", "message": "must be an object"}])
-    unknown_root = sorted(set(arguments) - {"description", "queries", "effort"})
+    allowed_verticals = [*_BASE_VERTICALS, *(("onion",) if tor_enabled else ())]
+    allowed_root_keys = {"call_description", "effort", *allowed_verticals}
+    unknown_root = sorted(set(arguments) - allowed_root_keys)
     for key in unknown_root:
         _issue(issues, f"$.{key}", "is not allowed in advanced mode")
 
-    raw_description = arguments.get("description")
+    raw_description = arguments.get("call_description")
     if not isinstance(raw_description, str):
-        _issue(issues, "$.description", "must be a string")
+        _issue(issues, "$.call_description", "must be a string")
     description = _clean_text(raw_description) if isinstance(raw_description, str) else ""
     if not description:
-        _issue(issues, "$.description", "must be a non-empty string")
+        _issue(issues, "$.call_description", "must be a non-empty string")
     elif len(description) > DESCRIPTION_LIMIT:
-        _issue(issues, "$.description", f"must be at most {DESCRIPTION_LIMIT} characters")
+        _issue(
+            issues,
+            "$.call_description",
+            f"must be at most {DESCRIPTION_LIMIT} characters",
+        )
 
     effort_value = arguments.get("effort", "medium")
     if not isinstance(effort_value, str):
@@ -373,58 +344,71 @@ def prepare_advanced_search(
         _issue(issues, "$.effort", "must be one of low, medium, high")
         effort = "medium"
 
-    batch_limit = ADVANCED_BATCH_LIMIT + (
-        VERTICAL_QUERY_LIMITS["onion"] if tor_enabled else 0
-    )
-    raw_queries = arguments.get("queries")
-    if not isinstance(raw_queries, list):
-        _issue(issues, "$.queries", "must be an array")
-        raw_queries = []
-    elif not raw_queries:
-        _issue(issues, "$.queries", "must contain at least one item")
-    elif len(raw_queries) > batch_limit:
-        _issue(issues, "$.queries", f"must contain at most {batch_limit} items")
-
-    allowed_verticals = {*_BASE_VERTICALS, *({"onion"} if tor_enabled else set())}
-    vertical_counts = {vertical: 0 for vertical in allowed_verticals}
-    canonical_queries: list[dict[str, Any]] = []
-    prepared_queries: list[dict[str, Any]] = []
-    for index, raw_query in enumerate(raw_queries[:batch_limit]):
-        base_path = f"$.queries[{index}]"
-        if not isinstance(raw_query, dict):
-            _issue(issues, base_path, "must be an object")
+    raw_queries: list[tuple[str, Any, str]] = []
+    for key, raw_value in arguments.items():
+        if key not in allowed_verticals:
             continue
-        for key in sorted(set(raw_query) - {"vertical", "text", "operators"}):
-            _issue(issues, f"{base_path}.{key}", "is not allowed")
+        if isinstance(raw_value, list):
+            if not raw_value:
+                _issue(issues, f"$.{key}", "must contain at least one query")
+                continue
+            raw_queries.extend(
+                (key, raw_query, f"$.{key}[{index}]")
+                for index, raw_query in enumerate(raw_value)
+            )
+        else:
+            raw_queries.append((key, raw_value, f"$.{key}"))
 
-        raw_text = raw_query.get("text")
-        raw_vertical = raw_query.get("vertical")
+    if not raw_queries:
+        vertical_names = ", ".join(allowed_verticals)
+        _issue(issues, "$", f"must include a query in one of: {vertical_names}")
+
+    warnings: list[dict[str, str]] = []
+    if effort == "high" and len(raw_queries) > 1:
+        warnings.append(
+            {
+                "code": "HIGH_EFFORT_BATCH_TRUNCATED",
+                "message": (
+                    "High effort does not allow batching. Only the first query was executed; "
+                    "submit any remaining queries separately with medium or low effort."
+                ),
+            }
+        )
+        raw_queries = raw_queries[:1]
+    elif len(raw_queries) > ADVANCED_BATCH_LIMIT:
+        _issue(
+            issues,
+            "$",
+            "batch permits at most 2 queries total: either two in one vertical or one in each of two verticals",
+        )
+
+    prepared_queries: list[dict[str, Any]] = []
+    for vertical, raw_query, base_path in raw_queries:
+        structured_query = isinstance(raw_query, dict)
+        if isinstance(raw_query, str):
+            raw_text = raw_query
+            raw_operators: Any = {}
+        elif structured_query:
+            for key in sorted(set(raw_query) - {"text", "operators"}):
+                _issue(issues, f"{base_path}.{key}", "is not allowed")
+            raw_text = raw_query.get("text")
+            raw_operators = raw_query.get("operators", {})
+        else:
+            _issue(issues, base_path, "must be a string")
+            continue
+
         if not isinstance(raw_text, str):
             _issue(issues, f"{base_path}.text", "must be a string")
-        if not isinstance(raw_vertical, str):
-            _issue(issues, f"{base_path}.vertical", "must be a string")
         text = _clean_text(raw_text) if isinstance(raw_text, str) else ""
-        vertical = raw_vertical.strip().lower() if isinstance(raw_vertical, str) else ""
         if not text:
-            _issue(issues, f"{base_path}.text", "must be a non-empty string")
-        elif len(text) > ADVANCED_TEXT_LIMIT:
-            _issue(issues, f"{base_path}.text", f"must be at most {ADVANCED_TEXT_LIMIT} characters")
-        elif has_search_operators(text):
+            path = f"{base_path}.text" if structured_query else base_path
+            _issue(issues, path, "must be a non-empty string")
+        elif len(text) > COMPILED_QUERY_LIMIT:
+            path = f"{base_path}.text" if structured_query else base_path
+            _issue(issues, path, f"must be at most {COMPILED_QUERY_LIMIT} characters")
+        elif structured_query and has_search_operators(text):
             _issue(issues, f"{base_path}.text", "must not contain recognized search operators")
-        if vertical not in allowed_verticals:
-            allowed = ", ".join(sorted(allowed_verticals))
-            _issue(issues, f"{base_path}.vertical", f"must be one of {allowed}")
-        else:
-            vertical_counts[vertical] += 1
-            vertical_limit = VERTICAL_QUERY_LIMITS[vertical]
-            if vertical_counts[vertical] > vertical_limit:
-                _issue(
-                    issues,
-                    f"{base_path}.vertical",
-                    f"{vertical} permits at most {vertical_limit} queries per call",
-                )
 
-        raw_operators = raw_query.get("operators", {})
         if raw_operators in (None, ""):
             raw_operators = {}
         if not isinstance(raw_operators, dict):
@@ -469,7 +453,6 @@ def prepare_advanced_search(
         }
         if normalized_operators:
             canonical_item["operators"] = normalized_operators
-        canonical_queries.append(canonical_item)
         prepared_queries.append(
             {
                 **canonical_item,
@@ -481,16 +464,29 @@ def prepare_advanced_search(
 
     if issues:
         raise PlanValidationError(issues)
+    canonical_arguments: dict[str, Any] = {"call_description": description}
+    for query in prepared_queries:
+        vertical = str(query.get("vertical") or "")
+        model_query = str(query.get("compiled_query") or "")
+        existing = canonical_arguments.get(vertical)
+        if existing is None:
+            canonical_arguments[vertical] = model_query
+        elif isinstance(existing, list):
+            existing.append(model_query)
+        else:
+            canonical_arguments[vertical] = [existing, model_query]
+    canonical_arguments["effort"] = effort
+
+    search_request: dict[str, Any] = {
+        "schema_mode": "advanced",
+        "description": description,
+        "effort": effort,
+        "queries": prepared_queries,
+    }
+    if warnings:
+        search_request["warnings"] = warnings
     return {
-        "canonical_arguments": {
-            "description": description,
-            "queries": canonical_queries,
-            "effort": effort,
-        },
-        "search_request": {
-            "schema_mode": "advanced",
-            "description": description,
-            "effort": effort,
-            "queries": prepared_queries,
-        },
+        "canonical_arguments": canonical_arguments,
+        "search_request": search_request,
+        "warnings": warnings,
     }

@@ -87,10 +87,17 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "url": {
-                    "description": "A URL string or a list of URLs.",
+                    "description": (
+                        "An exact non-empty URL, normally copied from web_search results, or "
+                        "a list of exact URLs. Never put a search topic or empty string here."
+                    ),
                     "oneOf": [
-                        {"type": "string"},
-                        {"type": "array", "items": {"type": "string"}},
+                        {"type": "string", "minLength": 8, "format": "uri"},
+                        {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {"type": "string", "minLength": 8, "format": "uri"},
+                        },
                     ],
                 },
             },
@@ -111,10 +118,11 @@ def supports(engine: str | None = None, model_name: str | None = None) -> bool:
 
 # Run the ranked web_search pipeline (the model-facing default tool).
 #
-# The model controls only query/effort/shopping. Recency (timelimit) is parsed from the
-# query, region is routed by language, and safe-search stays moderate — none are model-
-# facing knobs. Arguments are coerced (a model may stringify or wrap them).
-async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
+# The model routes query strings through the vertical fields and chooses effort. Recency
+# is parsed from the query, while region and safe-search remain internal routing details.
+async def _call_web_search(
+    args: dict[str, Any], *, preflight_warnings: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     prepared = prepare_search_arguments(args)
     if not prepared.get("ok"):
         return dict(prepared.get("error_result") or {})
@@ -183,6 +191,28 @@ async def _call_web_search(args: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         logger.exception("mcp.web_search.failed query_preview=%r", query_preview)
         raise
+    warnings = [
+        dict(warning)
+        for warning in prepared.get("warnings", [])
+        if isinstance(warning, dict)
+    ]
+    for warning in preflight_warnings or []:
+        if not isinstance(warning, dict):
+            continue
+        normalized_warning = dict(warning)
+        if normalized_warning not in warnings:
+            warnings.append(normalized_warning)
+    if warnings:
+        warning_context = "\n".join(
+            f"{warning.get('code', 'SEARCH_WARNING')}: {warning.get('message', '')}".strip()
+            for warning in warnings
+        )
+        existing_context = str(result.get("model_context") or "").strip()
+        result["model_context"] = (
+            f"{warning_context}\n\n{existing_context}" if existing_context else warning_context
+        )
+        result["warnings"] = warnings
+        result.setdefault("ui", {})["warnings"] = warnings
     elapsed = time.perf_counter() - started
     logger.info(
         "mcp.web_search.done effort=%s queries=%d sources=%d elapsed=%.3fs",
@@ -334,7 +364,17 @@ async def call_tool(
     args = dict(arguments or {})
     _evict_caches_once()
     if tool_id == "web_search":
-        return await _call_web_search(args)
+        inherited_warnings: list[dict[str, Any]] = []
+        raw_arguments = (context or {}).get("raw_tool_arguments")
+        if isinstance(raw_arguments, dict):
+            raw_preflight = prepare_search_arguments(raw_arguments)
+            if raw_preflight.get("ok"):
+                inherited_warnings = [
+                    dict(warning)
+                    for warning in raw_preflight.get("warnings", [])
+                    if isinstance(warning, dict)
+                ]
+        return await _call_web_search(args, preflight_warnings=inherited_warnings)
     if tool_id == "read_page":
         return await _call_read_page(args)
     raise ValueError(f"Unknown tool: {tool_id}")

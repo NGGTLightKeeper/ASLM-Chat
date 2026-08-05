@@ -2371,8 +2371,11 @@ def _normalized_batch_bool(arguments: dict[str, Any], key: str) -> bool:
     return bool(value)
 
 
+_ADVANCED_SEARCH_VERTICAL_KEYS = ("web", "academic", "shopping", "onion")
+
+
 def _web_search_call_mode(arguments: dict[str, Any]) -> str:
-    if isinstance(arguments.get("queries"), list):
+    if any(key in arguments for key in _ADVANCED_SEARCH_VERTICAL_KEYS):
         return "advanced"
     if "query" in arguments:
         return "legacy"
@@ -2433,11 +2436,22 @@ def _merge_parallel_web_search_calls(tool_calls: list[dict[str, Any]]) -> dict[s
     mode = next(iter(modes))
     merged_arguments = copy.deepcopy(raw_arguments[0])
     if mode == "advanced":
-        merged_arguments["queries"] = [
-            copy.deepcopy(query)
-            for arguments in raw_arguments
-            for query in arguments.get("queries", [])
-        ]
+        for vertical in _ADVANCED_SEARCH_VERTICAL_KEYS:
+            merged_values: list[Any] = []
+            for arguments in raw_arguments:
+                if vertical not in arguments:
+                    continue
+                value = arguments.get(vertical)
+                if isinstance(value, list):
+                    merged_values.extend(copy.deepcopy(value))
+                else:
+                    merged_values.append(copy.deepcopy(value))
+            if not merged_values:
+                merged_arguments.pop(vertical, None)
+            elif len(merged_values) == 1:
+                merged_arguments[vertical] = merged_values[0]
+            else:
+                merged_arguments[vertical] = merged_values
     else:
         routing_keys = ("shopping", "academic", "onion")
         for key in routing_keys:
