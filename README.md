@@ -1,4 +1,4 @@
 # ASLM-Chat
 
 ## License
-[Copyright NGGT.LightKeeper & Di120078. All Rights Reserved.](LICENSE.md)
+[Copyright NEXTGGTECH. Elastic License 2.0 (ELv2).](LICENSE.md)
