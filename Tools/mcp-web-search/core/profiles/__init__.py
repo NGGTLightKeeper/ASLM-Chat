@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 from .known_domains import KNOWN_DOMAINS, domain_of, get_override
 from .models import (

@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 from core.fetch.hackernews_fetcher import fetch_hackernews_item, is_hackernews_item_url
 

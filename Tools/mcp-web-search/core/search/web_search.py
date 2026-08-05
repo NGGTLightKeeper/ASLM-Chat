@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 """Web-search orchestrator: stream → triage → bounded eager parse scheduler.
 
@@ -271,10 +271,23 @@ def _build_model_context(
 # snippet so it shows in model_context; structured fields kept for richer UI).
 def _shopping_product_dict(product: Any, *, citation_id: str, rank: int) -> dict[str, Any]:
     price = str(getattr(product, "price_text", "") or "").strip()
-    if not price and getattr(product, "price_value", None):
-        price = f"{product.price_value:g} {getattr(product, 'currency', '') or ''}".strip()
+    price_value = getattr(product, "price_value", None)
+    currency = str(getattr(product, "currency", "") or "").strip().upper()
+    if not price and price_value is not None:
+        price = f"{price_value:g} {currency}".strip()
+    converted_prices = [
+        dict(item)
+        for item in (getattr(product, "converted_prices", []) or [])
+        if isinstance(item, dict)
+    ]
+    converted_summary = " / ".join(
+        str(item.get("price_text") or "").strip()
+        for item in converted_prices[:3]
+        if str(item.get("price_text") or "").strip()
+    )
     rating = getattr(product, "rating", None)
-    bits = [b for b in (price, str(getattr(product, "seller", "") or ""),
+    bits = [b for b in (price, (f"≈ {converted_summary}" if converted_summary else ""),
+                        str(getattr(product, "seller", "") or ""),
                         (f"rating {rating}" if rating else "")) if b]
     source = str(getattr(product, "source", "") or "shopping")
     return {
@@ -288,8 +301,16 @@ def _shopping_product_dict(product: Any, *, citation_id: str, rank: int) -> dict
         "engine": f"shopping:{source}",
         "score": float(getattr(product, "confidence", 0.0) or 0.0),
         "consensus_families": [],
+        "price": {
+            "value": price_value,
+            "currency": currency,
+            "price_text": price,
+        },
         "price_text": price,
-        "currency": str(getattr(product, "currency", "") or ""),
+        "price_value": price_value,
+        "currency": currency,
+        "converted_prices": converted_prices,
+        "display_currency_count": (1 + len(converted_prices)) if currency else len(converted_prices),
         "rating": rating,
         "seller": str(getattr(product, "seller", "") or ""),
         "availability": str(getattr(product, "availability", "") or ""),
@@ -547,6 +568,7 @@ class WebSearchService:
         shopping: bool = False,
         academic: bool = False,
         onion: bool = False,
+        vertical_only: bool = False,
         dates_resolved: bool = False,
         query_text: str = "",
         operators: dict[str, Any] | None = None,
@@ -568,6 +590,46 @@ class WebSearchService:
         language = infer_query_language(query)
         if not region:
             region = {"ru": "ru-ru", "de": "de-de"}.get(language, "us-en")
+
+        # Advanced vertical fields are routes, not boolean supplements. A dedicated
+        # shopping query must return products with prices instead of spending the
+        # deadline on a normal web SERP and timing out the shopping merge afterward.
+        if vertical_only and shopping:
+            search_id = _make_search_id()
+            source_dicts = await self._shopping_sources(
+                query, profile, language, search_id, start_rank=1
+            )
+            from core.config import load_search_config
+
+            search_cfg = load_search_config().search
+            model_context = _build_model_context(
+                query,
+                source_dicts,
+                total_budget=int(search_cfg.total_context_budget or 0),
+                per_source_chars=int(search_cfg.preview_max_chars or 0),
+            )
+            return {
+                "query": query,
+                "search_id": search_id,
+                "effort": profile.name,
+                "shopping": True,
+                "academic": False,
+                "onion": False,
+                "language": language,
+                "region": region,
+                "engines_used": ["shopping"],
+                "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
+                "model_context": model_context,
+                "sources": source_dicts,
+                "ui": _build_ui(source_dicts),
+                "engines": {
+                    "shopping": {
+                        "status": "success" if source_dicts else "empty",
+                        "count": len(source_dicts),
+                    }
+                },
+                "health": self._tracker.snapshot(),
+            }
 
         engines = select_engines(profile.name, self._tracker)
         from core.query.provider_compiler import compile_provider_query
@@ -1023,6 +1085,7 @@ async def run_web_search(
     shopping: bool = False,
     academic: bool = False,
     onion: bool = False,
+    vertical_only: bool = False,
     dates_resolved: bool = False,
     query_text: str = "",
     operators: dict[str, Any] | None = None,
@@ -1050,6 +1113,7 @@ async def run_web_search(
         payload = await WebSearchService().search(
             query, effort=effort, region=region, safesearch=safesearch,
             timelimit=timelimit, shopping=shopping, academic=academic, onion=True,
+            vertical_only=vertical_only,
             dates_resolved=dates_resolved,
             query_text=query_text, operators=operators,
         )
@@ -1070,6 +1134,7 @@ async def run_web_search(
         payload = await WebSearchService().search(
             query, effort=effort, region=region, safesearch=safesearch,
             timelimit=timelimit, shopping=shopping, academic=academic,
+            vertical_only=vertical_only,
             dates_resolved=dates_resolved,
             query_text=query_text, operators=operators,
         )
@@ -1304,6 +1369,7 @@ async def run_web_search_plan(search_request: dict[str, Any]) -> dict[str, Any]:
             shopping=vertical == "shopping",
             academic=vertical == "academic",
             onion=vertical == "onion",
+            vertical_only=vertical == "shopping",
             dates_resolved=True,
             query_text=str(plan.get("text") or ""),
             operators=dict(plan.get("operators") or {}),

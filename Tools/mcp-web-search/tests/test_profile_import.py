@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 """Cross-browser profile import: cookie decryption, store layer, config gating, transport merge.
 

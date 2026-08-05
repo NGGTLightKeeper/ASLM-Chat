@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 # Standalone sandbox image setup — run before first use or when refreshing the image.
 # Requires Docker only (independent of ASLM / MCP).

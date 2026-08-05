@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 # Pass-through custom-domain layer with a single API (see base.py). read_page asks
 # match(url) for a handler and calls handler.read(url, ctx). Order matters only in that

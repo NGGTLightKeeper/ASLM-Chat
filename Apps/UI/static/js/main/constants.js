@@ -1,4 +1,4 @@
-// Copyright NGGT.LightKeeper. All Rights Reserved.
+// Copyright NEXTGGTECH. Elastic License 2.0.
 
 // Ollama-only runtime keys hidden from the managed UI.
 export const OLLAMA_UNSUPPORTED_RUNTIME_PARAMS = new Set([

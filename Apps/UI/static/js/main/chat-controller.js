@@ -1,4 +1,4 @@
-﻿// Copyright NGGT.LightKeeper. All Rights Reserved.
+﻿// Copyright NEXTGGTECH. Elastic License 2.0.
 
 import { deleteJson, getCsrfToken, getJson, patchJson, postJson } from './api.js';
 import { intlLocaleTag, t } from './i18n.js';

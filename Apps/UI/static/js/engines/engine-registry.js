@@ -1,4 +1,4 @@
-// Copyright NGGT.LightKeeper. All Rights Reserved.
+// Copyright NEXTGGTECH. Elastic License 2.0.
 
 import { googleGenAiAdapter } from './google-genai.js';
 import { lmsAdapter } from './lms.js';

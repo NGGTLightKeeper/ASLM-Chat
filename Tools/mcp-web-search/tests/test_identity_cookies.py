@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 """Stage B — HTTP cookie accumulation: identity store merge/read + transport round-trip."""
 

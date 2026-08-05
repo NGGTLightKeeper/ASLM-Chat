@@ -1,4 +1,4 @@
-/* Copyright NGGT.LightKeeper. All Rights Reserved. */
+/* Copyright NEXTGGTECH. Elastic License 2.0. */
 
 /* Markdown content */
 .markdown-body {
@@ -804,6 +804,7 @@
 .msg-reasoning-step-body > .msg-search-card,
 .msg-reasoning-step-body > .msg-read-page-card,
 .msg-reasoning-step-body > .msg-reasoning-tool-row,
+.msg-reasoning-step-body > .msg-mcp-call,
 .msg-reasoning-step-body > .msg-tool-pending-card {
   width: 100%;
   max-width: 100%;
@@ -955,6 +956,87 @@
 
 .msg-reasoning-tool-row.is-pending .msg-reasoning-tool-status {
   color: var(--activity-on-surface-muted);
+}
+
+/* Minimal generic MCP call: tool name, JSON input, then stdout. */
+.msg-mcp-call {
+  width: min(100%, 720px);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
+  padding: 4px 0 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--c-white);
+  box-shadow: none;
+}
+
+.msg-mcp-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--c-white);
+  font-size: var(--font-size-body-2);
+  font-weight: 600;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg-mcp-payload {
+  width: 100%;
+  max-height: 280px;
+  margin: 0;
+  overflow: auto;
+  padding: 15px 18px 15px 28px;
+  border: 1px solid #27272a;
+  border-inline-start-color: #353539;
+  border-radius: 10px;
+  background: var(--c-black);
+  color: rgba(255, 255, 255, 0.88);
+  color-scheme: dark;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-caption-1);
+  line-height: 1.55;
+  tab-size: 2;
+  white-space: pre;
+  -webkit-user-select: text;
+  -moz-user-select: text;
+  -ms-user-select: text;
+  user-select: text;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  box-shadow: 0 7px 20px color-mix(in srgb, var(--c-black) 20%, transparent);
+}
+
+.msg-mcp-payload::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.msg-mcp-payload code {
+  font: inherit;
+}
+
+.msg-mcp-call.is-error .msg-mcp-payload {
+  border-inline-start-color: color-mix(in srgb, var(--c-error) 58%, var(--c-border));
+}
+
+.msg-mcp-call.is-pending .msg-mcp-name {
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.msg-mcp-tool-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+  background: var(--c-white);
+  -webkit-mask: url("../../img/ui/mcp.svg") center / contain no-repeat;
+  mask: url("../../img/ui/mcp.svg") center / contain no-repeat;
+  opacity: 0.9;
 }
 
 .msg-sandbox-card {
@@ -1887,7 +1969,8 @@ img.msg-search-main-icon {
 
 .msg-tool-only-group > .msg-sandbox-card,
 .msg-tool-only-group > .msg-write-card,
-.msg-tool-only-group > .msg-edit-card {
+.msg-tool-only-group > .msg-edit-card,
+.msg-tool-only-group > .msg-mcp-call {
   width: 100%;
   max-width: 100%;
 }

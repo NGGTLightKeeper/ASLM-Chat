@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 from __future__ import annotations
 
@@ -106,6 +106,38 @@ def test_parse_products_keeps_card_with_price() -> None:
     assert products[0].price_value == pytest.approx(123.45)
     assert products[0].currency == "GBP"
     assert not hasattr(products[0], "image_url")
+
+
+@pytest.mark.unit
+def test_yandex_card_uses_real_price_outside_specification_branch() -> None:
+    html = (
+        '<article class="product-card">'
+        '<noframes>{"zoneData":{"price":{"currency":"RUR","value":"51673"}}}</noframes>'
+        '<div class="content">'
+        '<div class="details">'
+        '<div><div><a href="/card/nothing-phone/4915325941">'
+        'Смартфон Nothing Phone 2A 12/256 ГБ, Milk Белый, 2Sim'
+        '</a></div></div>'
+        '<span>Количество основных камер: 2 Разрешение основной камеры: 50 Мпикс</span>'
+        '</div>'
+        '<div class="offer"><span>Цена с картой Яндекс Пэй 51673 ₽</span></div>'
+        '</div>'
+        '</article>'
+    )
+
+    products = parse_products(
+        html,
+        provider="yandex_market",
+        lane="primary",
+        method="curl_cffi",
+        base_url="https://market.yandex.ru/search?text=nothing",
+        default_currency="RUB",
+    )
+
+    assert len(products) == 1
+    assert products[0].price_text == "51673 ₽"
+    assert products[0].price_value == pytest.approx(51673.0)
+    assert products[0].currency == "RUB"
 
 
 @pytest.mark.unit

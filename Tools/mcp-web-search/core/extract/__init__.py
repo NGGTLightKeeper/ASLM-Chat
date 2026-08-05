@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 from .content_processor import (
     _preclean_html, _extract_text_with_bs4, _regex_html_to_text,

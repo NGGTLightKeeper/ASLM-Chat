@@ -1,4 +1,4 @@
-// Copyright NGGT.LightKeeper. All Rights Reserved.
+// Copyright NEXTGGTECH. Elastic License 2.0.
 
 // Client-side translations from #aslmHostLocaleData (see host_locale_bridge).
 

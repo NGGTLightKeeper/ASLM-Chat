@@ -1,10 +1,11 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 from __future__ import annotations
 
 import time
 import hashlib
 
+from core.cache import hosted_cache as hosted_cache_module
 from core.cache.hosted_cache import HostedSearchCache
 from core.search.recent_tracker import RecentSearchTracker
 from core.search.web_search import _infer_pdf_url
@@ -69,6 +70,18 @@ def test_hosted_cache_negative_ttl_for_empty(tmp_path):
     assert cache.get("q", effort="low") is not None
     time.sleep(1.2)
     assert cache.get("q", effort="low") is None  # negative entry expired fast
+
+
+def test_shopping_payload_cache_expires_after_one_hour(tmp_path, monkeypatch):
+    now = 1000.0
+    monkeypatch.setattr(hosted_cache_module.time, "time", lambda: now)
+    cache = HostedSearchCache(str(tmp_path / "shopping.db"), default_ttl=21_600)
+    cache.set("headphones", {"sources": [{"price": 100}]}, shopping=True)
+
+    now = 4599.0
+    assert cache.get("headphones", shopping=True) is not None
+    now = 4601.0
+    assert cache.get("headphones", shopping=True) is None
 
 
 def test_hosted_cache_evict_expired(tmp_path):

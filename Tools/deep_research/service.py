@@ -1,10 +1,4 @@
-"""Application-level Deep Research service.
-
-Deep Research is a first-class chat mode, not a model-selectable MCP tool.  The
-orchestrator still reuses the existing isolated research implementation and its
-web/sandbox dependencies, but callers enter through this module instead of the
-tool registry.
-"""
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 from __future__ import annotations
 

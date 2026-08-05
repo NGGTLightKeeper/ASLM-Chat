@@ -1,9 +1,4 @@
-"""Render portable Deep Research reports from resolved Markdown.
-
-DOCX exports use real Word structure (headings, lists, tables, hyperlinks and
-OMML equations) while Mermaid diagrams are embedded as images. PDF exports are
-printed from the same browser-grade Markdown/KaTeX/Mermaid stack used by the UI.
-"""
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 from __future__ import annotations
 

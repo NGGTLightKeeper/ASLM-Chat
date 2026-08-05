@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 """Deep onion search: discover article URLs on a vetted service via the hardened clearnet
 SERP (`site:<host> <query>`) → rewrite the clearnet host to its onion mirror → scrape those

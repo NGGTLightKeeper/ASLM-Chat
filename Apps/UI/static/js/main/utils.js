@@ -1,4 +1,4 @@
-// Copyright NGGT.LightKeeper. All Rights Reserved.
+// Copyright NEXTGGTECH. Elastic License 2.0.
 
 import { THINK_PARAMETER_KEYS } from './constants.js';
 import { intlLocaleTag } from './i18n.js';

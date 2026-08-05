@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 # Ported from the legacy adapters/mcp/search_io_logger.py: appends each full
 # search / read_page tool IO event to a single readable JSON array, so the exact

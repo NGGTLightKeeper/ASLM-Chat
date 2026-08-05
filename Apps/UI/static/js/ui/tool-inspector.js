@@ -1,4 +1,4 @@
-// Copyright NGGT.LightKeeper. All Rights Reserved.
+// Copyright NEXTGGTECH. Elastic License 2.0.
 
 // Tool inspector UI.
 // Create the modal used to inspect tool inputs and outputs.

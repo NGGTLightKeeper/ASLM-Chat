@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 DEFAULT_UA: str = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "

@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ import re
 import time
 from urllib.parse import parse_qs, urljoin, urlparse
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Comment
 
 from .models import ShoppingProduct
 
 
-PRICE_MARKER_RE = r"[$€£₽₴¥]|zł|руб\.?|грн\.?|р\.?|円"
+PRICE_MARKER_RE = r"[$€£₽₴¥]|zł(?!\w)|руб\.?(?!\w)|грн\.?(?!\w)|р\.?(?!\w)|円"
 PRICE_CURRENCY_FIRST_RE = re.compile(
     rf"(?P<currency>{PRICE_MARKER_RE})\s*"
     r"(?P<amount>\d[\d\s.,]{1,14})",
@@ -162,7 +162,9 @@ def parse_amount_value(raw: str) -> float | None:
 def _bare_integer_before_spaced_currency(raw: str) -> bool:
     value = raw or ""
     stripped = value.strip()
-    return len(stripped) >= 4 and stripped.isdigit() and value[-1:].isspace()
+    # Four bare digits are commonly a model number (`RTX 5070 £...`). Five or
+    # more digits are also a normal ungrouped marketplace price (`51673 ₽`).
+    return len(stripped) == 4 and stripped.isdigit() and value[-1:].isspace()
 
 
 def _looks_like_rating_ruble_false_positive(match: re.Match[str], source: str, amount: float) -> bool:
@@ -351,16 +353,13 @@ def _card_products(
         # but only re-list one facet/score at the page-context price (the duplicate source).
         if _is_listing_or_facet_url(url) or _is_rating_anchor(title, url):
             continue
-        parent = anchor
-        for _ in range(3):
-            if parent.parent is None:
-                break
-            parent = parent.parent
-        context = compact(parent.get_text(" ", strip=True), limit=900)
         price_text, price_value, currency = parse_price(title, default_currency=default_currency)
         price_from_title = bool(price_text)
+        context = _visible_ancestor_text(anchor, depth=3)
         if not price_text:
-            price_text, price_value, currency = parse_price(context, default_currency=default_currency)
+            context, price_text, price_value, currency = _nearest_priced_context(
+                anchor, default_currency=default_currency
+            )
         if _looks_like_price_filter_title(title):
             continue
         if not price_from_title and not _has_enough_product_title_signal(title):
@@ -379,6 +378,61 @@ def _card_products(
             snippet=context,
         ))
     return out
+
+
+_NON_VISIBLE_TEXT_PARENTS = frozenset({"script", "style", "noscript", "noframes", "template"})
+
+
+def _visible_text(node: object, *, limit: int = 1200) -> str:
+    find_all = getattr(node, "find_all", None)
+    if not callable(find_all):
+        return ""
+    strings: list[str] = []
+    for item in find_all(string=True):
+        if isinstance(item, Comment):
+            continue
+        if any(
+            str(getattr(parent, "name", "") or "").lower() in _NON_VISIBLE_TEXT_PARENTS
+            for parent in getattr(item, "parents", ())
+            if parent is not node
+        ):
+            continue
+        strings.append(str(item))
+    return compact(" ".join(strings), limit=limit)
+
+
+def _visible_ancestor_text(anchor: object, *, depth: int) -> str:
+    node = anchor
+    for _ in range(max(0, depth)):
+        parent = getattr(node, "parent", None)
+        if parent is None:
+            break
+        node = parent
+    return _visible_text(node)
+
+
+def _nearest_priced_context(
+    anchor: object, *, default_currency: str
+) -> tuple[str, str, float | None, str]:
+    node = anchor
+    last_context = ""
+    # Yandex Market keeps specifications and the price in adjacent branches of
+    # the product card. Four ancestors reach the common card without reaching
+    # the surrounding result list; other providers usually resolve earlier.
+    for _ in range(5):
+        parent = getattr(node, "parent", None)
+        if parent is None:
+            break
+        node = parent
+        context = _visible_text(node)
+        if context:
+            last_context = context
+        price_text, price_value, currency = parse_price(
+            context, default_currency=default_currency
+        )
+        if price_text and price_value is not None and currency:
+            return context, price_text, price_value, currency
+    return last_context, "", None, ""
 
 
 # Listing/search/facet endpoints are not products: comparison sites expose category and

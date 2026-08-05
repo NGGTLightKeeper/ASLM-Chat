@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ class ShoppingProduct:
     price_text: str = ""
     price_value: float | None = None
     currency: str = ""
+    converted_prices: list[dict[str, Any]] = field(default_factory=list)
     seller: str = ""
     availability: str = ""
     rating: str = ""
@@ -54,5 +55,6 @@ class ShoppingSearchResult:
     attempts: list[ShoppingProviderAttempt]
     provider_state: dict[str, Any] = field(default_factory=dict)
     timings: dict[str, Any] = field(default_factory=dict)
+    exchange_rates: dict[str, Any] = field(default_factory=dict)
     partial: bool = False
     partial_reason: str = ""

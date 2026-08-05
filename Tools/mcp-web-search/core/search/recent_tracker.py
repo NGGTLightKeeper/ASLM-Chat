@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 # Short-horizon memory of what the model was just shown, so the search tool does not
 # echo the same thing back within seconds. Two independent windows:

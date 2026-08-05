@@ -1,4 +1,4 @@
-// Copyright NGGT.LightKeeper. All Rights Reserved.
+// Copyright NEXTGGTECH. Elastic License 2.0.
 
 import { getJson, patchJson, postJson, requestJson } from '../main/api.js';
 import { intlLocaleTag, t } from '../main/i18n.js';

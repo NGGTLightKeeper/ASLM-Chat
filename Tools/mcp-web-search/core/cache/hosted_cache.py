@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 # SQLite-backed cache for whole web_search result payloads, keyed by the normalized
 # query plus the parameters that change the result (region/safesearch/timelimit/effort).
@@ -24,7 +24,8 @@ from core.cache.query_normalizer import normalize_query_key
 logger = logging.getLogger("core.cache.hosted_cache")
 
 _CACHE_PATH = Path(__file__).resolve().parents[2] / "_cache" / "hosted_cache.db"
-_CACHE_KEY_VERSION = "v2"
+_CACHE_KEY_VERSION = "v4"
+_SHOPPING_TTL_SECONDS = 60 * 60
 
 
 # SQLite-backed query → result-payload cache with flat + negative TTL.
@@ -109,7 +110,10 @@ class HostedSearchCache:
         except Exception as exc:  # noqa: BLE001
             logger.warning("[hosted_cache] read error: %s", exc)
             return None
-        if row is None or (time.time() - row["ts"]) > row["ttl"]:
+        ttl = min(int(row["ttl"]), _SHOPPING_TTL_SECONDS) if row is not None and shopping else (
+            int(row["ttl"]) if row is not None else 0
+        )
+        if row is None or (time.time() - row["ts"]) > ttl:
             return None
         try:
             return json.loads(row["data"])
@@ -132,6 +136,8 @@ class HostedSearchCache:
         is_empty: bool = False,
     ) -> None:
         ttl = self._negative_ttl if is_empty else self._default_ttl
+        if shopping and not is_empty:
+            ttl = min(ttl, _SHOPPING_TTL_SECONDS)
         key = self.make_key(
             query, region=region, safesearch=safesearch, timelimit=timelimit,
             effort=effort, shopping=shopping, academic=academic,

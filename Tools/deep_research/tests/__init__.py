@@ -1,1 +1,1 @@
-"""Deep Research runtime tests."""
+# Copyright NEXTGGTECH. Elastic License 2.0.
