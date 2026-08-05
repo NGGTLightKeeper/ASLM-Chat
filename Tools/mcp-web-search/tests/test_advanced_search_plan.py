@@ -320,6 +320,8 @@ def test_mixed_vertical_plan_runs_concurrently_and_preserves_metadata(monkeypatc
     assert max_active == 2
     assert calls[0][1]["shopping"] is False
     assert calls[1][1]["shopping"] is True
+    assert calls[0][1]["vertical_only"] is False
+    assert calls[1][1]["vertical_only"] is True
     assert calls[0][1]["query_text"] == "alpha"
     assert calls[0][1]["operators"] == {"after": "2026-07-01"}
     assert result["ui"]["description"] == "Compare evidence sources"

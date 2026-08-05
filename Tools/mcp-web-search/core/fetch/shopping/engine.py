@@ -501,7 +501,19 @@ async def search_shopping(
     language: str = "en",
 ) -> ShoppingSearchResult:
     engine = ShoppingSearchEngine()
-    return await engine.search(query, effort=effort, limit=limit, language=language)
+    result = await engine.search(query, effort=effort, limit=limit, language=language)
+    currency_started = time.perf_counter()
+    try:
+        from .currency import enrich_products_with_exchange_rates
+
+        result.exchange_rates = await enrich_products_with_exchange_rates(result.products)
+    except Exception as exc:  # noqa: BLE001 - keep original shopping prices on FX failure
+        result.exchange_rates = {"providers": [], "converted_products": 0, "error": str(exc)}
+    result.timings["currency_elapsed_ms"] = int((time.perf_counter() - currency_started) * 1000)
+    result.timings["total_elapsed_ms"] = int(result.timings.get("total_elapsed_ms", 0)) + int(
+        result.timings["currency_elapsed_ms"]
+    )
+    return result
 
 
 def result_to_jsonable(result: ShoppingSearchResult) -> dict[str, Any]:
@@ -516,6 +528,7 @@ def result_to_jsonable(result: ShoppingSearchResult) -> dict[str, Any]:
         "attempts": [asdict(attempt) for attempt in result.attempts],
         "provider_state": result.provider_state,
         "timings": dict(result.timings),
+        "exchange_rates": dict(result.exchange_rates),
         "partial": result.partial,
         "partial_reason": result.partial_reason,
     }
