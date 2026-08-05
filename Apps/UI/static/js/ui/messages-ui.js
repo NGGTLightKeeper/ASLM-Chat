@@ -4760,6 +4760,65 @@ export function createMessagesUi(context, dependencies) {
     return ' is-done';
   }
 
+  // Format one MCP payload for the compact inline call view. Arguments are
+  // always JSON, while tool output keeps plain stdout intact unless it is a
+  // structured JSON object or array.
+  function formatMcpPayload(value, forceJson) {
+    if (forceJson) {
+      try {
+        return {
+          text: JSON.stringify(value && typeof value === 'object' ? value : {}, null, 2),
+          language: 'json'
+        };
+      } catch (_error) {
+        return { text: String(value || ''), language: 'plaintext' };
+      }
+    }
+
+    const text = value === null || value === undefined ? '' : String(value);
+    const trimmed = text.trim();
+    if (trimmed && (trimmed.charAt(0) === '{' || trimmed.charAt(0) === '[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object') {
+          return { text: JSON.stringify(parsed, null, 2), language: 'json' };
+        }
+      } catch (_error) {
+        // A stdout line can resemble JSON without being valid JSON. Preserve it.
+      }
+    }
+    return { text, language: 'plaintext' };
+  }
+
+  // Render a generic MCP call without decorative chrome. The tool name is the
+  // only header; input and stdout use the same quiet, left-ruled code treatment.
+  function renderMcpToolCall(segment, toolSegmentIndex, options) {
+    const renderOptions = options || {};
+    const name = toolDisplayName(segment);
+    const input = formatMcpPayload(
+      segment.arguments && typeof segment.arguments === 'object' ? segment.arguments : {},
+      true
+    );
+    const hasResult = segment.result !== null && segment.result !== undefined;
+    const output = formatMcpPayload(segment.result, false);
+    const dataIndex = Number.isInteger(toolSegmentIndex) ? ` data-tool-segment-index="${toolSegmentIndex}"` : '';
+
+    const renderPayload = function renderPayload(payload, extraClass) {
+      const safeLanguage = String(payload.language || 'plaintext').replace(/[^a-z0-9_-]/gi, '') || 'plaintext';
+      return `
+        <pre class="msg-mcp-payload msg-code-block language-${safeLanguage}${extraClass ? ` ${extraClass}` : ''}" data-language="${escapeAttributeValue(safeLanguage)}"><code>${highlightCode(payload.text, safeLanguage)}</code></pre>
+      `;
+    };
+
+    return `
+      <div class="msg-mcp-call${toolStatusClass(segment)}"${dataIndex} aria-label="${escapeAttributeValue(name)}">
+        ${renderOptions.hideName ? '' : `<div class="msg-mcp-name">${escHtml(name)}</div>`}
+        ${renderPayload(input, 'is-input')}
+        ${hasResult && output.text ? renderPayload(output, 'is-output') : ''}
+      </div>
+    `;
+  }
+
   // Handle reasoning tool detail.
   function reasoningToolDetail(segment) {
     if (isSearchToolSegment(segment)) {
@@ -4831,7 +4890,7 @@ export function createMessagesUi(context, dependencies) {
     if (isSandboxToolSegment(segment)) {
       return icons.TOOL_CODE_EXEC_ICON || icons.TOOL_BASH_ICON || '';
     }
-    return '';
+    return '<span class="msg-mcp-tool-icon" aria-hidden="true"></span>';
   }
 
   // Render reasoning tool row.
@@ -4856,7 +4915,7 @@ export function createMessagesUi(context, dependencies) {
   }
 
   // Render reasoning tool item.
-  function renderReasoningToolItem(item) {
+  function renderReasoningToolItem(item, options) {
     const segment = item && item.segment ? item.segment : item;
     const toolIndex = item && Number.isInteger(item.toolIndex) ? item.toolIndex : undefined;
     if (!segment) {
@@ -4890,7 +4949,7 @@ export function createMessagesUi(context, dependencies) {
     if (isSandboxToolSegment(segment)) {
       return renderSandboxToolBlock(segment, toolIndex);
     }
-    return renderReasoningToolRow(segment, toolIndex);
+    return renderMcpToolCall(segment, toolIndex, options);
   }
 
   // Handle reasoning tool step title.
@@ -5389,7 +5448,7 @@ export function createMessagesUi(context, dependencies) {
                 ${hideStepTitle ? '' : `<span>${escHtml(title)}</span>`}
                 <span class="msg-reasoning-step-status">${escHtml(status)}</span>
               </div>`}
-              ${renderReasoningToolItem(item)}
+              ${renderReasoningToolItem(item, { hideName: true })}
             </div>
           </div>
         `;
