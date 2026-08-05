@@ -121,8 +121,9 @@ def test_tool_description_documents_rare_batch_and_operator_examples():
     assert "academic=true for papers" in legacy_normalized
     advanced_normalized = " ".join(ADVANCED_WEB_SEARCH_TOOL_DESCRIPTION.split())
     assert "Choose the query field by evidence type" in advanced_normalized
-    assert "Never submit more than two queries total" in advanced_normalized
-    assert "High effort never batches" in advanced_normalized
+    assert "at most two queries" in advanced_normalized
+    assert "array of two plain strings" in advanced_normalized
+    assert "10 whitespace-separated words for `web`" in advanced_normalized
 
 
 def test_advanced_operators_are_recognized_without_polluting_scoring_terms():

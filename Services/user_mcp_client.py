@@ -413,7 +413,30 @@ def call_user_mcp_tool(entry: UserMcpServerEntry, mcp_tool_name: str, arguments:
             {"name": mcp_tool_name, "arguments": arguments or {}},
             CALL_TOOL_TIMEOUT,
         )
-        return _format_call_tool_result(result)
+        formatted = _format_call_tool_result(result)
+        if str(entry.server_id or "").strip().lower() == "github":
+            from Services.github_html_fallback import (
+                GITHUB_SEARCH_TYPE_BY_TOOL,
+                is_github_rate_limit_result,
+                search_github_html,
+            )
+
+            if (
+                mcp_tool_name in GITHUB_SEARCH_TYPE_BY_TOOL
+                and is_github_rate_limit_result(formatted)
+            ):
+                try:
+                    fallback = search_github_html(mcp_tool_name, arguments or {})
+                except Exception as fallback_exc:  # noqa: BLE001
+                    logger.warning(
+                        "GitHub HTML fallback failed for %s: %s",
+                        mcp_tool_name,
+                        fallback_exc,
+                    )
+                    fallback = f"GITHUB_HTML_FALLBACK_FAILED: {fallback_exc}"
+                if fallback:
+                    return fallback
+        return formatted
     except Exception as exc:  # pragma: no cover
         logger.exception("User MCP call_tool failed for %s.%s", entry.server_id, mcp_tool_name)
         return f"User MCP tool execution failed: {exc}"

@@ -59,6 +59,16 @@ def _api_get_json(url: str, timeout: float) -> Any:
     return resp.json()
 
 
+# True when a GitHub API failure is specifically a REST rate-limit response.
+def _is_api_rate_limit_error(value: str) -> bool:
+    text = str(value or "").lower()
+    return (
+        "api rate limit exceeded" in text
+        or "403 rate limit exceeded" in text
+        or ("rate limit" in text and "api.github.com" in text)
+    )
+
+
 # Decode base64 contents field from a GitHub contents API response.
 def _decode_content_payload(data: Any) -> str:
     if not isinstance(data, dict):
@@ -257,7 +267,7 @@ async def fetch_github_page(url: str, timeout: float = 20.0) -> str:
     return await loop.run_in_executor(_io_pool, _sync)
 
 
-from custom_domains.base import FetchContext, PageResult
+from custom_domains.base import FetchContext, GenericRequest, PageResult
 
 
 # Unified handler: fetch a GitHub page via the REST API and return budgeted markdown.
@@ -273,6 +283,16 @@ class GitHubHandler:
     async def read(self, url: str, ctx: FetchContext) -> PageResult:
         markdown = await fetch_github_page(url, timeout=ctx.timeout)
         ok = not markdown.lstrip().lower().startswith("error:")
+        if not ok and _is_api_rate_limit_error(markdown):
+            fallback = await ctx.generic_read(GenericRequest(url=url))
+            if fallback.ok:
+                fallback.method = "github_html_fallback"
+                return fallback
+            fallback.error = (
+                f"GitHub REST API was rate-limited; HTML fallback also failed: "
+                f"{fallback.error or fallback.markdown}"
+            )
+            return fallback
         return PageResult(
             markdown=markdown,
             ok=ok,

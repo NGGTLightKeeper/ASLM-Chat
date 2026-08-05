@@ -85,11 +85,13 @@ TOOLS = [
         "description": READ_PAGE_TOOL_DESCRIPTION,
         "parameters": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "url": {
                     "description": (
-                        "An exact non-empty URL, normally copied from web_search results, or "
-                        "a list of exact URLs. Never put a search topic or empty string here."
+                        "One exact non-empty URL copied from web_search results, or an array "
+                        "of exact URLs for a batch read. Never use an object, search topic, "
+                        "or empty string."
                     ),
                     "oneOf": [
                         {"type": "string", "minLength": 8, "format": "uri"},

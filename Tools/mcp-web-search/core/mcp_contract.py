@@ -16,6 +16,7 @@ from typing import Any
 from core.query.search_plan import (
     PlanValidationError,
     VERTICAL_QUERY_LIMITS,
+    VERTICAL_WORD_LIMITS,
     build_advanced_search_schema,
     prepare_advanced_search,
 )
@@ -84,11 +85,11 @@ DOI records, preprints, and primary research. Use `web` for official, independen
 news, measurement, and general evidence, but never as a substitute for shopping or academic.
 Use `onion` only when that advertised field is available and Tor access is explicitly needed.
 
-Each vertical field accepts one query string. Batch only when two independent evidence gaps
-are both needed: either pass an array of two strings in one vertical field, or pass one string
-in each of two vertical fields. Never submit more than two queries total. High effort never
-batches: when multiple queries are supplied with high, only the first is executed and the
-result warns that the rest were skipped.
+Each call accepts one query normally and at most two queries when batching independent evidence
+gaps. A vertical value is either one plain string or an array of two plain strings. A two-query
+batch may also use one string in each of two vertical fields. Never exceed two queries total.
+Each query is limited independently: 10 whitespace-separated words for `web`, 4 for `shopping`,
+8 for `academic`, and 7 for `onion`. Search operators count as words.
 
 `call_description` is only the visible UI description of this tool invocation. It is not a
 query and never replaces one. The selected vertical field is the only place for the complete
@@ -103,7 +104,7 @@ WEB_SEARCH_TOOL_DESCRIPTION = ADVANCED_WEB_SEARCH_TOOL_DESCRIPTION
 
 
 READ_PAGE_TOOL_DESCRIPTION = """\
-Open one or more URLs and extract the readable text as markdown.
+Open one or more exact URLs and extract their readable text as markdown.
 
 The `url` input must contain an exact, non-empty URL. Never call this with an empty value or
 a search topic. If no exact URL is available yet, call web_search first.
@@ -111,7 +112,7 @@ a search topic. If no exact URL is available yet, call web_search first.
 Use it when you need:
 - the full content of an article, documentation page, post, or thread;
 - cleaner text after search surfaced promising URLs;
-- a small batch read of several shortlisted pages (pass a list of URLs).
+- a small batch read of several shortlisted pages.
 
 It works best as the second step after search, once discovery is done and you want to
 read the sources. PDFs, YouTube transcripts, Reddit threads, GitHub pages, StackExchange
@@ -372,14 +373,63 @@ def _public_search_request(request: dict[str, Any]) -> dict[str, Any]:
     return public
 
 
+def _recover_public_query_wrappers(arguments: Any) -> Any:
+    """Recover the common model hallucination ``{"item": ...}`` without losing a batch."""
+
+    if not isinstance(arguments, dict):
+        return arguments
+    normalized = dict(arguments)
+    for vertical in ("web", "academic", "shopping", "onion"):
+        value = normalized.get(vertical)
+        if not isinstance(value, dict):
+            continue
+        for wrapper_key in ("item", "items"):
+            if set(value) == {wrapper_key} and isinstance(value.get(wrapper_key), (str, list)):
+                normalized[vertical] = value[wrapper_key]
+                break
+    return normalized
+
+
 def invalid_search_plan_result(
-    issues: list[dict[str, str]], *, description: str = ""
+    issues: list[dict[str, str]],
+    *,
+    description: str = "",
+    received_arguments: Any = None,
 ) -> dict[str, Any]:
     details = "; ".join(
         f"{issue.get('path', '$')}: {issue.get('message', 'invalid value')}"
         for issue in issues
     )
-    message = f"INVALID_SEARCH_PLAN: {details}"
+    try:
+        received = json.dumps(
+            received_arguments,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )[:1600]
+    except Exception:  # noqa: BLE001
+        received = str(received_arguments)[:1600]
+    limits = ", ".join(
+        f"{vertical}={limit}"
+        for vertical, limit in VERTICAL_WORD_LIMITS.items()
+        if vertical != "onion"
+    )
+    message = (
+        "INVALID_SEARCH_PLAN: web_search rejected this call before running any search.\n"
+        f"Failures: {details}\n"
+        "Required shape: one plain query string normally, or at most two plain strings for "
+        "an independent-evidence batch. Use a direct string or array; never wrap it in "
+        "item/items/text/operators.\n"
+        f"Hard word limits: {limits}; onion={VERTICAL_WORD_LIMITS['onion']}. "
+        "Every whitespace-separated operator also counts.\n"
+        "Valid examples: "
+        '{"call_description":"Check project stars","web":"project github stars","effort":"medium"} '
+        "or "
+        '{"call_description":"Compare evidence","web":["project github stars","project release notes"],"effort":"medium"}\n'
+        f"Received arguments: {received}\n"
+        "Correct the exact failures above before the next call. Never repeat the rejected shape."
+    )
     return {
         "error": {"code": "INVALID_SEARCH_PLAN", "issues": issues},
         "sources": [],
@@ -399,14 +449,18 @@ def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
     """Return canonical arguments and normalized UI data before network work."""
 
     if search_schema_mode() == "advanced":
+        normalized_arguments = _recover_public_query_wrappers(arguments)
         try:
             from core.config import load_search_config
 
             cfg = load_search_config()
             prepared = prepare_advanced_search(
-                arguments,
+                normalized_arguments,
                 query_config=cfg.query,
                 tor_enabled=bool(cfg.tor.enabled),
+                allow_structured_queries=False,
+                enforce_word_limits=True,
+                allow_multiple_queries=True,
             )
         except PlanValidationError as exc:
             raw_description = (
@@ -415,6 +469,7 @@ def prepare_search_arguments(arguments: Any) -> dict[str, Any]:
             error_result = invalid_search_plan_result(
                 exc.issues,
                 description=raw_description if isinstance(raw_description, str) else "",
+                received_arguments=arguments,
             )
             return {
                 "ok": False,

@@ -795,9 +795,19 @@ def is_blocking_tool_result(result: Any) -> bool:
 
     if is_tool_execution_cancelled(result):
         return True
-    text = str(result or "").strip()
+    if isinstance(result, dict):
+        text = str(
+            result.get("model_context")
+            or result.get("content")
+            or result.get("error")
+            or ""
+        ).strip()
+    else:
+        text = str(result or "").strip()
     return text.startswith(
         (
+            "INVALID_SEARCH_PLAN:",
+            "PARALLEL_SEARCH_BATCH_REJECTED:",
             "Duplicate tool call blocked:",
             "Duplicate web_search blocked:",
             "Duplicate read_page blocked:",
@@ -2334,6 +2344,8 @@ def prepare_tool_call(
         if parallel_batch_size > 1:
             prepared_call["tool_ui"]["collapsed_parallel_calls"] = parallel_batch_size
     if not bool(result.get("ok", True)):
+        if isinstance(prepared_call.get("tool_ui"), dict):
+            prepared_call["tool_ui"]["rejected_arguments"] = copy.deepcopy(raw_arguments)
         error_result = copy.deepcopy(result.get("error_result") or "Tool preparation failed.")
         if parallel_batch_size > 1 and isinstance(error_result, dict):
             existing_context = str(error_result.get("model_context") or "").strip()

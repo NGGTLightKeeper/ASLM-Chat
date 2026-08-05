@@ -24,6 +24,12 @@ VERTICAL_QUERY_LIMITS = {
     "academic": 2,
     "onion": 2,
 }
+VERTICAL_WORD_LIMITS = {
+    "web": 10,
+    "shopping": 4,
+    "academic": 8,
+    "onion": 7,
+}
 ADVANCED_BATCH_LIMIT = 2
 COMPILED_QUERY_LIMIT = 512
 DESCRIPTION_LIMIT = 80
@@ -52,23 +58,28 @@ def _clean_text(value: Any) -> str:
     return _SPACE_RE.sub(" ", str(value or "").replace("\r", " ").replace("\n", " ")).strip()
 
 
-def _string_schema(description: str, *, max_length: int) -> dict[str, Any]:
-    return {
+def _string_schema(
+    description: str,
+    *,
+    max_length: int,
+    max_words: int | None = None,
+) -> dict[str, Any]:
+    schema: dict[str, Any] = {
         "type": "string",
         "minLength": 1,
         "maxLength": max_length,
         "description": description,
     }
+    if max_words is not None:
+        # Keep the word ceiling in the actual JSON Schema as well as prose. Providers
+        # that support constrained tool decoding can reject an overlong value before
+        # it reaches preflight; the preparer remains the authoritative fallback.
+        schema["pattern"] = rf"^\s*\S+(?:\s+\S+){{0,{max_words - 1}}}\s*$"
+    return schema
 
 
 def build_advanced_search_schema(*, tor_enabled: bool = False) -> dict[str, Any]:
     verticals = [*_BASE_VERTICALS, *(("onion",) if tor_enabled else ())]
-    query_string = _string_schema(
-        "Required complete, non-empty search query for this evidence source. Put the actual "
-        "terms here. Operators such as quoted phrases, OR, exclusions, site:, filetype:, "
-        "intitle:, inurl:, after:, and before: may be included directly.",
-        max_length=COMPILED_QUERY_LIMIT,
-    )
     vertical_descriptions = {
         "web": (
             "Official, independent, community, reporting, measurement, and general web evidence. "
@@ -87,6 +98,14 @@ def build_advanced_search_schema(*, tor_enabled: bool = False) -> dict[str, Any]
     }
     vertical_properties: dict[str, Any] = {}
     for vertical in verticals:
+        word_limit = VERTICAL_WORD_LIMITS[vertical]
+        query_string = _string_schema(
+            f"HARD LIMIT: {word_limit} WORDS TOTAL; {word_limit + 1} WORDS IS INVALID. "
+            f"Count every whitespace-separated token before calling. "
+            f"{vertical_descriptions[vertical]} Each query must be a plain string.",
+            max_length=COMPILED_QUERY_LIMIT,
+            max_words=word_limit,
+        )
         vertical_properties[vertical] = {
             "oneOf": [
                 query_string,
@@ -98,15 +117,18 @@ def build_advanced_search_schema(*, tor_enabled: bool = False) -> dict[str, Any]
                 },
             ],
             "description": (
-                f"{vertical_descriptions[vertical]} Pass one query string, or an array of two "
-                "query strings only when both queries belong to this vertical. Across the whole "
-                "call, at most two queries are allowed."
+                f"{vertical_descriptions[vertical]} Pass one query string normally. For two "
+                "independent evidence gaps in this vertical, pass an array of exactly two "
+                f"strings. The {word_limit}-word limit applies separately to each string."
             ),
         }
     return {
         "type": "object",
         "additionalProperties": False,
-        "minProperties": 1,
+        # call_description is mandatory, so two properties are the smallest object that
+        # can also carry the required vertical query. The preparer enforces which second
+        # property is a vertical because draft-07 cannot express that without combinators.
+        "minProperties": 2,
         "properties": {
             "call_description": _string_schema(
                 "Required UI-only description of this tool call, not a search query. Write "
@@ -120,9 +142,8 @@ def build_advanced_search_schema(*, tor_enabled: bool = False) -> dict[str, Any]
                 "enum": list(_EFFORTS),
                 "default": "medium",
                 "description": (
-                    "Shared search effort. Start with medium. High never allows batching: if "
-                    "multiple queries are supplied, only the first is searched and the tool "
-                    "returns a warning."
+                    "Search effort for this single query. Start with medium. Use high only "
+                    "after a lower-effort search leaves a specific high-stakes gap."
                 ),
             },
         },
@@ -310,7 +331,13 @@ def _compile_query(text: str, operators: dict[str, Any], qcfg: object) -> tuple[
 
 
 def prepare_advanced_search(
-    arguments: Any, *, query_config: object, tor_enabled: bool = False
+    arguments: Any,
+    *,
+    query_config: object,
+    tor_enabled: bool = False,
+    allow_structured_queries: bool = True,
+    enforce_word_limits: bool = False,
+    allow_multiple_queries: bool = True,
 ) -> dict[str, Any]:
     """Validate and normalize one advanced plan, or raise PlanValidationError."""
 
@@ -345,10 +372,19 @@ def prepare_advanced_search(
         effort = "medium"
 
     raw_queries: list[tuple[str, Any, str]] = []
+    saw_vertical = False
     for key, raw_value in arguments.items():
         if key not in allowed_verticals:
             continue
+        saw_vertical = True
         if isinstance(raw_value, list):
+            if not allow_multiple_queries:
+                _issue(
+                    issues,
+                    f"$.{key}",
+                    "must be one plain query string; arrays are not allowed",
+                )
+                continue
             if not raw_value:
                 _issue(issues, f"$.{key}", "must contain at least one query")
                 continue
@@ -359,12 +395,18 @@ def prepare_advanced_search(
         else:
             raw_queries.append((key, raw_value, f"$.{key}"))
 
-    if not raw_queries:
+    if not raw_queries and not saw_vertical:
         vertical_names = ", ".join(allowed_verticals)
         _issue(issues, "$", f"must include a query in one of: {vertical_names}")
 
     warnings: list[dict[str, str]] = []
-    if effort == "high" and len(raw_queries) > 1:
+    if not allow_multiple_queries and len(raw_queries) > 1:
+        _issue(
+            issues,
+            "$",
+            "must include exactly one vertical query; submit additional queries as separate calls",
+        )
+    elif effort == "high" and len(raw_queries) > 1:
         warnings.append(
             {
                 "code": "HIGH_EFFORT_BATCH_TRUNCATED",
@@ -389,6 +431,13 @@ def prepare_advanced_search(
             raw_text = raw_query
             raw_operators: Any = {}
         elif structured_query:
+            if not allow_structured_queries:
+                _issue(
+                    issues,
+                    base_path,
+                    "must be a plain query string; object wrappers are not allowed",
+                )
+                continue
             for key in sorted(set(raw_query) - {"text", "operators"}):
                 _issue(issues, f"{base_path}.{key}", "is not allowed")
             raw_text = raw_query.get("text")
@@ -408,6 +457,26 @@ def prepare_advanced_search(
             _issue(issues, path, f"must be at most {COMPILED_QUERY_LIMIT} characters")
         elif structured_query and has_search_operators(text):
             _issue(issues, f"{base_path}.text", "must not contain recognized search operators")
+
+        if enforce_word_limits and text:
+            words = text.split()
+            word_count = len(words)
+            word_limit = VERTICAL_WORD_LIMITS[vertical]
+            if word_count > word_limit:
+                excess = word_count - word_limit
+                numbered_words = ", ".join(
+                    f"{index}={word}" for index, word in enumerate(words, start=1)
+                )
+                _issue(
+                    issues,
+                    base_path,
+                    (
+                        f"contains {word_count} whitespace-separated words; {vertical} allows at "
+                        f"most {word_limit}. Delete at least {excess} word"
+                        f"{'s' if excess != 1 else ''} before retrying. Counted words: "
+                        f"{numbered_words}"
+                    ),
+                )
 
         if raw_operators in (None, ""):
             raw_operators = {}

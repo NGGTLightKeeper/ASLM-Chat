@@ -1556,7 +1556,51 @@ export function createMessagesUi(context, dependencies) {
       }).filter(function keepLegacyQuery(item) { return !!item.query; });
     }
     const query = formatSearchQueryValue(raw).trim();
-    return query ? [{ query, vertical: '' }] : [];
+    if (query) {
+      return [{ query, vertical: '' }];
+    }
+
+    const rejectedArguments = segment && segment.toolUi
+      && segment.toolUi.rejected_arguments
+      && typeof segment.toolUi.rejected_arguments === 'object'
+      ? segment.toolUi.rejected_arguments
+      : null;
+    if (!rejectedArguments) {
+      return [];
+    }
+
+    return ['web', 'academic', 'shopping', 'onion'].flatMap(function mapRejectedVertical(vertical) {
+      const parts = [];
+      collectRejectedSearchStrings(rejectedArguments[vertical], parts);
+      const rejectedQuery = parts.join(' | ').replace(/\s+/g, ' ').trim();
+      return rejectedQuery ? [{ query: rejectedQuery, vertical }] : [];
+    });
+  }
+
+  // Recover the model's original query text from a rejected call so the UI can
+  // identify the malformed request instead of falling back to "Bad query: query".
+  function collectRejectedSearchStrings(value, output) {
+    if (typeof value === 'string') {
+      const text = value.replace(/\s+/g, ' ').trim();
+      if (text) {
+        output.push(text);
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(function collectRejectedArrayItem(item) {
+        collectRejectedSearchStrings(item, output);
+      });
+      return;
+    }
+    if (!value || typeof value !== 'object') {
+      return;
+    }
+    ['text', 'query', 'q', 'raw_query', 'item', 'items'].forEach(function collectRejectedKey(key) {
+      if (Object.prototype.hasOwnProperty.call(value, key)) {
+        collectRejectedSearchStrings(value[key], output);
+      }
+    });
   }
 
   // Prefer the backend-normalized activity description over raw model arguments.
@@ -5145,26 +5189,19 @@ export function createMessagesUi(context, dependencies) {
     return sanitizeReasoningPreviewText(label).replace(/[.!?,\u2026;:]+(["'»”\)\]]*)$/u, '\u2026$1');
   }
 
-  // Gather sources belonging to the currently displayed search or read activity.
-  function reasoningActivitySources(items, activeSegment, activeItemIndex) {
+  // Gather only the sources belonging to the latest displayed search or read
+  // activity. Older results must not leak into the live preview when a new
+  // request becomes active.
+  function reasoningActivitySources(activeSegment) {
     const isSearchActivity = isSearchToolSegment(activeSegment);
     const isReadActivity = isReadPageToolSegment(activeSegment);
     if (!isSearchActivity && !isReadActivity) {
       return [];
     }
 
-    const sources = [];
-    (Array.isArray(items) ? items.slice(0, activeItemIndex + 1) : []).forEach(function collectActivitySources(item) {
-      const segment = item && item.segment ? item.segment : item;
-      if (!segment || isIgnoredReasoningActivity(segment)) {
-        return;
-      }
-      if (isSearchActivity && isSearchToolSegment(segment)) {
-        sources.push(...searchSourcesFromSegment(segment));
-      } else if (isReadActivity && isReadPageToolSegment(segment)) {
-        sources.push(...readPageSourcesFromSegment(segment));
-      }
-    });
+    const sources = isSearchActivity
+      ? searchSourcesFromSegment(activeSegment)
+      : readPageSourcesFromSegment(activeSegment);
 
     return dedupeSearchSources(sources.map(function normalizeActivitySource(source, index) {
       return normalizeSearchSourceItem(source, index + 1);
@@ -5202,7 +5239,7 @@ export function createMessagesUi(context, dependencies) {
       if (isIgnoredReasoningActivity(segment)) {
         continue;
       }
-      const sources = reasoningActivitySources(safeItems, segment, index);
+      const sources = reasoningActivitySources(segment);
       const description = normalizeReasoningPreviewPunctuation(reasoningToolActionDescription(segment));
       let label = description;
       if (!label && isReadPageToolSegment(segment)) {

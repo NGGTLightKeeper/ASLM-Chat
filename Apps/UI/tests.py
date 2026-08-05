@@ -120,6 +120,18 @@ class ToolActivityStreamTests(SimpleTestCase):
         self.assertEqual(payload, activity)
 
 
+class DefaultSystemPromptTests(SimpleTestCase):
+    def test_search_query_word_limits_are_explicit(self):
+        prompt = _compose_system_prompt("")
+
+        self.assertIn("`web` 10 words per string", prompt)
+        self.assertIn("`shopping` 4", prompt)
+        self.assertIn("`academic` 8", prompt)
+        self.assertIn("`onion` 7", prompt)
+        self.assertIn("Count every whitespace-separated token", prompt)
+        self.assertIn("Search operators count toward the corresponding string's limit", prompt)
+
+
 # Small structured error helper for Google GenAI adapter tests.
 class FakeGoogleError(Exception):
     def __init__(
@@ -1521,24 +1533,24 @@ class ToolPreflightTests(SimpleTestCase):
             "tool_ui": error_result["ui"],
             "error_result": error_result,
         }
+        raw_arguments = {"query": "legacy"}
         call = tool_registry.prepare_tool_call(
             self._lookup(),
-            {"name": "web_search__web_search", "arguments": {"query": "legacy"}},
+            {"name": "web_search__web_search", "arguments": raw_arguments},
         )
 
         self.assertEqual(call["arguments"], {})
         self.assertEqual(call["preflight_error_result"], error_result)
         self.assertEqual(call["tool_ui"]["status"], "rejected")
+        self.assertEqual(call["tool_ui"]["rejected_arguments"], raw_arguments)
+        self.assertTrue(tool_registry.is_blocking_tool_result(call["preflight_error_result"]))
 
     @patch.object(tool_registry, "_run_worker")
     def test_parallel_advanced_search_calls_are_preflighted_as_one_batch(self, worker_mock):
         def prepare_batch(_server_file, _operation, payload, persistent=False):
             self.assertTrue(persistent)
             arguments = payload["arguments"]
-            self.assertEqual(
-                arguments["web"],
-                ["first query", "second query"],
-            )
+            self.assertEqual(arguments["web"], ["first query", "second query"])
             return {
                 "ok": True,
                 "arguments": arguments,
@@ -1580,10 +1592,10 @@ class ToolPreflightTests(SimpleTestCase):
         worker_mock.assert_called_once()
 
     @patch.object(tool_registry, "_run_worker")
-    def test_parallel_search_batch_over_server_limit_is_one_atomic_rejection(self, worker_mock):
+    def test_parallel_legacy_search_batch_over_server_limit_is_one_atomic_rejection(self, worker_mock):
         def reject_oversized_batch(_server_file, _operation, payload, persistent=False):
             self.assertTrue(persistent)
-            query_count = len(payload["arguments"]["web"])
+            query_count = len(payload["arguments"]["query"])
             self.assertEqual(query_count, 4)
             error_result = {
                 "error": {
@@ -1608,7 +1620,7 @@ class ToolPreflightTests(SimpleTestCase):
                 "name": "web_search__web_search",
                 "arguments": {
                     "call_description": f"Check source {index}",
-                    "web": f"query {index}",
+                    "query": f"query {index}",
                     "effort": "medium",
                 },
             }
