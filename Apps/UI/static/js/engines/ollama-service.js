@@ -1,4 +1,4 @@
-// Copyright NGGT.LightKeeper. All Rights Reserved.
+// Copyright NEXTGGTECH. Elastic License 2.0.
 
 import { OLLAMA_UNSUPPORTED_RUNTIME_PARAMS } from '../main/constants.js';
 

@@ -1,4 +1,4 @@
-// Copyright NGGT.LightKeeper. All Rights Reserved.
+// Copyright NEXTGGTECH. Elastic License 2.0.
 
 import { normalizeEngineValue } from '../engines/engine-registry.js';
 import { initI18n, t } from './i18n.js';

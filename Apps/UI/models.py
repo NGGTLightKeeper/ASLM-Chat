@@ -1,1 +1,1 @@
-# Copyright NGGT.LightKeeper. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.

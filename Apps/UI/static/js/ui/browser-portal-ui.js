@@ -1,4 +1,4 @@
-// Copyright NGGT.LightKeeper. All Rights Reserved.
+// Copyright NEXTGGTECH. Elastic License 2.0.
 
 import { escHtml, escapeAttributeValue } from '../main/utils.js';
 import { getJson, postJson } from '../main/api.js';

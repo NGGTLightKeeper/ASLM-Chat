@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 """Offline tests for the academic vertical: registry load, per-provider parsers, the
 cross-provider dedup/scoring, and the search-layer source adapter. No network."""

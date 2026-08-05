@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 import os
 from django.core.asgi import get_asgi_application

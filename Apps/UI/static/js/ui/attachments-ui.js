@@ -1,4 +1,4 @@
-// Copyright NGGT.LightKeeper. All Rights Reserved.
+// Copyright NEXTGGTECH. Elastic License 2.0.
 
 import { getCsrfToken } from '../main/api.js';
 import { escHtml } from '../main/utils.js';

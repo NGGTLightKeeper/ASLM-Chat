@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 # Crawl-ahead: after a search, warm the raw HTML of the top result URLs the model did
 # NOT already get parsed content for, so a follow-up read_page on them is instant. Pages

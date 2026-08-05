@@ -1,4 +1,4 @@
-// Copyright NGGT.LightKeeper. All Rights Reserved.
+// Copyright NEXTGGTECH. Elastic License 2.0.
 
 import { createAttachmentsUi } from '../ui/attachments-ui.js';
 import { createBrowserPortalUi } from '../ui/browser-portal-ui.js';

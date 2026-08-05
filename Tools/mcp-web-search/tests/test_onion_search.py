@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 """Deep onion search engine — article-link heuristic, SERP-scoped discovery with clearnet→
 onion host rewrite, and the parallel discover→warm→scrape→BM25 flow, all offline (SERP and

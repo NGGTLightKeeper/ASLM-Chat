@@ -1,10 +1,4 @@
-"""Durable, process-safe control snapshots for Deep Research sessions.
-
-The research runner and the UI API can execute in different processes. Small
-atomic JSON files give them a shared approval, revision, cancellation, and
-progress channel without relying on an in-memory registry that disappears on
-reload.
-"""
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 from __future__ import annotations
 

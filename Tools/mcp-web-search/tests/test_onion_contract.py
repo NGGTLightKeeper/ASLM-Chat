@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 """The onion opt-in is advertised in the tool schema and honored ONLY when tor.enabled —
 the capability config gates the model-facing intent flag."""

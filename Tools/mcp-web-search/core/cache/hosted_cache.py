@@ -1,4 +1,4 @@
-# Copyright NGGT.LightKeeper and Di120078. All Rights Reserved.
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 # SQLite-backed cache for whole web_search result payloads, keyed by the normalized
 # query plus the parameters that change the result (region/safesearch/timelimit/effort).

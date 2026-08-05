@@ -1,11 +1,4 @@
-"""Deterministic Deep Research v2 orchestration.
-
-The model never sees the large web-search tool schema.  Code owns the state
-machine and gives the model a series of small jobs: draft a plan, reflect on the
-evidence, propose candidates, select at most two queries, and write the report.
-Malformed model output is local to one phase and always has a deterministic
-fallback.
-"""
+# Copyright NEXTGGTECH. Elastic License 2.0.
 
 from __future__ import annotations
 
