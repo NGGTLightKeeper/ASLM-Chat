@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "Alat ini memerlukan Docker.",
-    "refreshDocker": "Periksa ulang Docker"
+    "refreshDocker": "Periksa ulang Docker",
+    "unsupportedByModel": "Model tidak mendukung alat",
+    "dockerRequiredShort": "Docker diperlukan"
+  },
+  "common": {
+    "download": "Unduh",
+    "enabled": "Diaktifkan"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -14,6 +20,7 @@
     "noPreviousChats": "Tidak ada obrolan sebelumnya",
     "chatOptions": "Opsi obrolan",
     "rename": "Ubah nama",
+    "download": "Unduh obrolan",
     "delete": "Hapus",
     "ago": "{time} lalu"
   },
@@ -37,7 +44,8 @@
     "sendMessage": "Kirim Pesan",
     "queueMessage": "Antre pesan",
     "stopGeneration": "Hentikan generasi",
-    "contextUsage": "Penggunaan konteks"
+    "contextUsage": "Penggunaan konteks",
+    "searchCommandLabel": "Pencarian web"
   },
   "reasoning": {
     "panel": "Panel penalaran",
@@ -48,6 +56,55 @@
     "panel": "Panel sumber",
     "title": "Sumber",
     "closePanel": "Tutup panel sumber"
+  },
+  "research": {
+    "title": "Riset mendalam",
+    "statusPlanning": "Perencanaan",
+    "statusAwaitingApproval": "Menunggu persetujuan",
+    "statusRevising": "Memperbarui rencana",
+    "statusStarting": "Memulai",
+    "statusRunning": "Melakukan riset",
+    "statusReflecting": "Meninjau hasil",
+    "statusSynthesizing": "Menulis laporan",
+    "statusStopping": "Menghentikan",
+    "statusStopped": "Dihentikan",
+    "statusCompleted": "Selesai",
+    "statusPartial": "Selesai sebagian",
+    "statusFailed": "Gagal",
+    "statusExpired": "Kedaluwarsa",
+    "sendingApproval": "Mengirim persetujuan",
+    "savingPlan": "Menyimpan rencana",
+    "sendingStop": "Mengirim permintaan penghentian",
+    "updating": "Memperbarui",
+    "preparingPlan": "Menyiapkan rencana riset",
+    "searchingFor": "Mencari “{query}”",
+    "searchingSources": "Mencari sumber",
+    "searchBackendUnavailable": "Pencarian untuk sementara tidak tersedia; hasilnya mungkin tidak lengkap",
+    "readingSource": "Membaca sumber",
+    "runningAnalysis": "Menganalisis bukti",
+    "planChanged": "Rencana berubah sebelum tindakan tersebut diterapkan. Tinjau versi terbaru.",
+    "commandRejected": "Tindakan riset tidak dapat diterapkan.",
+    "reviewUpdatedPlan": "Tinjau rencana yang diperbarui",
+    "reviewPlan": "Tinjau rencana sebelum riset dimulai",
+    "starting": "Memulai rencana riset yang disetujui",
+    "planUpdated": "Rencana riset diperbarui",
+    "collectingEvidence": "Mengumpulkan bukti",
+    "reflecting": "Meninjau bukti dan menyempurnakan kueri berikutnya",
+    "writingReport": "Menyusun laporan akhir",
+    "finalizingReport": "Menyelesaikan laporan",
+    "stopping": "Menghentikan riset dengan aman",
+    "stopped": "Riset dihentikan",
+    "completedPartial": "Riset selesai dengan keterbatasan",
+    "completed": "Riset selesai",
+    "editPlan": "Edit rencana",
+    "updatePlan": "Perbarui rencana",
+    "cancel": "Batal",
+    "stop": "Hentikan riset",
+    "approve": "Setujui dan mulai",
+    "activityPending": "Aktivitas riset akan muncul di sini.",
+    "openActivity": "Buka aktivitas riset",
+    "planRequired": "Rencana riset tidak boleh kosong.",
+    "applyingChanges": "Menerapkan perubahan rencana"
   },
   "settings": {
     "modelSettings": "Pengaturan Model",
@@ -77,6 +134,7 @@
     "tools": "Alat",
     "mcp": "MCP",
     "skills": "Keterampilan",
+    "paramInfo": "Rincian parameter",
     "systemPrompt": "Prompt Sistem",
     "systemPromptPlaceholder": "mis. \"Hanya jawab dengan sajak\"",
     "load": "Muat",
@@ -118,6 +176,13 @@
     "extraHigh": "Sangat Tinggi"
   },
   "messages": {
+    "branch": "Buat cabang dari sini",
+    "editMessage": "Edit pesan",
+    "editTitle": "Edit pesan",
+    "editHint": "Bagian percakapan berikutnya akan dibuat ulang.",
+    "saveAndRegenerate": "Simpan dan buat ulang",
+    "branchedFrom": "Cabang dibuat dari “{title}”",
+    "openBranch": "Buka “{title}”",
     "more": "Selengkapnya",
     "hide": "Sembunyikan",
     "copyCode": "Salin kode",
@@ -168,6 +233,7 @@
   },
   "skills": {
     "title": "Keterampilan",
+    "disabledShort": "Dinonaktifkan",
     "refresh": "Muat ulang",
     "noSkills": "Tidak ada keterampilan ditemukan",
     "loadError": "Tidak dapat memuat keterampilan",
@@ -466,6 +532,7 @@
     "editConfig": "Sunting mcp.json",
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} alat)",
+    "toolCountShort": "{count} alat",
     "cancel": "Batal",
     "save": "Simpan",
     "noServers": "Tidak ada server MCP",

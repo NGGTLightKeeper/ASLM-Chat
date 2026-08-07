@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "이 도구에는 Docker가 필요합니다.",
-    "refreshDocker": "Docker 다시 확인"
+    "refreshDocker": "Docker 다시 확인",
+    "unsupportedByModel": "이 모델은 도구를 지원하지 않습니다",
+    "dockerRequiredShort": "Docker 필요"
+  },
+  "common": {
+    "download": "다운로드",
+    "enabled": "활성화됨"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -14,6 +20,7 @@
     "noPreviousChats": "이전 채팅 없음",
     "chatOptions": "채팅 옵션",
     "rename": "이름 바꾸기",
+    "download": "채팅 다운로드",
     "delete": "삭제",
     "ago": "{time} 전"
   },
@@ -37,7 +44,8 @@
     "sendMessage": "메시지 보내기",
     "queueMessage": "메시지 대기열에 추가",
     "stopGeneration": "생성 중지",
-    "contextUsage": "컨텍스트 사용량"
+    "contextUsage": "컨텍스트 사용량",
+    "searchCommandLabel": "웹 검색"
   },
   "reasoning": {
     "panel": "추론 패널",
@@ -48,6 +56,55 @@
     "panel": "출처 패널",
     "title": "출처",
     "closePanel": "출처 패널 닫기"
+  },
+  "research": {
+    "title": "심층 조사",
+    "statusPlanning": "계획 중",
+    "statusAwaitingApproval": "승인 대기 중",
+    "statusRevising": "계획 업데이트 중",
+    "statusStarting": "시작 중",
+    "statusRunning": "조사 중",
+    "statusReflecting": "결과 검토 중",
+    "statusSynthesizing": "보고서 작성 중",
+    "statusStopping": "중지 중",
+    "statusStopped": "중지됨",
+    "statusCompleted": "완료됨",
+    "statusPartial": "일부 완료됨",
+    "statusFailed": "실패",
+    "statusExpired": "만료됨",
+    "sendingApproval": "승인 전송 중",
+    "savingPlan": "계획 저장 중",
+    "sendingStop": "중지 요청 전송 중",
+    "updating": "업데이트 중",
+    "preparingPlan": "조사 계획 준비 중",
+    "searchingFor": "“{query}” 검색 중",
+    "searchingSources": "출처 검색 중",
+    "searchBackendUnavailable": "검색을 일시적으로 사용할 수 없어 결과가 불완전할 수 있습니다",
+    "readingSource": "출처를 읽는 중",
+    "runningAnalysis": "근거 분석 중",
+    "planChanged": "작업이 적용되기 전에 계획이 변경되었습니다. 최신 버전을 검토하세요.",
+    "commandRejected": "조사 작업을 적용할 수 없습니다.",
+    "reviewUpdatedPlan": "업데이트된 계획 검토",
+    "reviewPlan": "조사를 시작하기 전에 계획 검토",
+    "starting": "승인된 조사 계획 시작 중",
+    "planUpdated": "조사 계획 업데이트됨",
+    "collectingEvidence": "근거 수집 중",
+    "reflecting": "근거를 검토하고 다음 검색어를 구체화하는 중",
+    "writingReport": "최종 보고서 작성 중",
+    "finalizingReport": "보고서 마무리 중",
+    "stopping": "조사를 안전하게 중지하는 중",
+    "stopped": "조사가 중지되었습니다",
+    "completedPartial": "조사가 제한적으로 완료되었습니다",
+    "completed": "조사가 완료되었습니다",
+    "editPlan": "계획 수정",
+    "updatePlan": "계획 업데이트",
+    "cancel": "취소",
+    "stop": "조사 중지",
+    "approve": "승인하고 시작",
+    "activityPending": "조사 활동이 여기에 표시됩니다.",
+    "openActivity": "조사 활동 열기",
+    "planRequired": "조사 계획은 비워 둘 수 없습니다.",
+    "applyingChanges": "계획 변경 사항 적용 중"
   },
   "settings": {
     "modelSettings": "모델 설정",
@@ -77,6 +134,7 @@
     "tools": "도구",
     "mcp": "MCP",
     "skills": "스킬",
+    "paramInfo": "매개변수 세부 정보",
     "systemPrompt": "시스템 프롬프트",
     "systemPromptPlaceholder": "예: \"항상 운율로만 답하기\"",
     "load": "불러오기",
@@ -118,6 +176,13 @@
     "extraHigh": "매우 높음"
   },
   "messages": {
+    "branch": "여기에서 분기",
+    "editMessage": "메시지 수정",
+    "editTitle": "메시지 수정",
+    "editHint": "이후 대화가 다시 생성됩니다.",
+    "saveAndRegenerate": "저장하고 다시 생성",
+    "branchedFrom": "“{title}”에서 분기됨",
+    "openBranch": "“{title}” 열기",
     "more": "더 보기",
     "hide": "숨기기",
     "copyCode": "코드 복사",
@@ -168,6 +233,7 @@
   },
   "skills": {
     "title": "스킬",
+    "disabledShort": "비활성화됨",
     "refresh": "새로고침",
     "noSkills": "스킬을 찾을 수 없음",
     "loadError": "스킬을 불러올 수 없습니다",
@@ -466,6 +532,7 @@
     "editConfig": "mcp.json 편집",
     "modalTitle": "mcp.json",
     "serverTools": "{name}({count}개 도구)",
+    "toolCountShort": "{count}개 도구",
     "cancel": "취소",
     "save": "저장",
     "noServers": "MCP 서버 없음",

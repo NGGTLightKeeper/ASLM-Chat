@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "此工具需要 Docker。",
-    "refreshDocker": "重新检查 Docker"
+    "refreshDocker": "重新检查 Docker",
+    "unsupportedByModel": "此模型不支持工具",
+    "dockerRequiredShort": "需要 Docker"
+  },
+  "common": {
+    "download": "下载",
+    "enabled": "已启用"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -14,6 +20,7 @@
     "noPreviousChats": "暂无历史对话",
     "chatOptions": "对话选项",
     "rename": "重命名",
+    "download": "下载对话",
     "delete": "删除",
     "ago": "{time}前"
   },
@@ -37,7 +44,8 @@
     "sendMessage": "发送消息",
     "queueMessage": "排队发送",
     "stopGeneration": "停止生成",
-    "contextUsage": "上下文用量"
+    "contextUsage": "上下文用量",
+    "searchCommandLabel": "网页搜索"
   },
   "reasoning": {
     "panel": "推理面板",
@@ -48,6 +56,55 @@
     "panel": "来源面板",
     "title": "来源",
     "closePanel": "关闭来源面板"
+  },
+  "research": {
+    "title": "深度研究",
+    "statusPlanning": "正在规划",
+    "statusAwaitingApproval": "等待批准",
+    "statusRevising": "正在更新计划",
+    "statusStarting": "正在启动",
+    "statusRunning": "正在研究",
+    "statusReflecting": "正在评估结果",
+    "statusSynthesizing": "正在撰写报告",
+    "statusStopping": "正在停止",
+    "statusStopped": "已停止",
+    "statusCompleted": "已完成",
+    "statusPartial": "部分完成",
+    "statusFailed": "失败",
+    "statusExpired": "已过期",
+    "sendingApproval": "正在发送批准",
+    "savingPlan": "正在保存计划",
+    "sendingStop": "正在发送停止请求",
+    "updating": "正在更新",
+    "preparingPlan": "正在准备研究计划",
+    "searchingFor": "正在搜索“{query}”",
+    "searchingSources": "正在搜索来源",
+    "searchBackendUnavailable": "搜索暂时不可用，结果可能不完整",
+    "readingSource": "正在阅读来源",
+    "runningAnalysis": "正在分析证据",
+    "planChanged": "计划在操作应用前已发生变化。请查看最新版本。",
+    "commandRejected": "无法应用研究操作。",
+    "reviewUpdatedPlan": "查看更新后的计划",
+    "reviewPlan": "研究开始前查看计划",
+    "starting": "正在启动已批准的研究计划",
+    "planUpdated": "研究计划已更新",
+    "collectingEvidence": "正在收集证据",
+    "reflecting": "正在审查证据并优化后续查询",
+    "writingReport": "正在整理最终报告",
+    "finalizingReport": "正在完成报告",
+    "stopping": "正在安全停止研究",
+    "stopped": "研究已停止",
+    "completedPartial": "研究已完成，但存在限制",
+    "completed": "研究已完成",
+    "editPlan": "编辑计划",
+    "updatePlan": "更新计划",
+    "cancel": "取消",
+    "stop": "停止研究",
+    "approve": "批准并开始",
+    "activityPending": "研究活动将显示在这里。",
+    "openActivity": "打开研究活动",
+    "planRequired": "研究计划不能为空。",
+    "applyingChanges": "正在应用计划更改"
   },
   "settings": {
     "modelSettings": "模型设置",
@@ -77,6 +134,7 @@
     "tools": "工具",
     "mcp": "MCP",
     "skills": "技能",
+    "paramInfo": "参数详情",
     "systemPrompt": "系统提示词",
     "systemPromptPlaceholder": "例如：\"只用押韵的方式回答\"",
     "load": "加载",
@@ -118,6 +176,13 @@
     "extraHigh": "极高"
   },
   "messages": {
+    "branch": "从此处分支",
+    "editMessage": "编辑消息",
+    "editTitle": "编辑消息",
+    "editHint": "后续对话将重新生成。",
+    "saveAndRegenerate": "保存并重新生成",
+    "branchedFrom": "分支自“{title}”",
+    "openBranch": "打开“{title}”",
     "more": "更多",
     "hide": "收起",
     "copyCode": "复制代码",
@@ -168,6 +233,7 @@
   },
   "skills": {
     "title": "技能",
+    "disabledShort": "已禁用",
     "refresh": "刷新",
     "noSkills": "未找到技能",
     "loadError": "无法加载技能",
@@ -466,6 +532,7 @@
     "editConfig": "编辑 mcp.json",
     "modalTitle": "mcp.json",
     "serverTools": "{name}（{count} 个工具）",
+    "toolCountShort": "{count} 个工具",
     "cancel": "取消",
     "save": "保存",
     "noServers": "没有 MCP 服务器",

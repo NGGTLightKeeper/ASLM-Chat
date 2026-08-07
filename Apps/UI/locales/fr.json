@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "Cet outil nécessite Docker.",
-    "refreshDocker": "Revérifier Docker"
+    "refreshDocker": "Revérifier Docker",
+    "unsupportedByModel": "Le modèle ne prend pas en charge les outils",
+    "dockerRequiredShort": "Docker requis"
+  },
+  "common": {
+    "download": "Télécharger",
+    "enabled": "Activé"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -14,6 +20,7 @@
     "noPreviousChats": "Aucune discussion précédente",
     "chatOptions": "Options de la discussion",
     "rename": "Renommer",
+    "download": "Télécharger la discussion",
     "delete": "Supprimer",
     "ago": "il y a {time}"
   },
@@ -37,7 +44,8 @@
     "sendMessage": "Envoyer le message",
     "queueMessage": "Mettre le message en file d'attente",
     "stopGeneration": "Arrêter la génération",
-    "contextUsage": "Utilisation du contexte"
+    "contextUsage": "Utilisation du contexte",
+    "searchCommandLabel": "Recherche web"
   },
   "reasoning": {
     "panel": "Panneau de raisonnement",
@@ -48,6 +56,55 @@
     "panel": "Panneau des sources",
     "title": "Sources",
     "closePanel": "Fermer le panneau des sources"
+  },
+  "research": {
+    "title": "Recherche approfondie",
+    "statusPlanning": "Planification",
+    "statusAwaitingApproval": "En attente d’approbation",
+    "statusRevising": "Mise à jour du plan",
+    "statusStarting": "Démarrage",
+    "statusRunning": "Recherche en cours",
+    "statusReflecting": "Analyse des résultats",
+    "statusSynthesizing": "Rédaction du rapport",
+    "statusStopping": "Arrêt en cours",
+    "statusStopped": "Arrêtée",
+    "statusCompleted": "Terminée",
+    "statusPartial": "Partielle",
+    "statusFailed": "Échec",
+    "statusExpired": "Expirée",
+    "sendingApproval": "Envoi de l’approbation",
+    "savingPlan": "Enregistrement du plan",
+    "sendingStop": "Envoi de la demande d’arrêt",
+    "updating": "Mise à jour",
+    "preparingPlan": "Préparation du plan de recherche",
+    "searchingFor": "Recherche de « {query} »",
+    "searchingSources": "Recherche de sources",
+    "searchBackendUnavailable": "La recherche est temporairement indisponible ; le résultat peut être partiel",
+    "readingSource": "Lecture d’une source",
+    "runningAnalysis": "Analyse des éléments recueillis",
+    "planChanged": "Le plan a été modifié avant l’application de cette action. Consultez la dernière version.",
+    "commandRejected": "L’action de recherche n’a pas pu être appliquée.",
+    "reviewUpdatedPlan": "Examiner le plan mis à jour",
+    "reviewPlan": "Examiner le plan avant de lancer la recherche",
+    "starting": "Démarrage du plan de recherche approuvé",
+    "planUpdated": "Plan de recherche mis à jour",
+    "collectingEvidence": "Collecte des données",
+    "reflecting": "Analyse des données et affinage des prochaines requêtes",
+    "writingReport": "Rédaction du rapport final",
+    "finalizingReport": "Finalisation du rapport",
+    "stopping": "Arrêt sécurisé de la recherche",
+    "stopped": "Recherche arrêtée",
+    "completedPartial": "Recherche terminée avec certaines limitations",
+    "completed": "Recherche terminée",
+    "editPlan": "Modifier le plan",
+    "updatePlan": "Mettre à jour le plan",
+    "cancel": "Annuler",
+    "stop": "Arrêter la recherche",
+    "approve": "Approuver et démarrer",
+    "activityPending": "L’activité de recherche s’affichera ici.",
+    "openActivity": "Ouvrir l’activité de recherche",
+    "planRequired": "Le plan de recherche ne peut pas être vide.",
+    "applyingChanges": "Application des modifications du plan"
   },
   "settings": {
     "modelSettings": "Paramètres du modèle",
@@ -77,6 +134,7 @@
     "tools": "Outils",
     "mcp": "MCP",
     "skills": "Compétences",
+    "paramInfo": "Détails du paramètre",
     "systemPrompt": "Invite système",
     "systemPromptPlaceholder": "p. ex. « Répondre uniquement en rimes »",
     "load": "Charger",
@@ -118,6 +176,13 @@
     "extraHigh": "Très élevé"
   },
   "messages": {
+    "branch": "Créer une branche à partir d’ici",
+    "editMessage": "Modifier le message",
+    "editTitle": "Modifier le message",
+    "editHint": "La suite de la conversation sera régénérée.",
+    "saveAndRegenerate": "Enregistrer et régénérer",
+    "branchedFrom": "Branche créée depuis « {title} »",
+    "openBranch": "Ouvrir « {title} »",
     "more": "Plus",
     "hide": "Masquer",
     "copyCode": "Copier le code",
@@ -168,6 +233,7 @@
   },
   "skills": {
     "title": "Compétences",
+    "disabledShort": "Désactivée",
     "refresh": "Actualiser",
     "noSkills": "Aucune compétence trouvée",
     "loadError": "Impossible de charger les compétences",
@@ -466,6 +532,7 @@
     "editConfig": "Modifier mcp.json",
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} outils)",
+    "toolCountShort": "{count} outils",
     "cancel": "Annuler",
     "save": "Enregistrer",
     "noServers": "Aucun serveur MCP",

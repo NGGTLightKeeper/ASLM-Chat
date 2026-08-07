@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "Bu araç Docker gerektirir.",
-    "refreshDocker": "Docker'ı yeniden denetle"
+    "refreshDocker": "Docker'ı yeniden denetle",
+    "unsupportedByModel": "Model araçları desteklemiyor",
+    "dockerRequiredShort": "Docker gerekli"
+  },
+  "common": {
+    "download": "İndir",
+    "enabled": "Etkin"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -14,6 +20,7 @@
     "noPreviousChats": "Önceki sohbet yok",
     "chatOptions": "Sohbet seçenekleri",
     "rename": "Yeniden adlandır",
+    "download": "Sohbeti indir",
     "delete": "Sil",
     "ago": "{time} önce"
   },
@@ -37,7 +44,8 @@
     "sendMessage": "Mesaj Gönder",
     "queueMessage": "Mesajı kuyruğa al",
     "stopGeneration": "Üretimi durdur",
-    "contextUsage": "Bağlam kullanımı"
+    "contextUsage": "Bağlam kullanımı",
+    "searchCommandLabel": "Web araması"
   },
   "reasoning": {
     "panel": "Akıl yürütme paneli",
@@ -48,6 +56,55 @@
     "panel": "Kaynaklar paneli",
     "title": "Kaynaklar",
     "closePanel": "Kaynaklar panelini kapat"
+  },
+  "research": {
+    "title": "Derin Araştırma",
+    "statusPlanning": "Planlanıyor",
+    "statusAwaitingApproval": "Onay bekleniyor",
+    "statusRevising": "Plan güncelleniyor",
+    "statusStarting": "Başlatılıyor",
+    "statusRunning": "Araştırılıyor",
+    "statusReflecting": "Sonuçlar değerlendiriliyor",
+    "statusSynthesizing": "Rapor yazılıyor",
+    "statusStopping": "Durduruluyor",
+    "statusStopped": "Durduruldu",
+    "statusCompleted": "Tamamlandı",
+    "statusPartial": "Kısmen tamamlandı",
+    "statusFailed": "Başarısız",
+    "statusExpired": "Süresi doldu",
+    "sendingApproval": "Onay gönderiliyor",
+    "savingPlan": "Plan kaydediliyor",
+    "sendingStop": "Durdurma isteği gönderiliyor",
+    "updating": "Güncelleniyor",
+    "preparingPlan": "Araştırma planı hazırlanıyor",
+    "searchingFor": "“{query}” aranıyor",
+    "searchingSources": "Kaynaklar aranıyor",
+    "searchBackendUnavailable": "Arama geçici olarak kullanılamıyor; sonuç eksik olabilir",
+    "readingSource": "Bir kaynak okunuyor",
+    "runningAnalysis": "Kanıtlar analiz ediliyor",
+    "planChanged": "Bu eylem uygulanmadan önce plan değişti. En son sürümü inceleyin.",
+    "commandRejected": "Araştırma eylemi uygulanamadı.",
+    "reviewUpdatedPlan": "Güncellenen planı inceleyin",
+    "reviewPlan": "Araştırma başlamadan önce planı inceleyin",
+    "starting": "Onaylanan araştırma planı başlatılıyor",
+    "planUpdated": "Araştırma planı güncellendi",
+    "collectingEvidence": "Kanıtlar toplanıyor",
+    "reflecting": "Kanıtlar inceleniyor ve sonraki sorgular iyileştiriliyor",
+    "writingReport": "Nihai rapor hazırlanıyor",
+    "finalizingReport": "Rapor tamamlanıyor",
+    "stopping": "Araştırma güvenli bir şekilde durduruluyor",
+    "stopped": "Araştırma durduruldu",
+    "completedPartial": "Araştırma sınırlamalarla tamamlandı",
+    "completed": "Araştırma tamamlandı",
+    "editPlan": "Planı düzenle",
+    "updatePlan": "Planı güncelle",
+    "cancel": "İptal",
+    "stop": "Araştırmayı durdur",
+    "approve": "Onayla ve başlat",
+    "activityPending": "Araştırma etkinliği burada görünecek.",
+    "openActivity": "Araştırma etkinliğini aç",
+    "planRequired": "Araştırma planı boş olamaz.",
+    "applyingChanges": "Plan değişiklikleri uygulanıyor"
   },
   "settings": {
     "modelSettings": "Model Ayarları",
@@ -77,6 +134,7 @@
     "tools": "Araçlar",
     "mcp": "MCP",
     "skills": "Beceriler",
+    "paramInfo": "Parametre ayrıntıları",
     "systemPrompt": "Sistem İstemi",
     "systemPromptPlaceholder": "ör. \"Yalnızca kafiyeli yanıt ver\"",
     "load": "Yükle",
@@ -118,6 +176,13 @@
     "extraHigh": "Çok Yüksek"
   },
   "messages": {
+    "branch": "Buradan dallandır",
+    "editMessage": "Mesajı düzenle",
+    "editTitle": "Mesajı düzenle",
+    "editHint": "Sohbetin sonraki bölümü yeniden oluşturulacak.",
+    "saveAndRegenerate": "Kaydet ve yeniden oluştur",
+    "branchedFrom": "“{title}” sohbetinden dallandırıldı",
+    "openBranch": "“{title}” sohbetini aç",
     "more": "Daha fazla",
     "hide": "Gizle",
     "copyCode": "Kodu kopyala",
@@ -168,6 +233,7 @@
   },
   "skills": {
     "title": "Beceriler",
+    "disabledShort": "Devre dışı",
     "refresh": "Yenile",
     "noSkills": "Beceri bulunamadı",
     "loadError": "Beceriler yüklenemedi",
@@ -466,6 +532,7 @@
     "editConfig": "mcp.json düzenle",
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} araç)",
+    "toolCountShort": "{count} araç",
     "cancel": "İptal",
     "save": "Kaydet",
     "noServers": "MCP sunucusu yok",

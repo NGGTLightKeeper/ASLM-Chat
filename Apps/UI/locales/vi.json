@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "Công cụ này yêu cầu Docker.",
-    "refreshDocker": "Kiểm tra lại Docker"
+    "refreshDocker": "Kiểm tra lại Docker",
+    "unsupportedByModel": "Mô hình không hỗ trợ công cụ",
+    "dockerRequiredShort": "Cần có Docker"
+  },
+  "common": {
+    "download": "Tải xuống",
+    "enabled": "Đã bật"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -14,6 +20,7 @@
     "noPreviousChats": "Chưa có cuộc trò chuyện nào",
     "chatOptions": "Tùy chọn cuộc trò chuyện",
     "rename": "Đổi tên",
+    "download": "Tải cuộc trò chuyện xuống",
     "delete": "Xóa",
     "ago": "{time} trước"
   },
@@ -37,7 +44,8 @@
     "sendMessage": "Gửi tin nhắn",
     "queueMessage": "Xếp hàng tin nhắn",
     "stopGeneration": "Dừng tạo nội dung",
-    "contextUsage": "Mức sử dụng ngữ cảnh"
+    "contextUsage": "Mức sử dụng ngữ cảnh",
+    "searchCommandLabel": "Tìm kiếm trên web"
   },
   "reasoning": {
     "panel": "Bảng suy luận",
@@ -48,6 +56,55 @@
     "panel": "Bảng nguồn",
     "title": "Nguồn",
     "closePanel": "Đóng bảng nguồn"
+  },
+  "research": {
+    "title": "Nghiên cứu chuyên sâu",
+    "statusPlanning": "Lập kế hoạch",
+    "statusAwaitingApproval": "Đang chờ phê duyệt",
+    "statusRevising": "Đang cập nhật kế hoạch",
+    "statusStarting": "Đang bắt đầu",
+    "statusRunning": "Đang nghiên cứu",
+    "statusReflecting": "Đang đánh giá kết quả",
+    "statusSynthesizing": "Đang viết báo cáo",
+    "statusStopping": "Đang dừng",
+    "statusStopped": "Đã dừng",
+    "statusCompleted": "Đã hoàn tất",
+    "statusPartial": "Hoàn tất một phần",
+    "statusFailed": "Thất bại",
+    "statusExpired": "Đã hết hạn",
+    "sendingApproval": "Đang gửi phê duyệt",
+    "savingPlan": "Đang lưu kế hoạch",
+    "sendingStop": "Đang gửi yêu cầu dừng",
+    "updating": "Đang cập nhật",
+    "preparingPlan": "Đang chuẩn bị kế hoạch nghiên cứu",
+    "searchingFor": "Đang tìm kiếm “{query}”",
+    "searchingSources": "Đang tìm nguồn",
+    "searchBackendUnavailable": "Tính năng tìm kiếm tạm thời không khả dụng; kết quả có thể không đầy đủ",
+    "readingSource": "Đang đọc một nguồn",
+    "runningAnalysis": "Đang phân tích bằng chứng",
+    "planChanged": "Kế hoạch đã thay đổi trước khi thao tác đó được áp dụng. Hãy xem lại phiên bản mới nhất.",
+    "commandRejected": "Không thể áp dụng thao tác nghiên cứu.",
+    "reviewUpdatedPlan": "Xem lại kế hoạch đã cập nhật",
+    "reviewPlan": "Xem lại kế hoạch trước khi bắt đầu nghiên cứu",
+    "starting": "Đang bắt đầu kế hoạch nghiên cứu đã được phê duyệt",
+    "planUpdated": "Kế hoạch nghiên cứu đã được cập nhật",
+    "collectingEvidence": "Đang thu thập bằng chứng",
+    "reflecting": "Đang xem xét bằng chứng và tinh chỉnh các truy vấn tiếp theo",
+    "writingReport": "Đang tổng hợp báo cáo cuối cùng",
+    "finalizingReport": "Đang hoàn thiện báo cáo",
+    "stopping": "Đang dừng nghiên cứu một cách an toàn",
+    "stopped": "Nghiên cứu đã dừng",
+    "completedPartial": "Nghiên cứu đã hoàn tất nhưng còn hạn chế",
+    "completed": "Nghiên cứu đã hoàn tất",
+    "editPlan": "Chỉnh sửa kế hoạch",
+    "updatePlan": "Cập nhật kế hoạch",
+    "cancel": "Hủy",
+    "stop": "Dừng nghiên cứu",
+    "approve": "Phê duyệt và bắt đầu",
+    "activityPending": "Hoạt động nghiên cứu sẽ xuất hiện ở đây.",
+    "openActivity": "Mở hoạt động nghiên cứu",
+    "planRequired": "Kế hoạch nghiên cứu không được để trống.",
+    "applyingChanges": "Đang áp dụng các thay đổi cho kế hoạch"
   },
   "settings": {
     "modelSettings": "Cài đặt mô hình",
@@ -77,6 +134,7 @@
     "tools": "Công cụ",
     "mcp": "MCP",
     "skills": "Kỹ năng",
+    "paramInfo": "Chi tiết tham số",
     "systemPrompt": "Lời nhắc hệ thống",
     "systemPromptPlaceholder": "vd. \"Chỉ trả lời bằng thơ lục bát\"",
     "load": "Tải",
@@ -118,6 +176,13 @@
     "extraHigh": "Rất cao"
   },
   "messages": {
+    "branch": "Tạo nhánh từ đây",
+    "editMessage": "Chỉnh sửa tin nhắn",
+    "editTitle": "Chỉnh sửa tin nhắn",
+    "editHint": "Phần hội thoại phía sau sẽ được tạo lại.",
+    "saveAndRegenerate": "Lưu và tạo lại",
+    "branchedFrom": "Được tạo nhánh từ “{title}”",
+    "openBranch": "Mở “{title}”",
     "more": "Xem thêm",
     "hide": "Ẩn",
     "copyCode": "Sao chép mã",
@@ -168,6 +233,7 @@
   },
   "skills": {
     "title": "Kỹ năng",
+    "disabledShort": "Đã tắt",
     "refresh": "Làm mới",
     "noSkills": "Không tìm thấy kỹ năng",
     "loadError": "Không thể tải kỹ năng",
@@ -466,6 +532,7 @@
     "editConfig": "Chỉnh sửa mcp.json",
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} công cụ)",
+    "toolCountShort": "{count} công cụ",
     "cancel": "Hủy",
     "save": "Lưu",
     "noServers": "Không có máy chủ MCP",

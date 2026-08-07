@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "Voor deze tool is Docker vereist.",
-    "refreshDocker": "Docker opnieuw controleren"
+    "refreshDocker": "Docker opnieuw controleren",
+    "unsupportedByModel": "Het model ondersteunt geen tools",
+    "dockerRequiredShort": "Docker vereist"
+  },
+  "common": {
+    "download": "Downloaden",
+    "enabled": "Ingeschakeld"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -14,6 +20,7 @@
     "noPreviousChats": "Geen eerdere chats",
     "chatOptions": "Chatopties",
     "rename": "Hernoemen",
+    "download": "Chat downloaden",
     "delete": "Verwijderen",
     "ago": "{time} geleden"
   },
@@ -37,7 +44,8 @@
     "sendMessage": "Bericht verzenden",
     "queueMessage": "Bericht in wachtrij",
     "stopGeneration": "Generatie stoppen",
-    "contextUsage": "Contextgebruik"
+    "contextUsage": "Contextgebruik",
+    "searchCommandLabel": "Zoeken op internet"
   },
   "reasoning": {
     "panel": "Redeneerpaneel",
@@ -48,6 +56,55 @@
     "panel": "Bronnenpaneel",
     "title": "Bronnen",
     "closePanel": "Bronnenpaneel sluiten"
+  },
+  "research": {
+    "title": "Diepgaand onderzoek",
+    "statusPlanning": "Planning",
+    "statusAwaitingApproval": "Wachten op goedkeuring",
+    "statusRevising": "Plan bijwerken",
+    "statusStarting": "Starten",
+    "statusRunning": "Onderzoek uitvoeren",
+    "statusReflecting": "Resultaten beoordelen",
+    "statusSynthesizing": "Rapport schrijven",
+    "statusStopping": "Stoppen",
+    "statusStopped": "Gestopt",
+    "statusCompleted": "Voltooid",
+    "statusPartial": "Gedeeltelijk voltooid",
+    "statusFailed": "Mislukt",
+    "statusExpired": "Verlopen",
+    "sendingApproval": "Goedkeuring verzenden",
+    "savingPlan": "Plan opslaan",
+    "sendingStop": "Stopverzoek verzenden",
+    "updating": "Bijwerken",
+    "preparingPlan": "Onderzoeksplan voorbereiden",
+    "searchingFor": "Zoeken naar ‘{query}’",
+    "searchingSources": "Bronnen zoeken",
+    "searchBackendUnavailable": "Zoeken is tijdelijk niet beschikbaar; het resultaat kan onvolledig zijn",
+    "readingSource": "Een bron lezen",
+    "runningAnalysis": "Bewijs analyseren",
+    "planChanged": "Het plan is gewijzigd voordat die actie werd toegepast. Bekijk de nieuwste versie.",
+    "commandRejected": "De onderzoeksactie kon niet worden toegepast.",
+    "reviewUpdatedPlan": "Bekijk het bijgewerkte plan",
+    "reviewPlan": "Bekijk het plan voordat het onderzoek begint",
+    "starting": "Het goedgekeurde onderzoeksplan starten",
+    "planUpdated": "Onderzoeksplan bijgewerkt",
+    "collectingEvidence": "Bewijs verzamelen",
+    "reflecting": "Bewijs beoordelen en de volgende zoekopdrachten verfijnen",
+    "writingReport": "Het eindrapport opstellen",
+    "finalizingReport": "Het rapport afronden",
+    "stopping": "Het onderzoek veilig stoppen",
+    "stopped": "Onderzoek gestopt",
+    "completedPartial": "Onderzoek voltooid met beperkingen",
+    "completed": "Onderzoek voltooid",
+    "editPlan": "Plan bewerken",
+    "updatePlan": "Plan bijwerken",
+    "cancel": "Annuleren",
+    "stop": "Onderzoek stoppen",
+    "approve": "Goedkeuren en starten",
+    "activityPending": "Onderzoeksactiviteiten worden hier weergegeven.",
+    "openActivity": "Onderzoeksactiviteiten openen",
+    "planRequired": "Het onderzoeksplan mag niet leeg zijn.",
+    "applyingChanges": "Planwijzigingen toepassen"
   },
   "settings": {
     "modelSettings": "Modelinstellingen",
@@ -77,6 +134,7 @@
     "tools": "Hulpmiddelen",
     "mcp": "MCP",
     "skills": "Vaardigheden",
+    "paramInfo": "Parameterdetails",
     "systemPrompt": "Systeemprompt",
     "systemPromptPlaceholder": "bijv. \"Antwoord alleen in rijm\"",
     "load": "Laden",
@@ -118,6 +176,13 @@
     "extraHigh": "Extra hoog"
   },
   "messages": {
+    "branch": "Vanaf hier vertakken",
+    "editMessage": "Bericht bewerken",
+    "editTitle": "Bericht bewerken",
+    "editHint": "Het verdere gesprek wordt opnieuw gegenereerd.",
+    "saveAndRegenerate": "Opslaan en opnieuw genereren",
+    "branchedFrom": "Vertakt vanuit ‘{title}’",
+    "openBranch": "‘{title}’ openen",
     "more": "Meer",
     "hide": "Verbergen",
     "copyCode": "Code kopiëren",
@@ -168,6 +233,7 @@
   },
   "skills": {
     "title": "Vaardigheden",
+    "disabledShort": "Uitgeschakeld",
     "refresh": "Vernieuwen",
     "noSkills": "Geen vaardigheden gevonden",
     "loadError": "Vaardigheden laden mislukt",
@@ -350,7 +416,7 @@
     },
     "tfs_z": {
       "label": "TFS Z",
-      "note": "Tail-free sampling."
+      "note": "Sampling zonder staart."
     },
     "typical_p": {
       "label": "Typical P"
@@ -466,6 +532,7 @@
     "editConfig": "mcp.json bewerken",
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} tools)",
+    "toolCountShort": "{count} tools",
     "cancel": "Annuleren",
     "save": "Opslaan",
     "noServers": "Geen MCP-servers",

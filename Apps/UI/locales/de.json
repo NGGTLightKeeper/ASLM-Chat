@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "Dieses Tool benötigt Docker.",
-    "refreshDocker": "Docker erneut prüfen"
+    "refreshDocker": "Docker erneut prüfen",
+    "unsupportedByModel": "Das Modell unterstützt keine Tools",
+    "dockerRequiredShort": "Docker erforderlich"
+  },
+  "common": {
+    "download": "Herunterladen",
+    "enabled": "Aktiviert"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -14,6 +20,7 @@
     "noPreviousChats": "Keine vorherigen Chats",
     "chatOptions": "Chat-Optionen",
     "rename": "Umbenennen",
+    "download": "Chat herunterladen",
     "delete": "Löschen",
     "ago": "vor {time}"
   },
@@ -37,7 +44,8 @@
     "sendMessage": "Nachricht senden",
     "queueMessage": "Nachricht einreihen",
     "stopGeneration": "Generierung stoppen",
-    "contextUsage": "Kontextnutzung"
+    "contextUsage": "Kontextnutzung",
+    "searchCommandLabel": "Websuche"
   },
   "reasoning": {
     "panel": "Denkbereich",
@@ -48,6 +56,55 @@
     "panel": "Quellenbereich",
     "title": "Quellen",
     "closePanel": "Quellenbereich schließen"
+  },
+  "research": {
+    "title": "Tiefenrecherche",
+    "statusPlanning": "Planung",
+    "statusAwaitingApproval": "Warten auf Freigabe",
+    "statusRevising": "Plan wird aktualisiert",
+    "statusStarting": "Wird gestartet",
+    "statusRunning": "Recherche läuft",
+    "statusReflecting": "Auswertung",
+    "statusSynthesizing": "Bericht wird erstellt",
+    "statusStopping": "Wird beendet",
+    "statusStopped": "Beendet",
+    "statusCompleted": "Abgeschlossen",
+    "statusPartial": "Teilweise abgeschlossen",
+    "statusFailed": "Fehlgeschlagen",
+    "statusExpired": "Abgelaufen",
+    "sendingApproval": "Freigabe wird gesendet",
+    "savingPlan": "Plan wird gespeichert",
+    "sendingStop": "Stoppanfrage wird gesendet",
+    "updating": "Wird aktualisiert",
+    "preparingPlan": "Rechercheplan wird vorbereitet",
+    "searchingFor": "Suche nach „{query}“",
+    "searchingSources": "Quellen werden durchsucht",
+    "searchBackendUnavailable": "Die Suche ist vorübergehend nicht verfügbar; das Ergebnis ist möglicherweise unvollständig",
+    "readingSource": "Quelle wird gelesen",
+    "runningAnalysis": "Belege werden analysiert",
+    "planChanged": "Der Plan wurde geändert, bevor die Aktion ausgeführt werden konnte. Prüfen Sie die neueste Version.",
+    "commandRejected": "Die Rechercheaktion konnte nicht ausgeführt werden.",
+    "reviewUpdatedPlan": "Aktualisierten Plan prüfen",
+    "reviewPlan": "Plan vor Beginn der Recherche prüfen",
+    "starting": "Freigegebener Rechercheplan wird gestartet",
+    "planUpdated": "Rechercheplan aktualisiert",
+    "collectingEvidence": "Belege werden gesammelt",
+    "reflecting": "Belege werden geprüft und die nächsten Suchanfragen verfeinert",
+    "writingReport": "Abschlussbericht wird erstellt",
+    "finalizingReport": "Bericht wird fertiggestellt",
+    "stopping": "Recherche wird sicher beendet",
+    "stopped": "Recherche beendet",
+    "completedPartial": "Recherche mit Einschränkungen abgeschlossen",
+    "completed": "Recherche abgeschlossen",
+    "editPlan": "Plan bearbeiten",
+    "updatePlan": "Plan aktualisieren",
+    "cancel": "Abbrechen",
+    "stop": "Recherche beenden",
+    "approve": "Freigeben und starten",
+    "activityPending": "Hier werden die Rechercheaktivitäten angezeigt.",
+    "openActivity": "Rechercheaktivitäten öffnen",
+    "planRequired": "Der Rechercheplan darf nicht leer sein.",
+    "applyingChanges": "Planänderungen werden übernommen"
   },
   "settings": {
     "modelSettings": "Modelleinstellungen",
@@ -77,6 +134,7 @@
     "tools": "Werkzeuge",
     "mcp": "MCP",
     "skills": "Fähigkeiten",
+    "paramInfo": "Parameterdetails",
     "systemPrompt": "System-Prompt",
     "systemPromptPlaceholder": "z. B. „Nur in Reimen antworten“",
     "load": "Laden",
@@ -118,6 +176,13 @@
     "extraHigh": "Sehr hoch"
   },
   "messages": {
+    "branch": "Ab hier verzweigen",
+    "editMessage": "Nachricht bearbeiten",
+    "editTitle": "Nachricht bearbeiten",
+    "editHint": "Der nachfolgende Gesprächsverlauf wird neu generiert.",
+    "saveAndRegenerate": "Speichern und neu generieren",
+    "branchedFrom": "Abgezweigt von „{title}“",
+    "openBranch": "„{title}“ öffnen",
     "more": "Mehr",
     "hide": "Ausblenden",
     "copyCode": "Code kopieren",
@@ -168,6 +233,7 @@
   },
   "skills": {
     "title": "Skills",
+    "disabledShort": "Deaktiviert",
     "refresh": "Aktualisieren",
     "noSkills": "Keine Skills gefunden",
     "loadError": "Skills konnten nicht geladen werden",
@@ -350,7 +416,7 @@
     },
     "tfs_z": {
       "label": "TFS Z",
-      "note": "Tail-free Sampling."
+      "note": "Tail-Free-Sampling."
     },
     "typical_p": {
       "label": "Typical P"
@@ -466,6 +532,7 @@
     "editConfig": "mcp.json bearbeiten",
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} Tools)",
+    "toolCountShort": "{count} Tools",
     "cancel": "Abbrechen",
     "save": "Speichern",
     "noServers": "Keine MCP-Server",

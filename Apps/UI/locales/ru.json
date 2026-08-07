@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "Этот инструмент требует Docker.",
-    "refreshDocker": "Проверить Docker заново"
+    "refreshDocker": "Проверить Docker заново",
+    "unsupportedByModel": "Модель не поддерживает инструменты",
+    "dockerRequiredShort": "Требуется Docker"
+  },
+  "common": {
+    "download": "Скачать",
+    "enabled": "Включено"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -38,7 +44,8 @@
     "sendMessage": "Отправить сообщение",
     "queueMessage": "Поставить в очередь",
     "stopGeneration": "Остановить генерацию",
-    "contextUsage": "Использование контекста"
+    "contextUsage": "Использование контекста",
+    "searchCommandLabel": "Веб-поиск"
   },
   "reasoning": {
     "panel": "Панель рассуждений",
@@ -49,6 +56,55 @@
     "panel": "Панель источников",
     "title": "Источники",
     "closePanel": "Закрыть панель источников"
+  },
+  "research": {
+    "title": "Глубокое исследование",
+    "statusPlanning": "Планирование",
+    "statusAwaitingApproval": "Ожидание подтверждения",
+    "statusRevising": "Обновление плана",
+    "statusStarting": "Запуск",
+    "statusRunning": "Исследование",
+    "statusReflecting": "Анализ результатов",
+    "statusSynthesizing": "Подготовка отчёта",
+    "statusStopping": "Остановка",
+    "statusStopped": "Остановлено",
+    "statusCompleted": "Завершено",
+    "statusPartial": "Частично завершено",
+    "statusFailed": "Ошибка",
+    "statusExpired": "Срок действия истёк",
+    "sendingApproval": "Отправка подтверждения",
+    "savingPlan": "Сохранение плана",
+    "sendingStop": "Отправка запроса на остановку",
+    "updating": "Обновление",
+    "preparingPlan": "Подготовка плана исследования",
+    "searchingFor": "Поиск по запросу «{query}»",
+    "searchingSources": "Поиск источников",
+    "searchBackendUnavailable": "Поиск временно недоступен; результат может быть неполным",
+    "readingSource": "Изучение источника",
+    "runningAnalysis": "Анализ найденных данных",
+    "planChanged": "План изменился до применения этого действия. Проверьте последнюю версию.",
+    "commandRejected": "Не удалось выполнить действие с исследованием.",
+    "reviewUpdatedPlan": "Проверьте обновлённый план",
+    "reviewPlan": "Проверьте план перед началом исследования",
+    "starting": "Запуск утверждённого плана исследования",
+    "planUpdated": "План исследования обновлён",
+    "collectingEvidence": "Сбор материалов",
+    "reflecting": "Анализ материалов и уточнение следующих запросов",
+    "writingReport": "Подготовка итогового отчёта",
+    "finalizingReport": "Завершение работы над отчётом",
+    "stopping": "Безопасная остановка исследования",
+    "stopped": "Исследование остановлено",
+    "completedPartial": "Исследование завершено с ограничениями",
+    "completed": "Исследование завершено",
+    "editPlan": "Изменить план",
+    "updatePlan": "Обновить план",
+    "cancel": "Отмена",
+    "stop": "Остановить исследование",
+    "approve": "Подтвердить и начать",
+    "activityPending": "Здесь появится ход исследования.",
+    "openActivity": "Открыть ход исследования",
+    "planRequired": "План исследования не может быть пустым.",
+    "applyingChanges": "Применение изменений плана"
   },
   "settings": {
     "modelSettings": "Настройки модели",
@@ -78,6 +134,7 @@
     "tools": "Инструменты",
     "mcp": "MCP",
     "skills": "Навыки",
+    "paramInfo": "Сведения о параметре",
     "systemPrompt": "Системный промпт",
     "systemPromptPlaceholder": "например: «Отвечай только рифмами»",
     "load": "Загрузить",
@@ -176,6 +233,7 @@
   },
   "skills": {
     "title": "Навыки",
+    "disabledShort": "Отключён",
     "refresh": "Обновить",
     "noSkills": "Навыки не найдены",
     "loadError": "Не удалось загрузить навыки",
@@ -358,7 +416,7 @@
     },
     "tfs_z": {
       "label": "TFS Z",
-      "note": "Tail-free sampling."
+      "note": "Сэмплирование без хвоста."
     },
     "typical_p": {
       "label": "Typical P"
@@ -474,6 +532,7 @@
     "editConfig": "Редактировать mcp.json",
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} инстр.)",
+    "toolCountShort": "{count} инстр.",
     "cancel": "Отмена",
     "save": "Сохранить",
     "reload": "Перезагрузить MCP-серверы",

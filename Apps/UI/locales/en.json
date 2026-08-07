@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "This tool requires Docker.",
-    "refreshDocker": "Re-check Docker"
+    "refreshDocker": "Re-check Docker",
+    "unsupportedByModel": "Model does not support tools",
+    "dockerRequiredShort": "Docker required"
+  },
+  "common": {
+    "download": "Download",
+    "enabled": "Enabled"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -38,7 +44,8 @@
     "sendMessage": "Send Message",
     "queueMessage": "Queue message",
     "stopGeneration": "Stop generation",
-    "contextUsage": "Context usage"
+    "contextUsage": "Context usage",
+    "searchCommandLabel": "Web Search"
   },
   "reasoning": {
     "panel": "Reasoning panel",
@@ -49,6 +56,55 @@
     "panel": "Sources panel",
     "title": "Sources",
     "closePanel": "Close sources panel"
+  },
+  "research": {
+    "title": "Deep Research",
+    "statusPlanning": "Planning",
+    "statusAwaitingApproval": "Awaiting approval",
+    "statusRevising": "Updating plan",
+    "statusStarting": "Starting",
+    "statusRunning": "Researching",
+    "statusReflecting": "Reflecting",
+    "statusSynthesizing": "Writing report",
+    "statusStopping": "Stopping",
+    "statusStopped": "Stopped",
+    "statusCompleted": "Completed",
+    "statusPartial": "Partial",
+    "statusFailed": "Failed",
+    "statusExpired": "Expired",
+    "sendingApproval": "Sending approval",
+    "savingPlan": "Saving plan",
+    "sendingStop": "Sending stop request",
+    "updating": "Updating",
+    "preparingPlan": "Preparing the research plan",
+    "searchingFor": "Searching for “{query}”",
+    "searchingSources": "Searching sources",
+    "searchBackendUnavailable": "Search is temporarily unavailable; the result may be partial",
+    "readingSource": "Reading a source",
+    "runningAnalysis": "Running evidence analysis",
+    "planChanged": "The plan changed before that action was applied. Review the latest version.",
+    "commandRejected": "The research action could not be applied.",
+    "reviewUpdatedPlan": "Review the updated plan",
+    "reviewPlan": "Review the plan before research starts",
+    "starting": "Starting the approved research plan",
+    "planUpdated": "Research plan updated",
+    "collectingEvidence": "Collecting evidence",
+    "reflecting": "Reviewing evidence and refining the next queries",
+    "writingReport": "Synthesizing the final report",
+    "finalizingReport": "Finalizing the report",
+    "stopping": "Stopping research safely",
+    "stopped": "Research stopped",
+    "completedPartial": "Research completed with limitations",
+    "completed": "Research completed",
+    "editPlan": "Edit plan",
+    "updatePlan": "Update plan",
+    "cancel": "Cancel",
+    "stop": "Stop research",
+    "approve": "Approve & start",
+    "activityPending": "Research activity will appear here.",
+    "openActivity": "Open research activity",
+    "planRequired": "The research plan cannot be empty.",
+    "applyingChanges": "Applying plan changes"
   },
   "settings": {
     "modelSettings": "Model Settings",
@@ -78,6 +134,7 @@
     "tools": "Tools",
     "mcp": "MCP",
     "skills": "Skills",
+    "paramInfo": "Parameter details",
     "systemPrompt": "System Prompt",
     "systemPromptPlaceholder": "e.g. \"Only answer in rhymes\"",
     "load": "Load",
@@ -178,6 +235,7 @@
     "editConfig": "Edit mcp.json",
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} tools)",
+    "toolCountShort": "{count} tools",
     "cancel": "Cancel",
     "save": "Save",
     "reload": "Reload MCP servers",
@@ -185,6 +243,7 @@
   },
   "skills": {
     "title": "Skills",
+    "disabledShort": "Disabled",
     "refresh": "Refresh",
     "noSkills": "No skills found",
     "loadError": "Could not load skills",

@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "Esta ferramenta requer o Docker.",
-    "refreshDocker": "Verificar o Docker novamente"
+    "refreshDocker": "Verificar o Docker novamente",
+    "unsupportedByModel": "O modelo não suporta ferramentas",
+    "dockerRequiredShort": "Docker necessário"
+  },
+  "common": {
+    "download": "Transferir",
+    "enabled": "Ativado"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -14,6 +20,7 @@
     "noPreviousChats": "Sem conversas anteriores",
     "chatOptions": "Opções da conversa",
     "rename": "Renomear",
+    "download": "Transferir conversa",
     "delete": "Eliminar",
     "ago": "há {time}"
   },
@@ -37,7 +44,8 @@
     "sendMessage": "Enviar mensagem",
     "queueMessage": "Colocar mensagem em fila",
     "stopGeneration": "Parar geração",
-    "contextUsage": "Utilização do contexto"
+    "contextUsage": "Utilização do contexto",
+    "searchCommandLabel": "Pesquisa na Web"
   },
   "reasoning": {
     "panel": "Painel de raciocínio",
@@ -48,6 +56,55 @@
     "panel": "Painel de fontes",
     "title": "Fontes",
     "closePanel": "Fechar painel de fontes"
+  },
+  "research": {
+    "title": "Pesquisa aprofundada",
+    "statusPlanning": "Planeamento",
+    "statusAwaitingApproval": "A aguardar aprovação",
+    "statusRevising": "A atualizar o plano",
+    "statusStarting": "A iniciar",
+    "statusRunning": "Pesquisa em curso",
+    "statusReflecting": "Análise dos resultados",
+    "statusSynthesizing": "Redação do relatório",
+    "statusStopping": "A parar",
+    "statusStopped": "Interrompida",
+    "statusCompleted": "Concluída",
+    "statusPartial": "Parcial",
+    "statusFailed": "Falhou",
+    "statusExpired": "Expirada",
+    "sendingApproval": "A enviar aprovação",
+    "savingPlan": "A guardar o plano",
+    "sendingStop": "A enviar pedido de paragem",
+    "updating": "A atualizar",
+    "preparingPlan": "A preparar o plano de pesquisa",
+    "searchingFor": "A pesquisar por «{query}»",
+    "searchingSources": "A pesquisar fontes",
+    "searchBackendUnavailable": "A pesquisa está temporariamente indisponível; o resultado pode ser parcial",
+    "readingSource": "A ler uma fonte",
+    "runningAnalysis": "A analisar as evidências",
+    "planChanged": "O plano foi alterado antes de essa ação ser aplicada. Consulte a versão mais recente.",
+    "commandRejected": "Não foi possível aplicar a ação de pesquisa.",
+    "reviewUpdatedPlan": "Reveja o plano atualizado",
+    "reviewPlan": "Reveja o plano antes de iniciar a pesquisa",
+    "starting": "A iniciar o plano de pesquisa aprovado",
+    "planUpdated": "Plano de pesquisa atualizado",
+    "collectingEvidence": "A recolher evidências",
+    "reflecting": "A rever as evidências e a aperfeiçoar as próximas consultas",
+    "writingReport": "A elaborar o relatório final",
+    "finalizingReport": "A finalizar o relatório",
+    "stopping": "A parar a pesquisa em segurança",
+    "stopped": "Pesquisa interrompida",
+    "completedPartial": "Pesquisa concluída com limitações",
+    "completed": "Pesquisa concluída",
+    "editPlan": "Editar plano",
+    "updatePlan": "Atualizar plano",
+    "cancel": "Cancelar",
+    "stop": "Parar a pesquisa",
+    "approve": "Aprovar e iniciar",
+    "activityPending": "A atividade de pesquisa será apresentada aqui.",
+    "openActivity": "Abrir atividade de pesquisa",
+    "planRequired": "O plano de pesquisa não pode estar vazio.",
+    "applyingChanges": "A aplicar alterações ao plano"
   },
   "settings": {
     "modelSettings": "Definições do modelo",
@@ -77,6 +134,7 @@
     "tools": "Ferramentas",
     "mcp": "MCP",
     "skills": "Competências",
+    "paramInfo": "Detalhes do parâmetro",
     "systemPrompt": "Prompt do sistema",
     "systemPromptPlaceholder": "ex.: \"Responder apenas em rimas\"",
     "load": "Carregar",
@@ -118,6 +176,13 @@
     "extraHigh": "Muito alto"
   },
   "messages": {
+    "branch": "Criar ramificação a partir daqui",
+    "editMessage": "Editar mensagem",
+    "editTitle": "Editar mensagem",
+    "editHint": "As mensagens seguintes serão geradas novamente.",
+    "saveAndRegenerate": "Guardar e gerar novamente",
+    "branchedFrom": "Ramificação criada a partir de «{title}»",
+    "openBranch": "Abrir «{title}»",
     "more": "Mais",
     "hide": "Ocultar",
     "copyCode": "Copiar código",
@@ -168,6 +233,7 @@
   },
   "skills": {
     "title": "Competências",
+    "disabledShort": "Desativada",
     "refresh": "Atualizar",
     "noSkills": "Nenhuma competência encontrada",
     "loadError": "Não foi possível carregar as competências",
@@ -466,6 +532,7 @@
     "editConfig": "Editar mcp.json",
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} ferramentas)",
+    "toolCountShort": "{count} ferramentas",
     "cancel": "Cancelar",
     "save": "Guardar",
     "noServers": "Nenhum servidor MCP",

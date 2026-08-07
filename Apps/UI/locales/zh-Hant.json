@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "此工具需要 Docker。",
-    "refreshDocker": "重新檢查 Docker"
+    "refreshDocker": "重新檢查 Docker",
+    "unsupportedByModel": "此模型不支援工具",
+    "dockerRequiredShort": "需要 Docker"
+  },
+  "common": {
+    "download": "下載",
+    "enabled": "已啟用"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -14,6 +20,7 @@
     "noPreviousChats": "尚無先前的對話",
     "chatOptions": "對話選項",
     "rename": "重新命名",
+    "download": "下載對話",
     "delete": "刪除",
     "ago": "{time} 前"
   },
@@ -37,7 +44,8 @@
     "sendMessage": "傳送訊息",
     "queueMessage": "排入佇列",
     "stopGeneration": "停止產生",
-    "contextUsage": "上下文使用量"
+    "contextUsage": "上下文使用量",
+    "searchCommandLabel": "網頁搜尋"
   },
   "reasoning": {
     "panel": "推理面板",
@@ -48,6 +56,55 @@
     "panel": "來源面板",
     "title": "來源",
     "closePanel": "關閉來源面板"
+  },
+  "research": {
+    "title": "深度研究",
+    "statusPlanning": "正在規劃",
+    "statusAwaitingApproval": "等待核准",
+    "statusRevising": "正在更新計畫",
+    "statusStarting": "正在啟動",
+    "statusRunning": "正在研究",
+    "statusReflecting": "正在評估結果",
+    "statusSynthesizing": "正在撰寫報告",
+    "statusStopping": "正在停止",
+    "statusStopped": "已停止",
+    "statusCompleted": "已完成",
+    "statusPartial": "部分完成",
+    "statusFailed": "失敗",
+    "statusExpired": "已過期",
+    "sendingApproval": "正在傳送核准",
+    "savingPlan": "正在儲存計畫",
+    "sendingStop": "正在傳送停止要求",
+    "updating": "正在更新",
+    "preparingPlan": "正在準備研究計畫",
+    "searchingFor": "正在搜尋「{query}」",
+    "searchingSources": "正在搜尋來源",
+    "searchBackendUnavailable": "搜尋暫時無法使用，結果可能不完整",
+    "readingSource": "正在閱讀來源",
+    "runningAnalysis": "正在分析證據",
+    "planChanged": "計畫在操作套用前已變更。請檢視最新版本。",
+    "commandRejected": "無法套用研究操作。",
+    "reviewUpdatedPlan": "檢視更新後的計畫",
+    "reviewPlan": "研究開始前檢視計畫",
+    "starting": "正在啟動已核准的研究計畫",
+    "planUpdated": "研究計畫已更新",
+    "collectingEvidence": "正在收集證據",
+    "reflecting": "正在檢視證據並改進後續查詢",
+    "writingReport": "正在整理最終報告",
+    "finalizingReport": "正在完成報告",
+    "stopping": "正在安全地停止研究",
+    "stopped": "研究已停止",
+    "completedPartial": "研究已完成，但有所限制",
+    "completed": "研究已完成",
+    "editPlan": "編輯計畫",
+    "updatePlan": "更新計畫",
+    "cancel": "取消",
+    "stop": "停止研究",
+    "approve": "核准並開始",
+    "activityPending": "研究活動將顯示在這裡。",
+    "openActivity": "開啟研究活動",
+    "planRequired": "研究計畫不可為空。",
+    "applyingChanges": "正在套用計畫變更"
   },
   "settings": {
     "modelSettings": "模型設定",
@@ -77,6 +134,7 @@
     "tools": "工具",
     "mcp": "MCP",
     "skills": "技能",
+    "paramInfo": "參數詳細資料",
     "systemPrompt": "系統提示詞",
     "systemPromptPlaceholder": "例如：「只用韻文回答」",
     "load": "載入",
@@ -118,6 +176,13 @@
     "extraHigh": "極高"
   },
   "messages": {
+    "branch": "從這裡建立分支",
+    "editMessage": "編輯訊息",
+    "editTitle": "編輯訊息",
+    "editHint": "後續對話將重新產生。",
+    "saveAndRegenerate": "儲存並重新產生",
+    "branchedFrom": "分支來源為「{title}」",
+    "openBranch": "開啟「{title}」",
     "more": "更多",
     "hide": "隱藏",
     "copyCode": "複製程式碼",
@@ -168,6 +233,7 @@
   },
   "skills": {
     "title": "技能",
+    "disabledShort": "已停用",
     "refresh": "重新整理",
     "noSkills": "找不到技能",
     "loadError": "無法載入技能",
@@ -466,6 +532,7 @@
     "editConfig": "編輯 mcp.json",
     "modalTitle": "mcp.json",
     "serverTools": "{name}（{count} 個工具）",
+    "toolCountShort": "{count} 個工具",
     "cancel": "取消",
     "save": "儲存",
     "noServers": "沒有 MCP 伺服器",
