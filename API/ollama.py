@@ -154,7 +154,9 @@ def get_client() -> ollama.Client:
 
     port = settings.get("ollama-service_port", 30002)
     host = f"http://127.0.0.1:{port}"
-    return ollama.Client(host=host)
+    # This client only ever talks to the managed loopback service. Do not let
+    # HTTPX reinterpret a Windows system proxy as a route to local Ollama.
+    return ollama.Client(host=host, trust_env=False)
 
 # Run one Ollama SDK call with a short readiness retry.
 def _call_with_runtime_retry(operation: Any, description: str) -> Any:

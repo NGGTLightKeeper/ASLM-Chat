@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+import httpx
+
 from core.config.settings import _CONFIG_PATH, BrowserSection, load_search_config
 from core.fetch.browser.client import BrowserClient
 from core.fetch.browser.identity_store import IdentityStore
@@ -138,6 +140,20 @@ def test_client_warm_dispatches_to_daemon():
     assert isinstance(result, BrowserFetch)
     assert result.status == STATUS_OK and result.ok and result.backend == "warm"
     assert fake.posted["wait_ms"] == 2000 and fake.posted["engine"] == "chromium"
+
+
+def test_daemon_http_client_ignores_environment_proxy(monkeypatch):
+    captured: dict = {}
+
+    class _FakeAsyncClient:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
+    client = BrowserClient(cfg=BrowserSection(browser_fallback="page"))
+
+    assert isinstance(client._client(), _FakeAsyncClient)
+    assert captured["trust_env"] is False
 
 
 def test_client_warm_unreachable_is_unavailable_not_crash():

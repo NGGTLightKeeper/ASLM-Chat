@@ -13,9 +13,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.error import URLError
-from urllib.request import urlopen
 
 from Settings import settings
+from Settings.proxy_policy import apply_loopback_proxy_bypass, urlopen_direct
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +115,7 @@ def _build_service_environment() -> tuple[dict[str, str], int]:
 
     # Start from the current process environment and overlay managed values.
     env = os.environ.copy()
+    apply_loopback_proxy_bypass(env)
     env["OLLAMA_HOST"] = f"127.0.0.1:{ollama_port}"
 
     if ollama_models:
@@ -517,7 +518,10 @@ def _wait_until_ready(timeout_seconds: float = 15.0) -> bool:
     while time.time() < deadline:
         remaining = max(deadline - time.time(), 0.0)
         try:
-            with urlopen(version_url, timeout=max(0.1, min(1.5, remaining))) as response:
+            with urlopen_direct(
+                version_url,
+                timeout=max(0.1, min(1.5, remaining)),
+            ) as response:
                 if response.status < 500:
                     return True
         except (OSError, URLError):

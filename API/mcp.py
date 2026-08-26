@@ -30,6 +30,7 @@ from Services import user_mcp_client
 from Settings import mcp_json
 from Settings import skills as skills_config
 from Settings import settings as runtime_settings
+from Settings.proxy_policy import apply_loopback_proxy_bypass
 
 logger = logging.getLogger(__name__)
 
@@ -321,6 +322,7 @@ def _venv_subprocess_env(python_path: Path) -> dict[str, str]:
     """Return subprocess environment aligned with the selected venv."""
 
     env = os.environ.copy()
+    apply_loopback_proxy_bypass(env)
     venv_path = python_path.parent.parent
     env["VIRTUAL_ENV"] = str(venv_path)
     env["PATH"] = str(python_path.parent) + os.pathsep + env.get("PATH", "")

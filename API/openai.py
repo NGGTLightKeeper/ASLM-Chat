@@ -14,6 +14,7 @@ from typing import Any
 
 from API import mcp as tool_registry
 from Settings import settings
+from Settings.proxy_policy import urlopen_with_loopback_bypass
 
 logger = logging.getLogger(__name__)
 
@@ -903,7 +904,7 @@ def _fetch_json_url(url: str) -> dict[str, Any] | None:
 
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
+        with urlopen_with_loopback_bypass(request, timeout=10) as response:
             payload = json.loads(response.read().decode("utf-8", "replace"))
     except (OSError, ValueError, urllib.error.URLError, urllib.error.HTTPError):
         return None

@@ -18,6 +18,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
 from Settings.mcp_json import UserMcpServerEntry, _slugify
+from Settings.proxy_policy import build_proxy_environment_overlay
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +157,7 @@ async def _connect_session(entry: UserMcpServerEntry):
         params = StdioServerParameters(
             command=entry.command,
             args=list(entry.args),
-            env=dict(entry.env) if entry.env else None,
+            env=build_proxy_environment_overlay(entry.env),
             cwd=entry.cwd,
         )
         async with stdio_client(params, errlog=devnull) as streams:

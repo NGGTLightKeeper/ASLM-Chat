@@ -19,6 +19,8 @@ if BASE_DIR not in sys.path:
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "ASLM.settings")
 
+from Settings.proxy_policy import apply_loopback_proxy_bypass
+
 SERVER_VENV_COMMANDS = {
     "runserver",
     "migrate",
@@ -59,6 +61,7 @@ def _maybe_reexec_in_server_venv(command: str) -> None:
         scripts_path = python_path.parent
 
     env = os.environ.copy()
+    apply_loopback_proxy_bypass(env)
     env["ASLM_CHAT_ACTIVE_VENV"] = "server"
     env["VIRTUAL_ENV"] = str(venv_path)
     env["PATH"] = str(scripts_path) + os.pathsep + env.get("PATH", "")
@@ -444,6 +447,10 @@ def _resolve_runserver_port(requested_port: int) -> int:
 # Dispatch CLI command
 def main() -> None:
     """Parse CLI arguments and dispatch the requested command."""
+
+    # Install the localhost bypass before a venv re-exec or any network client
+    # can inherit the host application's system proxy configuration.
+    apply_loopback_proxy_bypass()
 
     parser = _build_parser()
     args = parser.parse_args()

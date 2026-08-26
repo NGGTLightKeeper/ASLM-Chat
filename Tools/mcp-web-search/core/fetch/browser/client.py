@@ -132,7 +132,12 @@ class BrowserClient:
         if self._http is None:
             import httpx
 
-            self._http = httpx.AsyncClient(timeout=self._cfg.fetch_timeout + 5.0)
+            # The daemon is an ASLM-owned loopback endpoint and must never use
+            # a desktop/system proxy, even when HTTPX cannot read its bypass list.
+            self._http = httpx.AsyncClient(
+                timeout=self._cfg.fetch_timeout + 5.0,
+                trust_env=False,
+            )
         return self._http
 
     # Fetch one URL through the configured backend; never raises — returns a BrowserFetch.

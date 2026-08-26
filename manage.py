@@ -3,6 +3,8 @@
 import os
 import sys
 
+from Settings.proxy_policy import apply_loopback_proxy_bypass
+
 
 # Configure Django settings module
 def _configure_settings_module() -> None:
@@ -15,6 +17,7 @@ def _configure_settings_module() -> None:
 def main() -> None:
     """Run Django administrative tasks."""
 
+    apply_loopback_proxy_bypass()
     _configure_settings_module()
 
     try:
