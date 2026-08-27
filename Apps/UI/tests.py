@@ -5270,6 +5270,7 @@ class GenerateApiTests(ToolRegistryTestMixin, TestCase):
         instant_counters: dict[str, int] = {}
         thinking_counters: dict[str, int] = {}
         self.assertIsNone(tool_registry.consume_tool_quota(instant_event, instant_counters))
+        self.assertIsNone(tool_registry.consume_tool_quota(instant_event, instant_counters))
         self.assertIsNotNone(tool_registry.consume_tool_quota(instant_event, instant_counters))
         self.assertIsNone(tool_registry.consume_tool_quota(thinking_event, thinking_counters))
         self.assertIsNone(tool_registry.consume_tool_quota(thinking_event, thinking_counters))
