@@ -510,12 +510,18 @@ def _ensure_log_streaming(process: subprocess.Popen) -> None:
 # Readiness checks
 
 # Wait until the local Ollama HTTP endpoint starts responding.
-def _wait_until_ready(timeout_seconds: float = 15.0) -> bool:
+def _wait_until_ready(
+    timeout_seconds: float = 15.0,
+    process: subprocess.Popen | None = None,
+) -> bool:
     deadline = time.time() + timeout_seconds
     host = settings.get_engine_url("ollama-service")
     version_url = f"{host.rstrip('/')}/api/version"
 
     while time.time() < deadline:
+        if process is not None and process.poll() is not None:
+            return False
+
         remaining = max(deadline - time.time(), 0.0)
         try:
             with urlopen_direct(
@@ -553,6 +559,54 @@ def _is_running_inside_aslm() -> bool:
 
 
 # Public lifecycle
+
+# Build Windows process settings that never allocate or show a console window.
+def _hidden_subprocess_kwargs() -> dict[str, object]:
+    if os.name != "nt":
+        return {}
+
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+    startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+    return {
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        "startupinfo": startupinfo,
+    }
+
+
+# Spawn Ollama as a supervised child whose output remains attached to ASLM.
+def _spawn_ollama_process(ollama_path: str, env: dict[str, str]) -> subprocess.Popen:
+    return subprocess.Popen(
+        [ollama_path, "serve"],
+        env=env,
+        # ASLM intentionally closes the module root's redirected stdin. Newer
+        # Ollama builds treat that inherited EOF as a clean shutdown signal, so
+        # give the server its own pipe and keep the writer alive in this supervisor.
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+        **_hidden_subprocess_kwargs(),
+    )
+
+
+# Terminate one managed Ollama process together with its descendants.
+def _terminate_process_tree(pid: int) -> None:
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **_hidden_subprocess_kwargs(),
+        )
+        return
+
+    os.kill(pid, signal.SIGTERM)
+
 
 # Start the local Ollama service when the active engine requires it.
 def start_ollama(engine: str | None = None) -> bool:
@@ -609,53 +663,49 @@ def start_ollama(engine: str | None = None) -> bool:
         f"models={env.get('OLLAMA_MODELS', '(default)')}"
     )
 
-    # Spawn a detached local runtime and consume its output through a pipe.
+    # Spawn a hidden local runtime and consume its output through a pipe.
+    process: subprocess.Popen | None = None
     try:
-        if os.name == "nt":
-            creationflags = (
-                getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                | getattr(subprocess, "DETACHED_PROCESS", 0)
-            )
-        else:
-            creationflags = 0
-
-        _ollama_process = subprocess.Popen(
-            [ollama_path, "serve"],
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            creationflags=creationflags,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-        )
-        _ensure_log_streaming(_ollama_process)
-
-        _write_pid(_ollama_process.pid)
+        process = _spawn_ollama_process(str(ollama_path), env)
+        _ollama_process = process
+        _ensure_log_streaming(process)
+        _write_pid(process.pid)
 
         # Report startup status based on HTTP readiness, not process spawn alone.
-        if not _wait_until_ready():
+        if not _wait_until_ready(process=process):
+            if process.poll() is not None:
+                _clear_pid()
+                _ollama_process = None
+                _print_status(
+                    f"Ollama service exited during startup with code {process.returncode}."
+                )
+                return False
+
             logger.warning(
                 "Ollama process started but the HTTP endpoint did not become ready in time."
             )
             _print_status(
-                f"Ollama service started (PID: {_ollama_process.pid}) "
+                f"Ollama service started (PID: {process.pid}) "
                 "but did not become ready in time."
             )
+            return False
         else:
-            _print_status(f"Ollama service started successfully (PID: {_ollama_process.pid})")
+            _print_status(f"Ollama service started successfully (PID: {process.pid})")
 
         return True
     except Exception as exc:
+        if process is not None and process.poll() is None:
+            _terminate_process_tree(process.pid)
         _ollama_process = None
         _clear_pid()
         _print_status(f"Failed to start Ollama service: {exc}")
         return False
 
 
-# Replace the current process with ollama serve for the dedicated runtime command.
+# Supervise ollama serve for the dedicated ASLM runtime command.
 def run_ollama_runtime(log: bool = False) -> int:
+    global _ollama_process
+
     # Skip the command when the managed runtime is disabled.
     desired_state = _get_desired_state("ollama-service")
     if not desired_state.is_enabled:
@@ -668,9 +718,7 @@ def run_ollama_runtime(log: bool = False) -> int:
         _print_status(f"Ollama runtime command failed: executable not found at {ollama_path}")
         return 1
 
-    # Persist the current PID before replacing the process image.
     env, ollama_port = _build_service_environment()
-    _write_pid(os.getpid())
 
     if log:
         _print_status(f"Launching dedicated Ollama runtime on port {ollama_port}...")
@@ -680,35 +728,73 @@ def run_ollama_runtime(log: bool = False) -> int:
         f"models={env.get('OLLAMA_MODELS', '(default)')}"
     )
 
+    if _wait_until_ready(timeout_seconds=0.25):
+        _print_status("Ollama runtime is already reachable; dedicated launch is not required.")
+        return 0
+
+    process: subprocess.Popen | None = None
     try:
-        os.execvpe(ollama_path, [ollama_path, "serve"], env)
+        process = _spawn_ollama_process(str(ollama_path), env)
+        _ollama_process = process
+        _write_pid(process.pid)
+        _ensure_log_streaming(process)
     except Exception as exc:
+        if process is not None and process.poll() is None:
+            _terminate_process_tree(process.pid)
+        _ollama_process = None
         _clear_pid()
         _print_status(f"Failed to launch dedicated Ollama runtime: {exc}")
         return 1
+
+    try:
+        if _wait_until_ready(timeout_seconds=15.0, process=process):
+            _print_status(f"Dedicated Ollama runtime is ready (PID: {process.pid}).")
+        else:
+            exit_code = process.poll()
+            if exit_code is None:
+                _print_status(
+                    f"Dedicated Ollama runtime is still running but its endpoint is not ready "
+                    f"(PID: {process.pid})."
+                )
+            else:
+                _print_status(
+                    f"Dedicated Ollama runtime exited before becoming ready "
+                    f"(PID: {process.pid}, code: {exit_code})."
+                )
+
+        return process.wait()
+    except KeyboardInterrupt:
+        if process.poll() is None:
+            _terminate_process_tree(process.pid)
+        return process.wait()
+    finally:
+        if process.stdin is not None:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+        _ollama_process = None
+        _clear_pid()
 
 
 # Stop the managed Ollama service when a tracked PID exists.
 def stop_ollama() -> None:
     global _ollama_process
 
-    # Exit quietly when there is no tracked runtime.
+    # Prefer the live in-process handle during the small window before its PID
+    # file is persisted; otherwise stop the separately supervised ASLM child.
+    current_process = _ollama_process
     pid = _read_pid()
+    if not pid and current_process is not None and current_process.poll() is None:
+        pid = current_process.pid
+
+    # Exit quietly when there is no tracked runtime.
     if not pid:
         _ollama_process = None
         return
 
     try:
-        # Use the native process termination method for the current platform.
-        if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"],
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        else:
-            os.kill(pid, signal.SIGTERM)
+        _terminate_process_tree(pid)
     except OSError:
         logger.info("Managed Ollama process %s was already stopped.", pid)
     finally:

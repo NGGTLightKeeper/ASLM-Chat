@@ -428,7 +428,7 @@ def get(key: str, default: Any = None) -> Any:
 
 
 # Persist one setting value.
-def set(key: str, value: Any) -> None:
+def set(key: str, value: Any, *, sync_runtime: bool = True) -> None:
     if key == "llm-engine":
         value = resolve_enabled_engine(str(value) if value is not None else None)
 
@@ -456,7 +456,7 @@ def set(key: str, value: Any) -> None:
     # Mirror the updated setting into the ASLM module manifest when available.
     _sync_module_manifest_setting(key, value)
 
-    if key in ENGINE_IDS:
+    if sync_runtime and key in ENGINE_IDS:
         try:
             from API import llm_api
 

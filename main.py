@@ -67,7 +67,16 @@ def _maybe_reexec_in_server_venv(command: str) -> None:
     env["PATH"] = str(scripts_path) + os.pathsep + env.get("PATH", "")
     env.pop("PYTHONHOME", None)
     args = [str(python_path), "-u", __file__, *sys.argv[1:]]
-    process = subprocess.Popen(args, env=env)
+    process_kwargs: dict[str, object] = {}
+    if os.name == "nt":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+        startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+        process_kwargs = {
+            "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            "startupinfo": startupinfo,
+        }
+    process = subprocess.Popen(args, env=env, **process_kwargs)
     try:
         sys.exit(process.wait())
     except KeyboardInterrupt:
@@ -134,10 +143,16 @@ class LazyDjangoApplication:
 
         body = (
             "<!doctype html><html><head><meta charset=\"utf-8\">"
-            "<meta http-equiv=\"refresh\" content=\"1\">"
             "<title>ASLM-Chat starting</title></head>"
             "<body style=\"font-family:Segoe UI,sans-serif;background:#111;color:#eee;\">"
             "ASLM-Chat is starting..."
+            "<script>"
+            "(function pollUntilReady(){setTimeout(async function(){try{"
+            "const response=await fetch(window.location.href,{cache:'no-store'});"
+            "if(response.headers.get('X-ASLM-Starting')!=='1'){"
+            "window.location.replace(window.location.href);return;}"
+            "}catch(_error){}pollUntilReady();},200);})();"
+            "</script>"
             "</body></html>"
         ).encode("utf-8")
         start_response(
@@ -145,7 +160,9 @@ class LazyDjangoApplication:
             [
                 ("Content-Type", "text/html; charset=utf-8"),
                 ("Content-Length", str(len(body))),
+                ("Cache-Control", "no-store"),
                 ("Retry-After", "1"),
+                ("X-ASLM-Starting", "1"),
             ],
         )
         return [body]
@@ -197,7 +214,6 @@ def cmd_runserver(port: int, log: bool) -> None:
         handler_class=QuietWSGIRequestHandler,
     ) as httpd:
         app.load_in_background()
-        maybe_start_local_engine_service(log=log)
         _probe_docker_status_async(log=log)
         if log:
             print(f"[ASLM-Chat] UI server listening at http://127.0.0.1:{port}/", flush=True)
@@ -268,7 +284,10 @@ def cmd_set_setting(key: str, value: str) -> None:
     from Settings.settings import normalize_setting_value, set
 
     parsed_value = normalize_setting_value(value)
-    set(key, parsed_value)
+    # ASLM invokes this command in a short-lived process before the module's
+    # run commands exist. Persisting a setting must not make that helper own a
+    # long-running engine runtime (or wait for the dedicated runtime command).
+    set(key, parsed_value, sync_runtime=False)
     print(f"[ASLM-Chat] Setting '{key}' updated to {parsed_value}")
 
 
@@ -333,21 +352,6 @@ def cmd_apply_aslm_locale(locale_file: str) -> None:
     language = str(data.get("language", "en"))
     apply_manifest_locale(language)
     print("[ASLM-Chat] Host locale snapshot updated.")
-
-
-# Start enabled engine runtimes
-def maybe_start_local_engine_service(log: bool) -> None:
-    """Prepare every enabled engine runtime before the UI server handles requests."""
-
-    try:
-        llm_api = importlib.import_module("API.llm_api")
-        llm_api.sync_enabled_engine_runtimes()
-    except ImportError as exc:
-        if log:
-            print(f"[ASLM-Chat] Warning: API.llm_api could not be loaded. {exc}")
-    except Exception as exc:
-        if log:
-            print(f"[ASLM-Chat] Warning: Failed to sync enabled engine runtimes. {exc}")
 
 
 # Probe Docker availability in the background so sandbox tool availability stays fresh.
