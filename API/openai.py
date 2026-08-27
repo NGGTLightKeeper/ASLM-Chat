@@ -14,6 +14,7 @@ from typing import Any
 
 from API import mcp as tool_registry
 from Settings import settings
+from Settings.proxy_policy import urlopen_with_loopback_bypass
 
 logger = logging.getLogger(__name__)
 
@@ -903,7 +904,7 @@ def _fetch_json_url(url: str) -> dict[str, Any] | None:
 
     request = urllib.request.Request(url, headers={"Accept": "application/json"})
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
+        with urlopen_with_loopback_bypass(request, timeout=10) as response:
             payload = json.loads(response.read().decode("utf-8", "replace"))
     except (OSError, ValueError, urllib.error.URLError, urllib.error.HTTPError):
         return None
@@ -1392,6 +1393,8 @@ def _build_tool_message(
                 "arguments": tool_event.get("arguments") or {},
             }
         )
+        if "tool_ui" not in payload and isinstance(tool_event.get("tool_ui"), dict):
+            payload["tool_ui"] = dict(tool_event["tool_ui"])
 
     return payload
 
@@ -1730,6 +1733,8 @@ def _run_tool_loop(
         model_name=model_name,
         tool_source_map=tool_context.get("tool_source_map") if isinstance(tool_context, dict) else None,
         allowed_tool_aliases=tool_context.get("allowed_tool_aliases") if isinstance(tool_context, dict) else None,
+        instant_mode=bool(tool_context.get("instant_mode")) if isinstance(tool_context, dict) else False,
+        instant_search_batch_size=tool_context.get("instant_search_batch_size") if isinstance(tool_context, dict) else None,
     )
 
     if not tools:

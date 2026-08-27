@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import importlib
 import json
 import io
@@ -13,6 +14,7 @@ import textwrap
 import threading
 import zipfile
 from contextlib import asynccontextmanager, contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -23,9 +25,11 @@ from django.urls import reverse
 
 from API import google_genai as google_genai_api
 from API import llm_api
+from API import lms as lms_api
 from API import mcp as tool_registry
 from API import ollama as ollama_api
 from API import openai as openai_api
+from Tools.system_prompts import get_system_prompt, is_instant_generation
 from API.google_genai import (
     generate as generate_google_genai,
     get_model_settings as get_google_genai_model_settings,
@@ -44,6 +48,12 @@ from API.openai import (
 )
 from Services import user_mcp_client
 from Settings import settings as project_settings
+from Settings.proxy_policy import (
+    apply_loopback_proxy_bypass,
+    build_proxy_environment_overlay,
+    urlopen_direct,
+    urlopen_with_loopback_bypass,
+)
 from Settings.mcp_json import UserMcpServerEntry
 from Settings import skills as skills_config
 from Apps.Data.models import (
@@ -68,6 +78,7 @@ from Apps.UI.views import (
     _build_activity_segments,
     _build_chat_history,
     _build_chat_title,
+    _build_generate_kwargs,
     _build_model_info_payload,
     _build_uploaded_file_context_entry,
     _build_uploaded_file_prompt_block,
@@ -118,6 +129,60 @@ class ToolActivityStreamTests(SimpleTestCase):
         self.assertTrue(marker.endswith("</tool_activity>"))
         payload = json.loads(marker.removeprefix("<tool_activity>").removesuffix("</tool_activity>"))
         self.assertEqual(payload, activity)
+
+
+class DefaultSystemPromptTests(SimpleTestCase):
+    def test_thinking_prompt_exactly_preserves_the_legacy_system_prompt(self):
+        # SHA-256 of the complete former Tools/SYSTEM_PROMPT.md content.
+        digest = hashlib.sha256(get_system_prompt(instant_mode=False).encode("utf-8")).hexdigest()
+
+        self.assertEqual(
+            digest,
+            "258f06452eef4abcf17b397614f3fe623d6c6e96002585300a208da7af77a49c",
+        )
+
+    def test_search_query_word_limits_are_explicit(self):
+        prompt = _compose_system_prompt("")
+
+        self.assertIn("`web` 10 words per string", prompt)
+        self.assertIn("`shopping` 4", prompt)
+        self.assertIn("`academic` 8", prompt)
+        self.assertIn("`onion` 7", prompt)
+        self.assertIn("Count every whitespace-separated token", prompt)
+        self.assertIn("Search operators count toward the corresponding string's limit", prompt)
+
+    def test_instant_prompt_replaces_thinking_search_contract(self):
+        prompt = _compose_system_prompt("", instant_mode=True)
+
+        self.assertIn("Instant/no-thinking web lookup rules", prompt)
+        self.assertIn("at most twice", prompt)
+        self.assertNotIn("`shopping` 4", prompt)
+
+    def test_instant_mode_detection_tracks_reasoning_controls(self):
+        self.assertTrue(is_instant_generation(False, None))
+        self.assertTrue(is_instant_generation(None, "off"))
+        self.assertFalse(is_instant_generation(True, None))
+        self.assertFalse(is_instant_generation(None, "medium"))
+
+    def test_tool_context_resets_when_switching_back_to_thinking(self):
+        common = {
+            "engine": "openai",
+            "model_name": "test-model",
+            "llm_messages": [],
+            "think_value": None,
+            "think_level_value": None,
+            "clean_options": {},
+            "session_id": "chat-1",
+            "selected_tool_servers": [{"id": "web_search"}],
+        }
+
+        instant = _build_generate_kwargs(**common, instant_mode=True)
+        thinking = _build_generate_kwargs(**common, instant_mode=False)
+
+        self.assertTrue(instant["tool_context"]["instant_mode"])
+        self.assertNotIn("max_tool_rounds", instant["tool_context"])
+        self.assertNotIn("instant_mode", thinking["tool_context"])
+        self.assertNotIn("max_tool_rounds", thinking["tool_context"])
 
 
 # Small structured error helper for Google GenAI adapter tests.
@@ -1393,6 +1458,318 @@ class ToolQuotaTests(SimpleTestCase):
         for _index in range(4):
             self.assertIsNone(tool_registry.consume_tool_quota(tool_event, counters, arguments=arguments))
 
+    def test_instant_search_and_read_page_each_allow_two_calls(self):
+        counters: dict[str, int] = {}
+        for tool_id in ("web_search", "read_page"):
+            event = {"tool_id": tool_id, "tool_name": tool_id, "instant_mode": True}
+            self.assertIsNone(tool_registry.consume_tool_quota(event, counters, arguments={}))
+            self.assertIsNone(tool_registry.consume_tool_quota(event, counters, arguments={}))
+            self.assertIn(
+                "at most 2 times",
+                str(tool_registry.consume_tool_quota(event, counters, arguments={})),
+            )
+
+
+class InstantToolSchemaTests(SimpleTestCase):
+    def test_all_engine_adapters_forward_forced_instant_batch_size(self):
+        context = {"instant_mode": True, "instant_search_batch_size": 3}
+        adapter_cases = (
+            (
+                ollama_api,
+                lambda: list(ollama_api._run_tool_loop(
+                    None, "model", [{"role": "user", "content": "Find"}], {}, ["web_search"], context
+                )),
+                "_stream_round",
+            ),
+            (
+                openai_api,
+                lambda: list(openai_api._run_tool_loop(
+                    None, "model", [{"role": "user", "content": "Find"}], {}, ["web_search"], context
+                )),
+                "_stream_openai_round",
+            ),
+            (
+                lms_api,
+                lambda: list(lms_api._run_tool_loop(
+                    None, "model", [{"role": "user", "content": "Find"}], {}, ["web_search"], context
+                )),
+                "_stream_openai_round",
+            ),
+        )
+
+        for adapter, invoke, stream_name in adapter_cases:
+            with self.subTest(adapter=adapter.__name__):
+                with (
+                    patch.object(tool_registry, "build_ollama_tools", return_value=([], {})) as builder,
+                    patch.object(adapter, stream_name, return_value=iter(())),
+                ):
+                    invoke()
+                self.assertEqual(builder.call_args.kwargs["instant_search_batch_size"], 3)
+
+        with patch.object(tool_registry, "build_ollama_tools", return_value=([], {})) as builder:
+            google_genai_api._build_google_tools(["web_search"], "model", context)
+        self.assertEqual(builder.call_args.kwargs["instant_search_batch_size"], 3)
+
+    def test_instant_search_schema_is_minimal_and_thinking_schema_is_unchanged(self):
+        server = {
+            "id": "web_search",
+            "name": "Web Search",
+            "description": "Search tools",
+            "tools": [
+                {
+                    "id": "web_search",
+                    "alias": "web_search__web_search",
+                    "name": "Web Search",
+                    "description": "Full search",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"web": {}, "shopping": {}, "effort": {}},
+                    },
+                    "prepares_arguments": True,
+                },
+                {
+                    "id": "read_page",
+                    "alias": "web_search__read_page",
+                    "name": "Read Page",
+                    "description": "Read pages",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {
+                                "oneOf": [
+                                    {"type": "string"},
+                                    {"type": "array", "items": {"type": "string"}},
+                                ]
+                            }
+                        },
+                    },
+                    "prepares_arguments": False,
+                },
+            ],
+        }
+        with patch.object(tool_registry, "get_server", return_value=server):
+            instant_tools, instant_lookup = tool_registry.build_ollama_tools(
+                ["web_search"], instant_mode=True
+            )
+            forced_instant_tools, forced_instant_lookup = tool_registry.build_ollama_tools(
+                ["web_search"],
+                instant_mode=True,
+                instant_search_batch_size=3,
+            )
+            thinking_tools, _thinking_lookup = tool_registry.build_ollama_tools(["web_search"])
+
+        instant_schema = instant_tools[0]["function"]["parameters"]
+        self.assertEqual(set(instant_schema["properties"]), {"query", "description", "operators"})
+        self.assertEqual(instant_schema["properties"]["query"]["oneOf"][1]["maxItems"], 3)
+        self.assertTrue(instant_lookup["web_search__web_search"]["tool"]["instant_mode"])
+        forced_query_schema = forced_instant_tools[0]["function"]["parameters"]["properties"]["query"]
+        self.assertEqual(forced_query_schema["type"], "array")
+        self.assertEqual(forced_query_schema["minItems"], 3)
+        self.assertEqual(forced_query_schema["maxItems"], 3)
+        self.assertEqual(
+            forced_instant_lookup["web_search__web_search"]["tool"]["instant_search_batch_size"],
+            3,
+        )
+        self.assertIn("effort", thinking_tools[0]["function"]["parameters"]["properties"])
+
+    def test_forced_instant_search_preflight_requires_exactly_three_queries(self):
+        preparer = Mock(return_value={
+            "ok": True,
+            "arguments": {
+                "query": ["alpha", "beta", "gamma"],
+                "description": "Checking sources",
+            },
+            "tool_ui": {"kind": "web_search", "status": "pending", "instant_mode": True},
+        })
+        tool = {
+            "id": "web_search",
+            "alias": "web_search__web_search",
+            "instant_mode": True,
+            "instant_search_batch_size": 3,
+            "prepares_arguments": True,
+        }
+        server = {
+            "id": "web_search",
+            "external": False,
+            "tool_preparers": {"web_search": preparer},
+        }
+        lookup = {tool["alias"]: {"server": server, "tool": tool}}
+
+        rejected = tool_registry.prepare_tool_call(lookup, {
+            "name": tool["alias"],
+            "arguments": {"query": "alpha", "description": "Checking sources"},
+        })
+        accepted = tool_registry.prepare_tool_call(lookup, {
+            "name": tool["alias"],
+            "arguments": {
+                "query": ["alpha", "beta", "gamma"],
+                "description": "Checking sources",
+            },
+        })
+
+        self.assertEqual(
+            rejected["preflight_error_result"]["ui"]["error"]["code"],
+            "INVALID_INSTANT_SEARCH_BATCH",
+        )
+        self.assertEqual(rejected["tool_ui"]["query_count"], 0)
+        self.assertNotIn("preflight_error_result", accepted)
+        preparer.assert_called_once()
+
+        preparer.reset_mock()
+        preparer.return_value = {
+            "ok": True,
+            "arguments": {
+                "query": ["alpha", "beta", "gamma"],
+                "description": "Checking alpha · Checking beta · Checking gamma",
+            },
+            "tool_ui": {"kind": "web_search", "status": "pending", "instant_mode": True},
+        }
+        collapsed = tool_registry.prepare_tool_calls(lookup, [
+            {"name": tool["alias"], "arguments": {"query": "alpha", "description": "Checking alpha"}},
+            {"name": tool["alias"], "arguments": {"query": "beta", "description": "Checking beta"}},
+            {"name": tool["alias"], "arguments": {"query": "gamma", "description": "Checking gamma"}},
+        ])
+
+        self.assertEqual(len(collapsed), 1)
+        self.assertEqual(collapsed[0]["arguments"]["query"], ["alpha", "beta", "gamma"])
+        self.assertEqual(collapsed[0]["tool_ui"]["collapsed_parallel_calls"], 3)
+        preparer.assert_called_once()
+
+    def test_in_process_tool_preparer_is_discovered_and_executed(self):
+        preparer = Mock(return_value={
+            "ok": True,
+            "arguments": {"query": "alpha", "description": "Checking alpha"},
+            "tool_ui": {"kind": "web_search", "status": "pending", "instant_mode": True},
+        })
+        module = SimpleNamespace(
+            MCP_SERVER={"id": "web_search", "name": "Web Search"},
+            TOOLS=[{
+                "id": "web_search",
+                "name": "Web Search",
+                "description": "Search",
+                "parameters": {"type": "object", "properties": {}},
+            }],
+            TOOL_PREPARERS={"web_search": preparer},
+            call_tool=lambda *_args, **_kwargs: {},
+        )
+        server = tool_registry._extract_server_definition(
+            module,
+            "mcp-web-search",
+            Path("Tools/mcp-web-search/mcp-server.py"),
+        )
+        tool = dict(server["tools"][0])
+        tool["instant_mode"] = True
+        lookup = {tool["alias"]: {"server": server, "tool": tool}}
+
+        prepared = tool_registry.prepare_tool_calls(lookup, [{
+            "id": "call-1",
+            "name": tool["alias"],
+            "arguments": {"query": "alpha", "description": "Checking alpha"},
+        }])
+
+        self.assertTrue(server["tools"][0]["prepares_arguments"])
+        preparer.assert_called_once()
+        self.assertTrue(preparer.call_args.args[0]["_instant_mode"])
+        self.assertTrue(prepared[0]["tool_ui"]["instant_mode"])
+
+    def test_ollama_instant_search_read_and_retry_still_reaches_final_answer(self):
+        server = {"id": "web_search", "name": "Web Search"}
+        search_tool = {
+            "id": "web_search",
+            "alias": "web_search__web_search",
+            "name": "Web Search",
+            "instant_mode": True,
+        }
+        read_tool = {
+            "id": "read_page",
+            "alias": "web_search__read_page",
+            "name": "Read Page",
+            "instant_mode": True,
+        }
+        lookup = {
+            search_tool["alias"]: {"server": server, "tool": search_tool},
+            read_tool["alias"]: {"server": server, "tool": read_tool},
+        }
+        round_results = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "function": {
+                        "name": search_tool["alias"],
+                        "arguments": {"query": "first", "description": "Finding sources"},
+                    }
+                }],
+            },
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "function": {
+                        "name": read_tool["alias"],
+                        "arguments": {"url": "https://example.com/source"},
+                    }
+                }],
+            },
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "function": {
+                        "name": search_tool["alias"],
+                        "arguments": {"query": "retry", "description": "Retrying search"},
+                    }
+                }],
+            },
+            {"role": "assistant", "content": "Final answer"},
+        ]
+
+        def fake_stream_round(_client, _model, _conversation, _kwargs, *, tools=None):
+            result = round_results.pop(0)
+
+            def stream():
+                if False:
+                    yield {}
+                return result
+
+            return stream()
+
+        def fake_tool_stream(*_args, **_kwargs):
+            if False:
+                yield {}
+            return {
+                "model_context": "Tool result",
+                "sources": [],
+                "ui": {"kind": "web_search", "status": "done", "instant_mode": True},
+            }
+
+        with (
+            patch.object(ollama_api, "_stream_round", side_effect=fake_stream_round),
+            patch.object(tool_registry, "build_ollama_tools", return_value=([{"type": "function"}], lookup)),
+            patch.object(tool_registry, "stream_ollama_tool", side_effect=fake_tool_stream),
+        ):
+            chunks = list(
+                ollama_api._run_tool_loop(
+                    SimpleNamespace(),
+                    "test-model",
+                    [{"role": "user", "content": "Find this"}],
+                    {},
+                    ["web_search"],
+                    {"instant_mode": True},
+                )
+            )
+
+        self.assertFalse(round_results)
+        self.assertTrue(any(
+            chunk.get("transcript_message", {}).get("content") == "Final answer"
+            for chunk in chunks
+            if isinstance(chunk, dict)
+        ))
+        self.assertFalse(any(
+            "tool loop exceeded" in str(chunk).lower()
+            for chunk in chunks
+        ))
+
 
 class ToolCooldownTests(SimpleTestCase):
     def setUp(self):
@@ -1521,24 +1898,24 @@ class ToolPreflightTests(SimpleTestCase):
             "tool_ui": error_result["ui"],
             "error_result": error_result,
         }
+        raw_arguments = {"query": "legacy"}
         call = tool_registry.prepare_tool_call(
             self._lookup(),
-            {"name": "web_search__web_search", "arguments": {"query": "legacy"}},
+            {"name": "web_search__web_search", "arguments": raw_arguments},
         )
 
         self.assertEqual(call["arguments"], {})
         self.assertEqual(call["preflight_error_result"], error_result)
         self.assertEqual(call["tool_ui"]["status"], "rejected")
+        self.assertEqual(call["tool_ui"]["rejected_arguments"], raw_arguments)
+        self.assertTrue(tool_registry.is_blocking_tool_result(call["preflight_error_result"]))
 
     @patch.object(tool_registry, "_run_worker")
     def test_parallel_advanced_search_calls_are_preflighted_as_one_batch(self, worker_mock):
         def prepare_batch(_server_file, _operation, payload, persistent=False):
             self.assertTrue(persistent)
             arguments = payload["arguments"]
-            self.assertEqual(
-                arguments["web"],
-                ["first query", "second query"],
-            )
+            self.assertEqual(arguments["web"], ["first query", "second query"])
             return {
                 "ok": True,
                 "arguments": arguments,
@@ -1580,10 +1957,10 @@ class ToolPreflightTests(SimpleTestCase):
         worker_mock.assert_called_once()
 
     @patch.object(tool_registry, "_run_worker")
-    def test_parallel_search_batch_over_server_limit_is_one_atomic_rejection(self, worker_mock):
+    def test_parallel_legacy_search_batch_over_server_limit_is_one_atomic_rejection(self, worker_mock):
         def reject_oversized_batch(_server_file, _operation, payload, persistent=False):
             self.assertTrue(persistent)
-            query_count = len(payload["arguments"]["web"])
+            query_count = len(payload["arguments"]["query"])
             self.assertEqual(query_count, 4)
             error_result = {
                 "error": {
@@ -1608,7 +1985,7 @@ class ToolPreflightTests(SimpleTestCase):
                 "name": "web_search__web_search",
                 "arguments": {
                     "call_description": f"Check source {index}",
-                    "web": f"query {index}",
+                    "query": f"query {index}",
                     "effort": "medium",
                 },
             }
@@ -2576,6 +2953,19 @@ class OllamaOptionMappingTests(SimpleTestCase):
 
         mock_service.start_ollama.assert_called_once_with(engine="ollama-service")
 
+    # Test the fixed local Ollama client never trusts system proxy settings.
+    @patch("API.ollama.ollama.Client")
+    @patch("API.ollama.settings.get", return_value=20003)
+    def test_ollama_client_disables_environment_proxy(self, _mock_port, mock_client):
+        mock_client.return_value = Mock()
+
+        ollama_api.get_client()
+
+        mock_client.assert_called_once_with(
+            host="http://127.0.0.1:20003",
+            trust_env=False,
+        )
+
 
 # Ensure Ollama tool support follows Ollama model metadata.
 class OllamaModelInfoTests(SimpleTestCase):
@@ -3311,6 +3701,199 @@ class EngineAvailabilitySettingsTests(SimpleTestCase):
         )
 
 
+# Verify loopback proxy bypass configuration and transport behavior.
+class LoopbackProxyPolicyTests(SimpleTestCase):
+    # Start a small HTTP server that identifies which endpoint received a request.
+    def _start_http_server(self, label):
+        requests = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                requests.append(self.path)
+                body = label.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, _format, *_args):
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        return server, thread, requests
+
+    # Stop one test HTTP server and wait for its thread to exit.
+    def _stop_http_server(self, server, thread):
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    def test_policy_merges_existing_bypass_and_loopback_hosts_idempotently(self):
+        environ = {
+            "NO_PROXY": "corp.example;127.0.0.1;[::1]",
+            "no_proxy": "internal.example,LOCALHOST",
+        }
+
+        first = apply_loopback_proxy_bypass(
+            environ,
+            system_proxies={},
+            system_bypass=[],
+        )
+        second = apply_loopback_proxy_bypass(
+            environ,
+            system_proxies={},
+            system_bypass=[],
+        )
+
+        self.assertEqual(first, second)
+        self.assertEqual(environ["NO_PROXY"], environ["no_proxy"])
+        tokens = {token.casefold() for token in first.split(",")}
+        self.assertEqual(
+            tokens,
+            {
+                "corp.example",
+                "internal.example",
+                "localhost",
+                "127.0.0.1",
+                "::1",
+            },
+        )
+
+    def test_policy_preserves_external_system_proxy_and_native_bypass(self):
+        environ = {}
+
+        apply_loopback_proxy_bypass(
+            environ,
+            system_proxies={
+                "http": "http://proxy.example:8080",
+                "https": "http://proxy.example:8080",
+            },
+            system_bypass=["<local>;corp.internal"],
+        )
+
+        self.assertEqual(environ["HTTP_PROXY"], "http://proxy.example:8080")
+        self.assertEqual(environ["http_proxy"], "http://proxy.example:8080")
+        self.assertEqual(environ["HTTPS_PROXY"], "http://proxy.example:8080")
+        self.assertIn("corp.internal", environ["NO_PROXY"])
+        self.assertIn("localhost", environ["NO_PROXY"])
+
+    def test_policy_does_not_replace_explicit_empty_proxy_or_wildcard(self):
+        environ = {"HTTP_PROXY": "", "NO_PROXY": "*"}
+
+        merged = apply_loopback_proxy_bypass(
+            environ,
+            system_proxies={"http": "http://system-proxy.example:8080"},
+            system_bypass=[],
+        )
+
+        self.assertEqual(environ["HTTP_PROXY"], "")
+        self.assertNotIn("http_proxy", environ)
+        self.assertEqual(merged, "*")
+        self.assertEqual(environ["no_proxy"], "*")
+
+    def test_ipv6_loopback_builds_valid_httpx_bypass_pattern(self):
+        import httpx._utils
+
+        proxy_url = "http://proxy.example:8080"
+        with patch.dict(
+            os.environ,
+            {"HTTP_PROXY": proxy_url, "HTTPS_PROXY": proxy_url},
+            clear=True,
+        ):
+            apply_loopback_proxy_bypass(system_proxies={}, system_bypass=[])
+            mounts = httpx._utils.get_environment_proxies()
+
+            self.assertIsNone(mounts["all://[::1]"])
+
+    def test_user_process_overlay_keeps_custom_env_and_only_parent_proxy_keys(self):
+        parent_environment = {
+            "HTTP_PROXY": "http://parent-proxy.example:8080",
+            "HTTPS_PROXY": "http://parent-proxy.example:8080",
+            "NO_PROXY": "corp.example",
+            "UNRELATED_SECRET": "must-not-leak",
+        }
+        with patch.dict(os.environ, parent_environment, clear=True):
+            overlay = build_proxy_environment_overlay(
+                {
+                    "CUSTOM_VALUE": "kept",
+                    "HTTPS_PROXY": "http://custom-proxy.example:8443",
+                    "NO_PROXY": "mcp.internal",
+                }
+            )
+
+        self.assertEqual(overlay["CUSTOM_VALUE"], "kept")
+        self.assertEqual(overlay["HTTP_PROXY"], "http://parent-proxy.example:8080")
+        self.assertEqual(overlay["HTTPS_PROXY"], "http://custom-proxy.example:8443")
+        self.assertNotIn("UNRELATED_SECRET", overlay)
+        self.assertIn("corp.example", overlay["NO_PROXY"])
+        self.assertIn("mcp.internal", overlay["NO_PROXY"])
+        self.assertIn("::1", overlay["NO_PROXY"])
+
+    def test_httpx_bypasses_loopback_but_keeps_proxy_for_external_urls(self):
+        import httpx
+
+        origin, origin_thread, origin_requests = self._start_http_server("origin")
+        proxy, proxy_thread, proxy_requests = self._start_http_server("proxy")
+        origin_port = origin.server_address[1]
+        proxy_port = proxy.server_address[1]
+
+        try:
+            proxy_url = f"http://127.0.0.1:{proxy_port}"
+            with patch.dict(
+                os.environ,
+                {
+                    "HTTP_PROXY": proxy_url,
+                    "HTTPS_PROXY": proxy_url,
+                    "ALL_PROXY": proxy_url,
+                },
+                clear=True,
+            ):
+                apply_loopback_proxy_bypass(system_proxies={}, system_bypass=[])
+                with httpx.Client(timeout=3) as client:
+                    by_ip = client.get(f"http://127.0.0.1:{origin_port}/by-ip")
+                    by_name = client.get(f"http://localhost:{origin_port}/by-name")
+                    external = client.get("http://example.invalid/through-proxy")
+
+                with urlopen_direct(f"http://127.0.0.1:{origin_port}/urllib", timeout=3) as response:
+                    direct_body = response.read().decode("utf-8")
+
+                with urlopen_with_loopback_bypass(
+                    f"http://localhost:{origin_port}/urllib-policy",
+                    timeout=3,
+                ) as response:
+                    policy_local_body = response.read().decode("utf-8")
+
+                with urlopen_with_loopback_bypass(
+                    "http://example.invalid/urllib-external",
+                    timeout=3,
+                ) as response:
+                    policy_external_body = response.read().decode("utf-8")
+
+            self.assertEqual(by_ip.text, "origin")
+            self.assertEqual(by_name.text, "origin")
+            self.assertEqual(external.text, "proxy")
+            self.assertEqual(direct_body, "origin")
+            self.assertEqual(policy_local_body, "origin")
+            self.assertEqual(policy_external_body, "proxy")
+            self.assertEqual(
+                origin_requests,
+                ["/by-ip", "/by-name", "/urllib", "/urllib-policy"],
+            )
+            self.assertEqual(
+                proxy_requests,
+                [
+                    "http://example.invalid/through-proxy",
+                    "http://example.invalid/urllib-external",
+                ],
+            )
+        finally:
+            self._stop_http_server(origin, origin_thread)
+            self._stop_http_server(proxy, proxy_thread)
+
+
 # Cover LM Studio metadata normalization and capability fallback.
 class LmsAdapterTests(SimpleTestCase):
     # Test serialize model info reads nested info wrapper.
@@ -3683,6 +4266,107 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(Chat.objects.count(), 1)
         self.assertEqual(Chat.objects.first().messages.count(), 2)
         mock_prepare_runtime.assert_any_call("ollama-service")
+
+    @patch(
+        "Apps.UI.views.llm_api.get_model_settings",
+        return_value={
+            "capabilities": ["tools", "thinking"],
+            "template": "{{ if .Tools }}{{ end }}{{ if .ToolCalls }}{{ end }}",
+            "think_param_name": "think",
+            "think_level_param_name": "think_level",
+        },
+    )
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._resolve_request_engine", return_value="ollama-service")
+    def test_same_chat_switches_from_instant_to_thinking_contract(
+        self,
+        _mock_engine,
+        mock_generate,
+        _mock_prepare_runtime,
+        _mock_model_settings,
+    ):
+        self.write_server(
+            "web_search",
+            '''
+            MCP_SERVER = {"id": "web_search", "name": "Web Search"}
+            TOOLS = [
+                {"id": "web_search", "name": "Web Search", "parameters": {"type": "object", "properties": {}}},
+                {"id": "read_page", "name": "Read Page", "parameters": {"type": "object", "properties": {}}},
+            ]
+            def call_tool(tool_id, arguments, context=None):
+                return {"ok": True}
+            ''',
+        )
+        mock_generate.return_value = [{"message": {"content": "Instant answer"}}]
+
+        instant_response = self.client.post(
+            reverse("chat_api"),
+            data=json.dumps({
+                "message": "/search First turn",
+                "model": "llama3",
+                "tool_server_ids": ["web_search"],
+                "options": {"think": False},
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(instant_response.status_code, 200)
+        b"".join(instant_response.streaming_content)
+        instant_kwargs = dict(mock_generate.call_args.kwargs)
+        chat_id = instant_response["X-Chat-ID"]
+
+        mock_generate.reset_mock()
+        mock_generate.return_value = [{"message": {"content": "Thinking answer"}}]
+        thinking_response = self.client.post(
+            reverse("chat_api"),
+            data=json.dumps({
+                "chat_id": chat_id,
+                "message": "Second turn",
+                "model": "llama3",
+                "tool_server_ids": ["web_search"],
+                "options": {"think_level": "medium"},
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(thinking_response.status_code, 200)
+        b"".join(thinking_response.streaming_content)
+        thinking_kwargs = dict(mock_generate.call_args.kwargs)
+
+        self.assertIn("Instant/no-thinking web lookup rules", instant_kwargs["messages"][0]["content"])
+        self.assertNotIn("Web-search research planning rules", instant_kwargs["messages"][0]["content"])
+        self.assertIn("exactly three complementary query strings", instant_kwargs["messages"][0]["content"])
+        self.assertTrue(instant_kwargs["tool_context"]["instant_mode"])
+        self.assertEqual(instant_kwargs["tool_context"]["instant_search_batch_size"], 3)
+        self.assertEqual(instant_kwargs["tool_context"]["forced_tool_name"], "web_search")
+        self.assertNotIn("max_tool_rounds", instant_kwargs["tool_context"])
+
+        self.assertIn("Web-search research planning rules", thinking_kwargs["messages"][0]["content"])
+        self.assertNotIn("Instant/no-thinking web lookup rules", thinking_kwargs["messages"][0]["content"])
+        self.assertNotIn("instant_mode", thinking_kwargs["tool_context"])
+        self.assertNotIn("instant_search_batch_size", thinking_kwargs["tool_context"])
+        self.assertNotIn("max_tool_rounds", thinking_kwargs["tool_context"])
+        self.assertNotIn("think", thinking_kwargs)
+        self.assertEqual(thinking_kwargs["think_level"], "medium")
+
+        thinking_system_messages = [
+            message
+            for message in thinking_kwargs["messages"]
+            if message.get("role") == "system"
+        ]
+        self.assertEqual(len(thinking_system_messages), 1)
+        self.assertTrue(
+            thinking_system_messages[0]["content"].startswith(
+                get_system_prompt(instant_mode=False)
+            )
+        )
+        self.assertIn(
+            {"role": "assistant", "content": "Instant answer"},
+            thinking_kwargs["messages"],
+        )
+        self.assertNotIn(
+            "Instant/no-thinking web lookup rules",
+            json.dumps(thinking_kwargs["messages"], ensure_ascii=False),
+        )
 
     # Test chat API supports an attachment-only prompt.
     @patch("Apps.UI.views.llm_api.prepare_runtime")
@@ -4450,6 +5134,146 @@ class GenerateApiTests(ToolRegistryTestMixin, TestCase):
         kwargs = mock_generate.call_args.kwargs
         self.assertEqual(kwargs["tool_server_ids"], ["time_suite"])
         self.assertEqual(kwargs["tool_context"]["chat_id"], "tool-session")
+
+    @patch(
+        "Apps.UI.views.llm_api.get_model_settings",
+        return_value={
+            "capabilities": ["tools", "thinking"],
+            "template": "{{ if .Tools }}{{ end }}{{ if .ToolCalls }}{{ end }}",
+            "think_param_name": "think",
+            "think_level_param_name": "think_level",
+        },
+    )
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._resolve_request_engine", return_value="ollama-service")
+    def test_generate_api_switches_prompt_schema_rounds_and_quotas_with_reasoning_mode(
+        self,
+        _mock_engine,
+        mock_generate,
+        _mock_prepare_runtime,
+        _mock_model_settings,
+    ):
+        self.write_server(
+            "web_search",
+            '''
+            MCP_SERVER = {"id": "web_search", "name": "Web Search"}
+            TOOLS = [
+                {
+                    "id": "web_search",
+                    "name": "Web Search",
+                    "description": "Advanced search",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "web": {"type": "string"},
+                            "shopping": {"type": "string"},
+                            "academic": {"type": "string"},
+                            "onion": {"type": "string"},
+                            "effort": {"type": "string"},
+                            "call_description": {"type": "string"},
+                        },
+                    },
+                },
+                {
+                    "id": "read_page",
+                    "name": "Read Page",
+                    "description": "Read exact pages",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {
+                                "oneOf": [
+                                    {"type": "string"},
+                                    {"type": "array", "maxItems": 10, "items": {"type": "string"}},
+                                ]
+                            }
+                        },
+                    },
+                },
+            ]
+            def call_tool(tool_id, arguments, context=None):
+                return {"ok": True}
+            ''',
+        )
+        mock_generate.return_value = [{"message": {"content": "Done"}}]
+
+        def run_mode(options):
+            response = self.client.post(
+                reverse("generate_api"),
+                data=json.dumps({
+                    "message": "Check current information",
+                    "model": "llama3",
+                    "tool_server_ids": ["web_search"],
+                    "include_skills_baseline": False,
+                    "options": options,
+                }),
+                content_type="application/json",
+            )
+            self.assertEqual(response.status_code, 200)
+            b"".join(response.streaming_content)
+            kwargs = dict(mock_generate.call_args.kwargs)
+            tool_context = dict(kwargs["tool_context"])
+            tools, lookup = tool_registry.build_ollama_tools(
+                kwargs["tool_server_ids"],
+                engine=kwargs["engine"],
+                model_name=kwargs["model_name"],
+                instant_mode=bool(tool_context.get("instant_mode")),
+                instant_search_batch_size=tool_context.get("instant_search_batch_size"),
+            )
+            mock_generate.reset_mock()
+            mock_generate.return_value = [{"message": {"content": "Done"}}]
+            return kwargs, tools, lookup
+
+        instant_kwargs, instant_tools, instant_lookup = run_mode({"think": False})
+        thinking_kwargs, thinking_tools, thinking_lookup = run_mode({"think_level": "medium"})
+
+        instant_system = instant_kwargs["messages"][0]["content"]
+        thinking_system = thinking_kwargs["messages"][0]["content"]
+        self.assertTrue(instant_system.startswith(get_system_prompt(instant_mode=True)))
+        self.assertTrue(thinking_system.startswith(get_system_prompt(instant_mode=False)))
+        self.assertIn("Instant/no-thinking web lookup rules", instant_system)
+        self.assertNotIn("Web-search research planning rules", instant_system)
+        self.assertIn("Web-search research planning rules", thinking_system)
+        self.assertNotIn("Instant/no-thinking web lookup rules", thinking_system)
+
+        self.assertIs(instant_kwargs["think"], False)
+        self.assertTrue(instant_kwargs["tool_context"]["instant_mode"])
+        self.assertNotIn("instant_search_batch_size", instant_kwargs["tool_context"])
+        self.assertNotIn("max_tool_rounds", instant_kwargs["tool_context"])
+        self.assertEqual(thinking_kwargs["think_level"], "medium")
+        self.assertNotIn("instant_mode", thinking_kwargs["tool_context"])
+        self.assertNotIn("instant_search_batch_size", thinking_kwargs["tool_context"])
+        self.assertNotIn("max_tool_rounds", thinking_kwargs["tool_context"])
+
+        instant_by_name = {tool["function"]["name"]: tool for tool in instant_tools}
+        thinking_by_name = {tool["function"]["name"]: tool for tool in thinking_tools}
+        instant_search_schema = instant_by_name["web_search__web_search"]["function"]["parameters"]
+        thinking_search_schema = thinking_by_name["web_search__web_search"]["function"]["parameters"]
+        self.assertEqual(set(instant_search_schema["properties"]), {"query", "description", "operators"})
+        self.assertEqual(instant_search_schema["properties"]["query"]["oneOf"][1]["maxItems"], 3)
+        self.assertIn("effort", thinking_search_schema["properties"])
+        self.assertIn("shopping", thinking_search_schema["properties"])
+
+        instant_read_schema = instant_by_name["web_search__read_page"]["function"]["parameters"]
+        instant_read_array = instant_read_schema["properties"]["url"]["oneOf"][1]
+        self.assertEqual(instant_read_array["maxItems"], 3)
+
+        instant_event = tool_registry.build_tool_event(
+            instant_lookup,
+            {"name": "web_search__web_search", "arguments": {"query": "x", "description": "Checking"}},
+        )
+        thinking_event = tool_registry.build_tool_event(
+            thinking_lookup,
+            {"name": "web_search__web_search", "arguments": {"web": "x", "effort": "medium"}},
+        )
+        instant_counters: dict[str, int] = {}
+        thinking_counters: dict[str, int] = {}
+        self.assertIsNone(tool_registry.consume_tool_quota(instant_event, instant_counters))
+        self.assertIsNone(tool_registry.consume_tool_quota(instant_event, instant_counters))
+        self.assertIsNotNone(tool_registry.consume_tool_quota(instant_event, instant_counters))
+        self.assertIsNone(tool_registry.consume_tool_quota(thinking_event, thinking_counters))
+        self.assertIsNone(tool_registry.consume_tool_quota(thinking_event, thinking_counters))
 
     @patch("Apps.UI.views.llm_api.prepare_runtime")
     @patch("Apps.UI.views.llm_api.generate")

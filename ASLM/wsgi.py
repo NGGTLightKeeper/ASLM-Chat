@@ -1,6 +1,10 @@
 # Copyright NEXTGGTECH. Elastic License 2.0.
 
 import os
+
+from Settings.proxy_policy import apply_loopback_proxy_bypass
+apply_loopback_proxy_bypass()
+
 from django.core.wsgi import get_wsgi_application
 
 

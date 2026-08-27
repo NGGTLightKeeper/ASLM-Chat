@@ -12,7 +12,12 @@ import pytest
 
 import core.config as config_module
 import core.search.web_search as search_module
-from core.mcp_contract import build_search_description, build_search_schema, prepare_search_arguments
+from core.mcp_contract import (
+    build_search_description,
+    build_search_schema,
+    prepare_instant_search_arguments,
+    prepare_search_arguments,
+)
 from core.query.search_plan import PlanValidationError, prepare_advanced_search
 from core.search.query_dates import resolve_query_dates
 
@@ -53,6 +58,53 @@ def _plan():
     }
 
 
+def test_instant_arguments_force_low_web_batch(monkeypatch):
+    monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
+
+    prepared = prepare_instant_search_arguments({
+        "query": ["alpha release", "beta release", "gamma release"],
+        "description": "Checking release status",
+        "operators": {"site_include": ["example.com"]},
+    })
+
+    assert prepared["ok"] is True
+    assert prepared["search_request"]["schema_mode"] == "instant"
+    assert prepared["search_request"]["effort"] == "low"
+    assert len(prepared["search_request"]["queries"]) == 3
+    assert prepared["tool_ui"]["instant_mode"] is True
+
+
+def test_instant_arguments_reject_more_than_three_queries(monkeypatch):
+    monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
+
+    prepared = prepare_instant_search_arguments({
+        "query": ["one", "two", "three", "four"],
+        "description": "Checking candidates",
+    })
+
+    assert prepared["ok"] is False
+    assert prepared["tool_ui"]["instant_mode"] is True
+
+
+def test_instant_plain_queries_accept_inline_quotes_without_shared_operators(monkeypatch):
+    monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
+
+    prepared = prepare_instant_search_arguments({
+        "query": [
+            'TerraFirmaGreg "owl beans" spawn',
+            'TFC "owl bean" climate',
+            'TerraFirmaGreg "owl beans" crop',
+        ],
+        "description": "Checking owl bean locations",
+    })
+
+    assert prepared["ok"] is True
+    assert len(prepared["search_request"]["queries"]) == 3
+    assert prepared["search_request"]["queries"][0]["compiled_query"] == (
+        'TerraFirmaGreg "owl beans" spawn'
+    )
+
+
 def test_config_schema_mode_defaults_and_invalid_values_fall_back_to_advanced(tmp_path, caplog):
     from core.config.settings import load_search_config
 
@@ -72,20 +124,22 @@ def test_advanced_schema_is_default_and_onion_is_capability_gated(monkeypatch):
     monkeypatch.setattr(config_module, "load_search_config", lambda: _config(tor=False))
     schema = build_search_schema()
     web_schema = schema["properties"]["web"]
-    item, batch = web_schema["oneOf"]
     assert schema["required"] == ["call_description"]
-    assert schema["minProperties"] == 1
+    assert schema["minProperties"] == 2
     assert set(schema["properties"]) == {
         "call_description", "web", "academic", "shopping", "effort"
     }
-    assert batch["maxItems"] == 2
-    assert item["type"] == "string"
-    assert batch["items"]["type"] == "string"
-    assert "Required complete, non-empty search query" in item["description"]
+    string_schema, batch_schema = web_schema["oneOf"]
+    assert string_schema["type"] == "string"
+    assert string_schema["pattern"] == r"^\s*\S+(?:\s+\S+){0,9}\s*$"
+    assert batch_schema["type"] == "array"
+    assert batch_schema["maxItems"] == 2
+    assert batch_schema["items"]["pattern"] == string_schema["pattern"]
+    assert "10-word limit applies separately" in web_schema["description"]
     assert "Choose the query field by evidence type" in build_search_description()
     description = build_search_description()
-    assert "Never submit more than two queries total" in description
-    assert "High effort never\nbatches" in description
+    assert "at most two queries" in description
+    assert "Each query is limited independently" in description
 
     monkeypatch.setattr(config_module, "load_search_config", lambda: _config(tor=True))
     assert "onion" in build_search_schema()["properties"]
@@ -122,11 +176,102 @@ def test_advanced_plan_rejects_legacy_shape_and_is_atomic(monkeypatch):
 def test_preflight_advertises_normalized_activity_description(monkeypatch):
     monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
 
-    prepared = prepare_search_arguments(_plan())
+    prepared = prepare_search_arguments({
+        "call_description": "Convert reference currency",
+        "web": "RUB USD exchange rate",
+        "effort": "medium",
+    })
 
     assert prepared["arguments"]["call_description"] == "Convert reference currency"
     assert prepared["tool_ui"]["description"] == "Convert reference currency"
     assert prepared["tool_ui"]["search_request"]["description"] == "Convert reference currency"
+
+
+@pytest.mark.parametrize(
+    ("vertical", "query", "expected_count", "limit"),
+    [
+        ("web", "one two three four five six seven eight nine ten eleven", 11, 10),
+        ("shopping", "one two three four five", 5, 4),
+        ("academic", "one two three four five six seven eight nine", 9, 8),
+    ],
+)
+def test_public_preflight_enforces_vertical_word_limits(
+    monkeypatch, vertical, query, expected_count, limit
+):
+    monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
+
+    rejected = prepare_search_arguments({
+        "call_description": "Check evidence",
+        vertical: query,
+        "effort": "medium",
+    })
+
+    assert rejected["ok"] is False
+    issue = rejected["error_result"]["error"]["issues"][0]
+    assert issue["path"] == f"$.{vertical}"
+    assert f"contains {expected_count}" in issue["message"]
+    assert f"at most {limit}" in issue["message"]
+    assert f"Delete at least {expected_count - limit} word" in issue["message"]
+    assert "Counted words: 1=one" in issue["message"]
+    context = rejected["error_result"]["model_context"]
+    assert "Required shape: one plain query string normally" in context
+    assert "Valid examples:" in context
+    assert "Received arguments:" in context
+    assert "Never repeat the rejected shape" in context
+
+
+def test_public_preflight_recovers_item_wrapper_as_batch(monkeypatch):
+    monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
+    arguments = {
+        "call_description": "Check repositories",
+        "web": {"item": ["first query", "second query"]},
+        "effort": "medium",
+    }
+
+    prepared = prepare_search_arguments(arguments)
+
+    assert prepared["ok"] is True
+    assert prepared["arguments"]["web"] == ["first query", "second query"]
+    assert prepared["tool_ui"]["query_count"] == 2
+
+
+def test_public_preflight_accepts_two_query_batch_shapes(monkeypatch):
+    monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
+
+    array_result = prepare_search_arguments({
+        "call_description": "Check repositories",
+        "web": ["first query", "second query"],
+        "effort": "medium",
+    })
+    assert array_result["ok"] is True
+    assert array_result["arguments"]["web"] == ["first query", "second query"]
+
+    multi_result = prepare_search_arguments({
+        "call_description": "Check two verticals",
+        "web": "project documentation",
+        "academic": "project evaluation paper",
+        "effort": "medium",
+    })
+    assert multi_result["ok"] is True
+    assert multi_result["arguments"]["web"] == "project documentation"
+    assert multi_result["arguments"]["academic"] == "project evaluation paper"
+
+
+def test_public_preflight_applies_word_limit_to_each_batch_item_atomically(monkeypatch):
+    monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
+    result = prepare_search_arguments({
+        "call_description": "Compare repositories",
+        "web": [
+            "one two three four five six seven eight nine ten",
+            "one two three four five six seven eight nine ten eleven",
+        ],
+        "effort": "medium",
+    })
+
+    assert result["ok"] is False
+    assert result["arguments"] == {}
+    assert result["error_result"]["error"]["issues"][0]["path"] == "$.web[1]"
+    assert "web allows at most 10" in result["error_result"]["model_context"]
 
 
 def test_advanced_plan_requires_call_description_and_rejects_invalid_or_group():
@@ -205,7 +350,7 @@ def test_advanced_plan_accepts_one_query_in_each_of_two_verticals():
     ]
 
 
-def test_high_effort_executes_first_query_and_returns_batch_warning(monkeypatch):
+def test_public_high_effort_executes_first_query_and_warns(monkeypatch):
     monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
     plan = {
         "call_description": "Check critical evidence",
@@ -217,58 +362,7 @@ def test_high_effort_executes_first_query_and_returns_batch_warning(monkeypatch)
 
     assert prepared["ok"] is True
     assert prepared["arguments"]["academic"] == "first critical study"
-    assert len(prepared["search_request"]["queries"]) == 1
-    assert prepared["search_request"]["queries"][0]["compiled_query"] == "first critical study"
-    assert prepared["warnings"] == [
-        {
-            "code": "HIGH_EFFORT_BATCH_TRUNCATED",
-            "message": (
-                "High effort does not allow batching. Only the first query was executed; "
-                "submit any remaining queries separately with medium or low effort."
-            ),
-        }
-    ]
-    assert prepared["tool_ui"]["warnings"] == prepared["warnings"]
-
-
-def test_high_effort_warning_is_returned_to_model_after_first_query_runs(monkeypatch):
-    monkeypatch.setattr(config_module, "load_search_config", lambda: _config())
-    server_path = Path(__file__).resolve().parents[1] / "mcp-server.py"
-    spec = importlib.util.spec_from_file_location("web_search_mcp_server_test", server_path)
-    assert spec is not None and spec.loader is not None
-    server = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(server)
-    captured_requests: list[dict] = []
-
-    async def fake_run_web_search_plan(request):
-        captured_requests.append(request)
-        return {
-            "sources": [],
-            "model_context": "First-query evidence",
-            "ui": {"kind": "web_search", "status": "completed"},
-        }
-
-    monkeypatch.setattr(server, "run_web_search_plan", fake_run_web_search_plan)
-    monkeypatch.setattr(server, "write_search_io_event", lambda _event: None)
-    raw_arguments = {
-        "call_description": "Check critical evidence",
-        "web": ["first query", "second query"],
-        "effort": "high",
-    }
-    canonical_arguments = prepare_search_arguments(raw_arguments)["arguments"]
-    result = asyncio.run(server.call_tool(
-        "web_search",
-        canonical_arguments,
-        {"raw_tool_arguments": raw_arguments},
-    ))
-
-    assert len(captured_requests) == 1
-    assert [query["compiled_query"] for query in captured_requests[0]["queries"]] == ["first query"]
-    assert result["model_context"].startswith(
-        "HIGH_EFFORT_BATCH_TRUNCATED: High effort does not allow batching."
-    )
-    assert result["model_context"].endswith("First-query evidence")
-    assert result["ui"]["warnings"] == result["warnings"]
+    assert prepared["warnings"][0]["code"] == "HIGH_EFFORT_BATCH_TRUNCATED"
 
 
 def test_explicit_date_operators_survive_legacy_year_hint_processing():

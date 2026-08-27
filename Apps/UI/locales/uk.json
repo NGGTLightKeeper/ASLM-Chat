@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "Цей інструмент потребує Docker.",
-    "refreshDocker": "Перевірити Docker знову"
+    "refreshDocker": "Перевірити Docker знову",
+    "unsupportedByModel": "Модель не підтримує інструменти",
+    "dockerRequiredShort": "Потрібен Docker"
+  },
+  "common": {
+    "download": "Завантажити",
+    "enabled": "Увімкнено"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -14,6 +20,7 @@
     "noPreviousChats": "Немає попередніх чатів",
     "chatOptions": "Параметри чату",
     "rename": "Перейменувати",
+    "download": "Завантажити чат",
     "delete": "Видалити",
     "ago": "{time} тому"
   },
@@ -37,7 +44,8 @@
     "sendMessage": "Надіслати",
     "queueMessage": "Поставити в чергу",
     "stopGeneration": "Зупинити генерацію",
-    "contextUsage": "Використання контексту"
+    "contextUsage": "Використання контексту",
+    "searchCommandLabel": "Вебпошук"
   },
   "reasoning": {
     "panel": "Панель міркувань",
@@ -48,6 +56,55 @@
     "panel": "Панель джерел",
     "title": "Джерела",
     "closePanel": "Закрити панель джерел"
+  },
+  "research": {
+    "title": "Поглиблене дослідження",
+    "statusPlanning": "Планування",
+    "statusAwaitingApproval": "Очікування підтвердження",
+    "statusRevising": "Оновлення плану",
+    "statusStarting": "Запуск",
+    "statusRunning": "Дослідження",
+    "statusReflecting": "Аналіз результатів",
+    "statusSynthesizing": "Підготовка звіту",
+    "statusStopping": "Зупинення",
+    "statusStopped": "Зупинено",
+    "statusCompleted": "Завершено",
+    "statusPartial": "Частково завершено",
+    "statusFailed": "Помилка",
+    "statusExpired": "Термін дії минув",
+    "sendingApproval": "Надсилання підтвердження",
+    "savingPlan": "Збереження плану",
+    "sendingStop": "Надсилання запиту на зупинення",
+    "updating": "Оновлення",
+    "preparingPlan": "Підготовка плану дослідження",
+    "searchingFor": "Пошук за запитом «{query}»",
+    "searchingSources": "Пошук джерел",
+    "searchBackendUnavailable": "Пошук тимчасово недоступний; результат може бути неповним",
+    "readingSource": "Опрацювання джерела",
+    "runningAnalysis": "Аналіз знайдених даних",
+    "planChanged": "План змінився до застосування цієї дії. Перегляньте останню версію.",
+    "commandRejected": "Не вдалося застосувати дію дослідження.",
+    "reviewUpdatedPlan": "Перегляньте оновлений план",
+    "reviewPlan": "Перегляньте план перед початком дослідження",
+    "starting": "Запуск затвердженого плану дослідження",
+    "planUpdated": "План дослідження оновлено",
+    "collectingEvidence": "Збирання матеріалів",
+    "reflecting": "Аналіз матеріалів і уточнення наступних запитів",
+    "writingReport": "Підготовка підсумкового звіту",
+    "finalizingReport": "Завершення роботи над звітом",
+    "stopping": "Безпечне зупинення дослідження",
+    "stopped": "Дослідження зупинено",
+    "completedPartial": "Дослідження завершено з обмеженнями",
+    "completed": "Дослідження завершено",
+    "editPlan": "Редагувати план",
+    "updatePlan": "Оновити план",
+    "cancel": "Скасувати",
+    "stop": "Зупинити дослідження",
+    "approve": "Підтвердити й почати",
+    "activityPending": "Тут відображатиметься перебіг дослідження.",
+    "openActivity": "Відкрити перебіг дослідження",
+    "planRequired": "План дослідження не може бути порожнім.",
+    "applyingChanges": "Застосування змін до плану"
   },
   "settings": {
     "modelSettings": "Налаштування моделі",
@@ -77,6 +134,7 @@
     "tools": "Інструменти",
     "mcp": "MCP",
     "skills": "Навички",
+    "paramInfo": "Відомості про параметр",
     "systemPrompt": "Системний промпт",
     "systemPromptPlaceholder": "напр., «Відповідай лише римами»",
     "load": "Завантажити",
@@ -118,6 +176,13 @@
     "extraHigh": "Найвища"
   },
   "messages": {
+    "branch": "Створити гілку звідси",
+    "editMessage": "Редагувати повідомлення",
+    "editTitle": "Редагувати повідомлення",
+    "editHint": "Подальшу частину розмови буде створено заново.",
+    "saveAndRegenerate": "Зберегти й згенерувати заново",
+    "branchedFrom": "Гілку створено з чату «{title}»",
+    "openBranch": "Відкрити «{title}»",
     "more": "Більше",
     "hide": "Приховати",
     "copyCode": "Копіювати код",
@@ -168,6 +233,7 @@
   },
   "skills": {
     "title": "Навички",
+    "disabledShort": "Вимкнено",
     "refresh": "Оновити",
     "noSkills": "Навичок не знайдено",
     "loadError": "Не вдалося завантажити навички",
@@ -310,8 +376,8 @@
       "note": "Завантаження лише словника."
     },
     "use_mmap": {
-      "label": "Memory map",
-      "note": "Використовувати memory mapping."
+      "label": "Відображення файлу в пам’ять",
+      "note": "Використовувати відображення файлу моделі в пам’ять."
     },
     "use_mlock": {
       "label": "Блокування пам'яті",
@@ -350,7 +416,7 @@
     },
     "tfs_z": {
       "label": "TFS Z",
-      "note": "Tail-free sampling."
+      "note": "Семплювання без хвоста."
     },
     "typical_p": {
       "label": "Typical P"
@@ -466,6 +532,7 @@
     "editConfig": "Редагувати mcp.json",
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} інстр.)",
+    "toolCountShort": "{count} інстр.",
     "cancel": "Скасувати",
     "save": "Зберегти",
     "noServers": "Немає серверів MCP",

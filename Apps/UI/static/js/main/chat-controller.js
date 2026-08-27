@@ -231,7 +231,8 @@ export function createChatController(context, dependencies) {
     const requestPromise = (async function refreshUsage() {
       const draftText = getContextUsageDraftText(refreshOptions.draftText);
       const systemPrompt = String(dom.$systemPrompt && dom.$systemPrompt.length ? dom.$systemPrompt.val() : '');
-      const payload = await getJson(`/api/context_usage/?engine=${encodeURIComponent(engineManager.getActiveEngine())}&model=${encodeURIComponent(engineManager.getSelectedModelName() || '')}&chat_id=${encodeURIComponent(state.currentChatId || '')}&draft=${encodeURIComponent(draftText)}&system_prompt=${encodeURIComponent(systemPrompt)}`);
+      const instantMode = !requestWantsReasoning(parametersUi.collectOptionsPayload());
+      const payload = await getJson(`/api/context_usage/?engine=${encodeURIComponent(engineManager.getActiveEngine())}&model=${encodeURIComponent(engineManager.getSelectedModelName() || '')}&chat_id=${encodeURIComponent(state.currentChatId || '')}&draft=${encodeURIComponent(draftText)}&system_prompt=${encodeURIComponent(systemPrompt)}&instant_mode=${instantMode ? '1' : '0'}`);
       setContextUsageUi(payload || {});
       return payload || {};
     })();

@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "इस टूल के लिए Docker आवश्यक है।",
-    "refreshDocker": "Docker फिर से जाँचें"
+    "refreshDocker": "Docker फिर से जाँचें",
+    "unsupportedByModel": "यह मॉडल टूल का समर्थन नहीं करता",
+    "dockerRequiredShort": "Docker आवश्यक"
+  },
+  "common": {
+    "download": "डाउनलोड",
+    "enabled": "सक्षम"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -14,6 +20,7 @@
     "noPreviousChats": "कोई पिछली चैट नहीं",
     "chatOptions": "चैट विकल्प",
     "rename": "नाम बदलें",
+    "download": "चैट डाउनलोड करें",
     "delete": "हटाएँ",
     "ago": "{time} पहले"
   },
@@ -37,7 +44,8 @@
     "sendMessage": "संदेश भेजें",
     "queueMessage": "संदेश कतार में डालें",
     "stopGeneration": "जनरेशन रोकें",
-    "contextUsage": "संदर्भ उपयोग"
+    "contextUsage": "संदर्भ उपयोग",
+    "searchCommandLabel": "वेब खोज"
   },
   "reasoning": {
     "panel": "तर्क पैनल",
@@ -48,6 +56,55 @@
     "panel": "स्रोत पैनल",
     "title": "स्रोत",
     "closePanel": "स्रोत पैनल बंद करें"
+  },
+  "research": {
+    "title": "गहन शोध",
+    "statusPlanning": "योजना बन रही है",
+    "statusAwaitingApproval": "स्वीकृति की प्रतीक्षा",
+    "statusRevising": "योजना अपडेट हो रही है",
+    "statusStarting": "शुरू हो रहा है",
+    "statusRunning": "शोध जारी है",
+    "statusReflecting": "परिणामों की समीक्षा हो रही है",
+    "statusSynthesizing": "रिपोर्ट लिखी जा रही है",
+    "statusStopping": "रोका जा रहा है",
+    "statusStopped": "रोक दिया गया",
+    "statusCompleted": "पूरा हुआ",
+    "statusPartial": "आंशिक रूप से पूरा",
+    "statusFailed": "विफल",
+    "statusExpired": "समय समाप्त",
+    "sendingApproval": "स्वीकृति भेजी जा रही है",
+    "savingPlan": "योजना सहेजी जा रही है",
+    "sendingStop": "रोकने का अनुरोध भेजा जा रहा है",
+    "updating": "अपडेट हो रहा है",
+    "preparingPlan": "शोध योजना तैयार हो रही है",
+    "searchingFor": "“{query}” की खोज हो रही है",
+    "searchingSources": "स्रोत खोजे जा रहे हैं",
+    "searchBackendUnavailable": "खोज अस्थायी रूप से उपलब्ध नहीं है; परिणाम अधूरा हो सकता है",
+    "readingSource": "एक स्रोत पढ़ा जा रहा है",
+    "runningAnalysis": "साक्ष्यों का विश्लेषण हो रहा है",
+    "planChanged": "उस कार्रवाई के लागू होने से पहले योजना बदल गई। नवीनतम संस्करण की समीक्षा करें।",
+    "commandRejected": "शोध कार्रवाई लागू नहीं की जा सकी।",
+    "reviewUpdatedPlan": "अपडेट की गई योजना की समीक्षा करें",
+    "reviewPlan": "शोध शुरू होने से पहले योजना की समीक्षा करें",
+    "starting": "स्वीकृत शोध योजना शुरू हो रही है",
+    "planUpdated": "शोध योजना अपडेट हो गई",
+    "collectingEvidence": "साक्ष्य जुटाए जा रहे हैं",
+    "reflecting": "साक्ष्यों की समीक्षा और अगली क्वेरी को बेहतर बनाया जा रहा है",
+    "writingReport": "अंतिम रिपोर्ट तैयार की जा रही है",
+    "finalizingReport": "रिपोर्ट को अंतिम रूप दिया जा रहा है",
+    "stopping": "शोध को सुरक्षित रूप से रोका जा रहा है",
+    "stopped": "शोध रोक दिया गया",
+    "completedPartial": "शोध सीमाओं के साथ पूरा हुआ",
+    "completed": "शोध पूरा हुआ",
+    "editPlan": "योजना संपादित करें",
+    "updatePlan": "योजना अपडेट करें",
+    "cancel": "रद्द करें",
+    "stop": "शोध रोकें",
+    "approve": "स्वीकृत करें और शुरू करें",
+    "activityPending": "शोध गतिविधि यहाँ दिखाई देगी।",
+    "openActivity": "शोध गतिविधि खोलें",
+    "planRequired": "शोध योजना खाली नहीं हो सकती।",
+    "applyingChanges": "योजना में बदलाव लागू किए जा रहे हैं"
   },
   "settings": {
     "modelSettings": "मॉडल सेटिंग्स",
@@ -77,6 +134,7 @@
     "tools": "उपकरण",
     "mcp": "MCP",
     "skills": "कौशल",
+    "paramInfo": "पैरामीटर विवरण",
     "systemPrompt": "सिस्टम प्रॉम्प्ट",
     "systemPromptPlaceholder": "उदा. \"केवल तुकबंदी में उत्तर दें\"",
     "load": "लोड करें",
@@ -118,6 +176,13 @@
     "extraHigh": "अत्यधिक उच्च"
   },
   "messages": {
+    "branch": "यहाँ से शाखा बनाएँ",
+    "editMessage": "संदेश संपादित करें",
+    "editTitle": "संदेश संपादित करें",
+    "editHint": "इसके बाद की बातचीत फिर से जनरेट होगी।",
+    "saveAndRegenerate": "सहेजें और फिर से जनरेट करें",
+    "branchedFrom": "“{title}” से शाखा बनाई गई",
+    "openBranch": "“{title}” खोलें",
     "more": "और",
     "hide": "छिपाएँ",
     "copyCode": "कोड कॉपी करें",
@@ -168,6 +233,7 @@
   },
   "skills": {
     "title": "कौशल",
+    "disabledShort": "अक्षम",
     "refresh": "रीफ़्रेश",
     "noSkills": "कोई कौशल नहीं मिला",
     "loadError": "कौशल लोड नहीं हो सके",
@@ -466,6 +532,7 @@
     "editConfig": "mcp.json संपादित करें",
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} उपकरण)",
+    "toolCountShort": "{count} उपकरण",
     "cancel": "रद्द करें",
     "save": "सहेजें",
     "noServers": "कोई MCP सर्वर नहीं",

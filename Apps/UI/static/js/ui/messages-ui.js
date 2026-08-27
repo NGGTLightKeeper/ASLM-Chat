@@ -1276,10 +1276,12 @@ export function createMessagesUi(context, dependencies) {
 
         if (target) {
           target.result = String(parsed.content || '');
-          target.toolUi = parsed.tool_ui && typeof parsed.tool_ui === 'object' ? parsed.tool_ui : null;
-          target.structuredContent = parsed.structured_content && typeof parsed.structured_content === 'object'
-            ? parsed.structured_content
-            : null;
+          if (parsed.tool_ui && typeof parsed.tool_ui === 'object') {
+            target.toolUi = parsed.tool_ui;
+          }
+          if (parsed.structured_content && typeof parsed.structured_content === 'object') {
+            target.structuredContent = parsed.structured_content;
+          }
         }
       } catch (_error) {
         // Ignore malformed tool results.
@@ -1556,7 +1558,51 @@ export function createMessagesUi(context, dependencies) {
       }).filter(function keepLegacyQuery(item) { return !!item.query; });
     }
     const query = formatSearchQueryValue(raw).trim();
-    return query ? [{ query, vertical: '' }] : [];
+    if (query) {
+      return [{ query, vertical: '' }];
+    }
+
+    const rejectedArguments = segment && segment.toolUi
+      && segment.toolUi.rejected_arguments
+      && typeof segment.toolUi.rejected_arguments === 'object'
+      ? segment.toolUi.rejected_arguments
+      : null;
+    if (!rejectedArguments) {
+      return [];
+    }
+
+    return ['web', 'academic', 'shopping', 'onion'].flatMap(function mapRejectedVertical(vertical) {
+      const parts = [];
+      collectRejectedSearchStrings(rejectedArguments[vertical], parts);
+      const rejectedQuery = parts.join(' | ').replace(/\s+/g, ' ').trim();
+      return rejectedQuery ? [{ query: rejectedQuery, vertical }] : [];
+    });
+  }
+
+  // Recover the model's original query text from a rejected call so the UI can
+  // identify the malformed request instead of falling back to "Bad query: query".
+  function collectRejectedSearchStrings(value, output) {
+    if (typeof value === 'string') {
+      const text = value.replace(/\s+/g, ' ').trim();
+      if (text) {
+        output.push(text);
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(function collectRejectedArrayItem(item) {
+        collectRejectedSearchStrings(item, output);
+      });
+      return;
+    }
+    if (!value || typeof value !== 'object') {
+      return;
+    }
+    ['text', 'query', 'q', 'raw_query', 'item', 'items'].forEach(function collectRejectedKey(key) {
+      if (Object.prototype.hasOwnProperty.call(value, key)) {
+        collectRejectedSearchStrings(value[key], output);
+      }
+    });
   }
 
   // Prefer the backend-normalized activity description over raw model arguments.
@@ -1571,6 +1617,28 @@ export function createMessagesUi(context, dependencies) {
     return String((request && request.description) || toolUi.description || args.description || '')
       .replace(/\s+/g, ' ')
       .trim();
+  }
+
+  // Instant-mode search activity deliberately exposes descriptions, never query text.
+  function isInstantSearchFlowSegment(segment) {
+    const toolUi = segment && segment.toolUi && typeof segment.toolUi === 'object' ? segment.toolUi : {};
+    const structured = segment && segment.structuredContent && typeof segment.structuredContent === 'object'
+      ? segment.structuredContent
+      : {};
+    const structuredUi = structured.ui && typeof structured.ui === 'object' ? structured.ui : {};
+    const request = normalizedSearchRequestFromSegment(segment);
+    const args = segment && segment.arguments && typeof segment.arguments === 'object'
+      ? segment.arguments
+      : {};
+    const compactInstantShape = Object.prototype.hasOwnProperty.call(args, 'query')
+      && Object.prototype.hasOwnProperty.call(args, 'description')
+      && !['web', 'shopping', 'academic', 'onion', 'effort', 'call_description'].some(function hasAdvancedField(key) {
+        return Object.prototype.hasOwnProperty.call(args, key);
+      });
+    return toolUi.instant_mode === true
+      || structuredUi.instant_mode === true
+      || !!(request && request.schema_mode === 'instant')
+      || compactInstantShape;
   }
 
   // Extract a stable query summary from one tool segment.
@@ -2025,7 +2093,11 @@ export function createMessagesUi(context, dependencies) {
     const sources = searchSourcesFromSegment(segment);
     const renderedSources = renderSearchSourcesWithOverflow(sources, 3);
     const isExpanded = !!renderOptions.expanded;
-    const queriesHtml = entries.map(function renderPreparedQuery(entry) {
+    const instantMode = isInstantSearchFlowSegment(segment);
+    const displayEntries = instantMode
+      ? [{ query: searchDescriptionFromSegment(segment) || (hasResult ? 'Searched sources' : 'Searching sources') }]
+      : entries;
+    const queriesHtml = displayEntries.map(function renderPreparedQuery(entry) {
       const pendingDot = hasResult || isRejected ? '' : '<span class="msg-search-pending-dot"></span>';
       return `<div class="msg-search-batch-query${isRejected ? ' is-error' : ''}"><span class="msg-search-batch-query-text">${escHtml(entry.query)}</span>${pendingDot}</div>`;
     }).join('');
@@ -2037,9 +2109,9 @@ export function createMessagesUi(context, dependencies) {
     const expandedMoreHtml = moreCount > 0
       ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-expanded" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(HIDE_LABEL)}</span></button>`
       : '';
-    const iconHtml = status === 'error' || status === 'timeout' || isRejected
-      ? (icons.WEB_SEARCH_ERROR_ICON || icons.GLOBE_ICON)
-      : (icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON);
+    const iconHtml = instantMode
+      ? (icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON)
+      : (icons.WEB_SEARCH_ICON || icons.TOOL_SEARCH_ICON || icons.GLOBE_ICON);
     const searchKey = searchSegmentKey(segment, toolSegmentIndex);
     const searchKeyAttr = searchKey ? ` data-search-key="${escapeAttributeValue(searchKey)}"` : '';
 
@@ -2072,14 +2144,18 @@ export function createMessagesUi(context, dependencies) {
     const compact = segment.toolUi && segment.toolUi.compact && typeof segment.toolUi.compact === 'object'
       ? segment.toolUi.compact
       : null;
-    const query = searchQueryFromSegment(segment);
+    const instantMode = isInstantSearchFlowSegment(segment);
+    const query = instantMode ? '' : searchQueryFromSegment(segment);
+    const instantDescription = instantMode ? searchDescriptionFromSegment(segment) : '';
     const sources = searchSourcesFromSegment(segment);
     const renderedSources = renderSearchSourcesWithOverflow(sources, 3);
     const isExpanded = !!renderOptions.expanded;
     const status = segment.toolUi && segment.toolUi.status ? String(segment.toolUi.status) : '';
     const isRejected = status === 'rejected' || /^BAD_QUERY:/i.test(String(segment.result || '').trim());
     let label = '';
-    if (renderOptions.compactLabel && query) {
+    if (instantMode) {
+      label = instantDescription || (hasResult ? 'Searched sources' : 'Searching sources');
+    } else if (renderOptions.compactLabel && query) {
       label = isRejected ? `Bad query: ${query}` : query;
     } else if (isRejected) {
       label = `Bad query: ${query || 'query'}`;
@@ -2099,9 +2175,9 @@ export function createMessagesUi(context, dependencies) {
       ? `<button class="msg-search-chip msg-search-chip--more msg-search-chip--more-expanded" ${moreButtonAttrs}><span class="msg-search-chip-domain">${escHtml(HIDE_LABEL)}</span></button>`
       : '';
     const pendingHtml = hasResult ? '' : '<span class="msg-search-pending-dot"></span>';
-    const iconHtml = status === 'error' || status === 'timeout' || isRejected
-      ? (icons.WEB_SEARCH_ERROR_ICON || icons.GLOBE_ICON)
-      : (icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON);
+    const iconHtml = instantMode
+      ? (icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON)
+      : (icons.WEB_SEARCH_ICON || icons.TOOL_SEARCH_ICON || icons.GLOBE_ICON);
     const searchKey = searchSegmentKey(segment, toolSegmentIndex);
     const searchKeyAttr = searchKey ? ` data-search-key="${escapeAttributeValue(searchKey)}"` : '';
 
@@ -2129,18 +2205,24 @@ export function createMessagesUi(context, dependencies) {
       return renderSearchToolCard(searchItems[0].segment, searchItems[0].index, renderOptions);
     }
 
-    const hasProblem = searchItems.some(function hasProblemStatus(item) {
-      const status = item.segment.toolUi && item.segment.toolUi.status ? String(item.segment.toolUi.status) : '';
-      return status === 'error' || status === 'timeout' || status === 'rejected' || /^BAD_QUERY:/i.test(String(item.segment.result || '').trim());
+    const instantMode = searchItems.some(function hasInstantSearch(item) {
+      return isInstantSearchFlowSegment(item.segment);
     });
-    const iconHtml = hasProblem
-      ? (icons.WEB_SEARCH_ERROR_ICON || icons.GLOBE_ICON)
-      : (icons.WEB_SEARCH_ICON || icons.GLOBE_ICON);
+    const iconHtml = instantMode
+      ? (icons.TOOL_SEARCH_ICON || icons.WEB_SEARCH_ICON || icons.GLOBE_ICON)
+      : (icons.WEB_SEARCH_ICON || icons.TOOL_SEARCH_ICON || icons.GLOBE_ICON);
     const activePendingIndex = searchItems.findIndex(function findPendingSearch(item) {
       return item.segment.result === null || item.segment.result === undefined;
     });
     const hasPending = activePendingIndex !== -1;
-    const queriesHtml = searchItems.flatMap(function renderBatchQuery(item, itemIndex) {
+    const instantDescription = instantMode
+      ? searchItems.map(function mapInstantDescription(item) {
+          return searchDescriptionFromSegment(item.segment);
+        }).find(Boolean) || (hasPending ? 'Searching sources' : 'Searched sources')
+      : '';
+    const queriesHtml = instantMode
+      ? `<div class="msg-search-batch-query${hasPending ? ' is-active' : ''}"><span class="msg-search-batch-query-text">${escHtml(instantDescription)}</span>${hasPending ? '<span class="msg-search-pending-dot"></span>' : ''}</div>`
+      : searchItems.flatMap(function renderBatchQuery(item, itemIndex) {
       const entries = searchQueryEntriesFromSegment(item.segment);
       const itemStatus = item.segment.toolUi && item.segment.toolUi.status ? String(item.segment.toolUi.status) : '';
       const itemRejected = itemStatus === 'rejected' || /^BAD_QUERY:/i.test(String(item.segment.result || '').trim());
@@ -2212,9 +2294,7 @@ export function createMessagesUi(context, dependencies) {
     const status = firstItem.segment && firstItem.segment.toolUi && firstItem.segment.toolUi.status
       ? String(firstItem.segment.toolUi.status)
       : '';
-    const iconHtml = status === 'error'
-      ? (icons.WEB_SEARCH_ERROR_ICON || icons.GLOBE_ICON)
-      : (icons.WEB_SEARCH_ICON || icons.GLOBE_ICON);
+    const iconHtml = icons.WEB_SEARCH_ICON || icons.TOOL_SEARCH_ICON || icons.GLOBE_ICON;
     const dataIndex = Number.isInteger(firstItem.index) ? ` data-tool-segment-index="${firstItem.index}"` : '';
 
     return `
@@ -5145,26 +5225,19 @@ export function createMessagesUi(context, dependencies) {
     return sanitizeReasoningPreviewText(label).replace(/[.!?,\u2026;:]+(["'»”\)\]]*)$/u, '\u2026$1');
   }
 
-  // Gather sources belonging to the currently displayed search or read activity.
-  function reasoningActivitySources(items, activeSegment, activeItemIndex) {
+  // Gather only the sources belonging to the latest displayed search or read
+  // activity. Older results must not leak into the live preview when a new
+  // request becomes active.
+  function reasoningActivitySources(activeSegment) {
     const isSearchActivity = isSearchToolSegment(activeSegment);
     const isReadActivity = isReadPageToolSegment(activeSegment);
     if (!isSearchActivity && !isReadActivity) {
       return [];
     }
 
-    const sources = [];
-    (Array.isArray(items) ? items.slice(0, activeItemIndex + 1) : []).forEach(function collectActivitySources(item) {
-      const segment = item && item.segment ? item.segment : item;
-      if (!segment || isIgnoredReasoningActivity(segment)) {
-        return;
-      }
-      if (isSearchActivity && isSearchToolSegment(segment)) {
-        sources.push(...searchSourcesFromSegment(segment));
-      } else if (isReadActivity && isReadPageToolSegment(segment)) {
-        sources.push(...readPageSourcesFromSegment(segment));
-      }
-    });
+    const sources = isSearchActivity
+      ? searchSourcesFromSegment(activeSegment)
+      : readPageSourcesFromSegment(activeSegment);
 
     return dedupeSearchSources(sources.map(function normalizeActivitySource(source, index) {
       return normalizeSearchSourceItem(source, index + 1);
@@ -5202,7 +5275,7 @@ export function createMessagesUi(context, dependencies) {
       if (isIgnoredReasoningActivity(segment)) {
         continue;
       }
-      const sources = reasoningActivitySources(safeItems, segment, index);
+      const sources = reasoningActivitySources(segment);
       const description = normalizeReasoningPreviewPunctuation(reasoningToolActionDescription(segment));
       let label = description;
       if (!label && isReadPageToolSegment(segment)) {
@@ -5394,27 +5467,65 @@ export function createMessagesUi(context, dependencies) {
     // Tool-only group (no reasoning): normally render tool cards inline.
     // When reasoning is active, keep them in the same collapsed shell.
     if (thoughtCount === 0 && !groupOptions.forceWrapper) {
-      const toolsHtml = safeItems.map(function renderToolOnlyItem(item) {
+      const renderedTools = [];
+      for (let itemIndex = 0; itemIndex < safeItems.length; itemIndex += 1) {
+        const item = safeItems[itemIndex];
         if (!item) {
-          return '';
+          continue;
         }
         if (item.type === 'tool') {
           const segment = item && item.segment ? item.segment : item;
           const toolIndex = item && Number.isInteger(item.toolIndex) ? item.toolIndex : undefined;
-          if (isSandboxToolSegment(segment) && !isImageViewToolSegment(segment)) {
-            return renderCollapsedSandboxToolBlock(segment, toolIndex, !!item.expanded);
+          if (isInstantSearchFlowSegment(segment) && isReadPageToolSegment(segment)) {
+            continue;
           }
-          return renderReasoningToolItem(item);
+          if (isInstantSearchFlowSegment(segment) && isSearchToolSegment(segment)) {
+            const searchItems = [];
+            let cursor = itemIndex;
+            while (cursor < safeItems.length) {
+              const candidate = safeItems[cursor];
+              const candidateSegment = candidate && candidate.type === 'tool'
+                ? (candidate.segment || candidate)
+                : null;
+              if (!candidateSegment || !isInstantSearchFlowSegment(candidateSegment)) {
+                break;
+              }
+              if (isSearchToolSegment(candidateSegment)) {
+                searchItems.push({
+                  segment: candidateSegment,
+                  index: Number.isInteger(candidate.toolIndex) ? candidate.toolIndex : undefined
+                });
+              } else if (!isReadPageToolSegment(candidateSegment)) {
+                break;
+              }
+              cursor += 1;
+            }
+            renderedTools.push(renderSearchToolGroup(searchItems, { expanded: false }));
+            itemIndex = cursor - 1;
+            continue;
+          }
+          if (isSandboxToolSegment(segment) && !isImageViewToolSegment(segment)) {
+            renderedTools.push(renderCollapsedSandboxToolBlock(segment, toolIndex, !!item.expanded));
+            continue;
+          }
+          renderedTools.push(renderReasoningToolItem(item));
+          continue;
         }
         if (item.type === 'tool_pending') {
-          return renderPendingToolCallPlaceholder();
+          renderedTools.push(renderPendingToolCallPlaceholder());
         }
+      }
+      const toolsHtml = renderedTools.join('');
+      if (!toolsHtml.trim()) {
         return '';
-      }).join('');
+      }
       return `<div class="msg-tool-only-group">${toolsHtml}</div>`;
     }
 
-    const renderItems = safeItems;
+    const renderItems = safeItems.filter(function hideInstantReadPage(item) {
+      const segment = item && item.type === 'tool' ? (item.segment || item) : null;
+      return !(segment && isReadPageToolSegment(segment) && isInstantSearchFlowSegment(segment));
+    });
     const contentHtml = renderItems.map(function renderReasoningItem(item) {
       if (!item) {
         return '';

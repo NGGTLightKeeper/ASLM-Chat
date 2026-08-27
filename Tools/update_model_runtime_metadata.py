@@ -4,16 +4,22 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 
 TOOLS_DIR = Path(__file__).resolve().parent
 MODULE_DIR = TOOLS_DIR.parent
+if str(MODULE_DIR) not in sys.path:
+    sys.path.insert(0, str(MODULE_DIR))
+
+from Settings.proxy_policy import apply_loopback_proxy_bypass, urlopen_direct
+
 SETTINGS_PATH = MODULE_DIR / "Settings" / "settings.json"
 MODULE_MANIFEST_PATH = MODULE_DIR / "ASLM_Module.json"
 METADATA_PATH = TOOLS_DIR / "model_runtime_metadata.json"
@@ -97,7 +103,7 @@ def _fetch_json(url: str, *, method: str = "GET", body: dict[str, Any] | None = 
         headers["Content-Type"] = "application/json"
     request = Request(url, data=data, method=method, headers=headers)
     try:
-        with urlopen(request, timeout=5) as response:
+        with urlopen_direct(request, timeout=5) as response:
             payload = json.loads(response.read().decode("utf-8", "replace"))
     except (OSError, ValueError, HTTPError, URLError):
         return {}
@@ -244,6 +250,7 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
 
 
 def main() -> int:
+    apply_loopback_proxy_bypass()
     payload = _build_metadata()
     _write_json_atomic(METADATA_PATH, payload)
     active = payload.get("active", {})

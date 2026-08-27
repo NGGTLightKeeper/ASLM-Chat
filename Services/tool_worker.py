@@ -20,6 +20,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+from Settings.proxy_policy import apply_loopback_proxy_bypass
+
 SERVER_DISPATCHER_NAMES = ("call_tool", "run_tool", "execute_tool", "execute")
 SERVER_METADATA_NAMES = ("MCP_SERVER", "SERVER")
 TOOL_HANDLER_NAMES = ("TOOL_HANDLERS", "TOOL_EXECUTORS")
@@ -452,6 +454,8 @@ def serve(server_file: Path) -> int:
 
 # CLI entry point for one-shot and persistent worker modes.
 def main() -> int:
+    apply_loopback_proxy_bypass()
+
     if len(sys.argv) < 3:
         return _print_response(False, "Usage: tool_worker.py <describe|supports|prepare|call> <server_file>")
 

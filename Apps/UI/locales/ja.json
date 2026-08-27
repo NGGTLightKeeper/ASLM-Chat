@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "このツールには Docker が必要です。",
-    "refreshDocker": "Docker を再確認"
+    "refreshDocker": "Docker を再確認",
+    "unsupportedByModel": "モデルはツールに対応していません",
+    "dockerRequiredShort": "Docker が必要"
+  },
+  "common": {
+    "download": "ダウンロード",
+    "enabled": "有効"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -14,6 +20,7 @@
     "noPreviousChats": "過去のチャットはありません",
     "chatOptions": "チャットのオプション",
     "rename": "名前を変更",
+    "download": "チャットをダウンロード",
     "delete": "削除",
     "ago": "{time}前"
   },
@@ -37,7 +44,8 @@
     "sendMessage": "メッセージを送信",
     "queueMessage": "メッセージをキューに追加",
     "stopGeneration": "生成を停止",
-    "contextUsage": "コンテキストの使用量"
+    "contextUsage": "コンテキストの使用量",
+    "searchCommandLabel": "ウェブ検索"
   },
   "reasoning": {
     "panel": "推論パネル",
@@ -48,6 +56,55 @@
     "panel": "ソースパネル",
     "title": "ソース",
     "closePanel": "ソースパネルを閉じる"
+  },
+  "research": {
+    "title": "詳細リサーチ",
+    "statusPlanning": "計画中",
+    "statusAwaitingApproval": "承認待ち",
+    "statusRevising": "計画を更新中",
+    "statusStarting": "開始中",
+    "statusRunning": "リサーチ中",
+    "statusReflecting": "結果を検討中",
+    "statusSynthesizing": "レポートを作成中",
+    "statusStopping": "停止中",
+    "statusStopped": "停止済み",
+    "statusCompleted": "完了",
+    "statusPartial": "一部完了",
+    "statusFailed": "失敗",
+    "statusExpired": "期限切れ",
+    "sendingApproval": "承認を送信中",
+    "savingPlan": "計画を保存中",
+    "sendingStop": "停止リクエストを送信中",
+    "updating": "更新中",
+    "preparingPlan": "リサーチ計画を準備中",
+    "searchingFor": "「{query}」を検索中",
+    "searchingSources": "情報源を検索中",
+    "searchBackendUnavailable": "検索機能は一時的に利用できません。結果が不完全になる可能性があります",
+    "readingSource": "情報源を確認中",
+    "runningAnalysis": "根拠を分析中",
+    "planChanged": "操作が適用される前に計画が変更されました。最新版を確認してください。",
+    "commandRejected": "リサーチ操作を適用できませんでした。",
+    "reviewUpdatedPlan": "更新された計画を確認",
+    "reviewPlan": "リサーチを開始する前に計画を確認",
+    "starting": "承認済みのリサーチ計画を開始中",
+    "planUpdated": "リサーチ計画を更新しました",
+    "collectingEvidence": "根拠を収集中",
+    "reflecting": "根拠を検討し、次の検索クエリを調整中",
+    "writingReport": "最終レポートを作成中",
+    "finalizingReport": "レポートを仕上げています",
+    "stopping": "リサーチを安全に停止中",
+    "stopped": "リサーチを停止しました",
+    "completedPartial": "制約付きでリサーチが完了しました",
+    "completed": "リサーチが完了しました",
+    "editPlan": "計画を編集",
+    "updatePlan": "計画を更新",
+    "cancel": "キャンセル",
+    "stop": "リサーチを停止",
+    "approve": "承認して開始",
+    "activityPending": "リサーチの進行状況がここに表示されます。",
+    "openActivity": "リサーチの進行状況を開く",
+    "planRequired": "リサーチ計画を空にすることはできません。",
+    "applyingChanges": "計画の変更を適用中"
   },
   "settings": {
     "modelSettings": "モデル設定",
@@ -77,6 +134,7 @@
     "tools": "ツール",
     "mcp": "MCP",
     "skills": "スキル",
+    "paramInfo": "パラメーターの詳細",
     "systemPrompt": "システムプロンプト",
     "systemPromptPlaceholder": "例: 「韻文だけで答えて」",
     "load": "読み込む",
@@ -118,6 +176,13 @@
     "extraHigh": "最高"
   },
   "messages": {
+    "branch": "ここから分岐",
+    "editMessage": "メッセージを編集",
+    "editTitle": "メッセージを編集",
+    "editHint": "これ以降の会話は再生成されます。",
+    "saveAndRegenerate": "保存して再生成",
+    "branchedFrom": "「{title}」から分岐",
+    "openBranch": "「{title}」を開く",
     "more": "もっと見る",
     "hide": "非表示",
     "copyCode": "コードをコピー",
@@ -168,6 +233,7 @@
   },
   "skills": {
     "title": "スキル",
+    "disabledShort": "無効",
     "refresh": "更新",
     "noSkills": "スキルが見つかりません",
     "loadError": "スキルを読み込めませんでした",
@@ -466,6 +532,7 @@
     "editConfig": "mcp.json を編集",
     "modalTitle": "mcp.json",
     "serverTools": "{name}（{count} ツール）",
+    "toolCountShort": "{count} 個のツール",
     "cancel": "キャンセル",
     "save": "保存",
     "noServers": "MCPサーバーがありません",

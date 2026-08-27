@@ -30,6 +30,7 @@ from Services import user_mcp_client
 from Settings import mcp_json
 from Settings import skills as skills_config
 from Settings import settings as runtime_settings
+from Settings.proxy_policy import apply_loopback_proxy_bypass
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ WORKER_FILE = Path(__file__).resolve().parent.parent / "Services" / "tool_worker
 SERVER_DISPATCHER_NAMES = ("call_tool", "run_tool", "execute_tool", "execute")
 SERVER_METADATA_NAMES = ("MCP_SERVER", "SERVER")
 TOOL_HANDLER_NAMES = ("TOOL_HANDLERS", "TOOL_EXECUTORS")
+TOOL_PREPARER_NAMES = ("TOOL_PREPARERS", "TOOL_ARGUMENT_PREPARERS")
 WORKER_RESPONSE_IDLE_TIMEOUT_SECONDS = 20.0
 WORKER_TIMEOUT_BUFFER_SECONDS = 45.0
 WORKER_DEFAULT_TIMEOUT_SECONDS = 180.0
@@ -64,6 +66,72 @@ TOOL_CALL_QUOTAS = {
     "read_page": 10,
 }
 HIGH_EFFORT_WEB_SEARCH_QUOTA = 3
+INSTANT_TOOL_CALL_QUOTAS = {
+    "web_search": 2,
+    "read_page": 2,
+}
+INSTANT_SEARCH_BATCH_LIMIT = 3
+
+INSTANT_WEB_SEARCH_DESCRIPTION = (
+    "Fast low-effort web lookup. Each call accepts one query or a batch of up to three. "
+    "The description is the only search text shown to the user."
+)
+INSTANT_WEB_SEARCH_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "query": {
+            "oneOf": [
+                {"type": "string", "minLength": 1, "maxLength": 220},
+                {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": INSTANT_SEARCH_BATCH_LIMIT,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 220},
+                },
+            ],
+            "description": "One web query or up to three independent queries.",
+        },
+        "description": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "description": "Short user-facing action label in the user's language.",
+        },
+        "operators": {
+            "type": "object",
+            "description": (
+                "Optional shared constraints: exact_phrases, or_terms, or_groups, exclude_terms, "
+                "site_include, site_exclude, file_types, title_terms, url_terms, after, before."
+            ),
+        },
+    },
+    "required": ["query", "description"],
+}
+
+
+def _instant_web_search_contract(required_batch_size: int | None = None) -> tuple[str, dict[str, Any]]:
+    """Return the instant search description/schema for this generation request."""
+
+    if required_batch_size != INSTANT_SEARCH_BATCH_LIMIT:
+        return INSTANT_WEB_SEARCH_DESCRIPTION, copy.deepcopy(INSTANT_WEB_SEARCH_SCHEMA)
+
+    schema = copy.deepcopy(INSTANT_WEB_SEARCH_SCHEMA)
+    schema["properties"]["query"] = {
+        "type": "array",
+        "minItems": INSTANT_SEARCH_BATCH_LIMIT,
+        "maxItems": INSTANT_SEARCH_BATCH_LIMIT,
+        "items": {"type": "string", "minLength": 1, "maxLength": 220},
+        "description": (
+            "Exactly three complementary web queries. They run concurrently in one forced "
+            "instant search call."
+        ),
+    }
+    description = (
+        "Forced instant web lookup. Every call must contain exactly three complementary query "
+        "strings. Effort is fixed to low. The description is the only search text shown to the user."
+    )
+    return description, schema
 TOOL_BLOCK_FINAL_PROMPT = (
     "Tool loop guard: repeated tool calls were blocked because they duplicate recent work, "
     "hit a quota, or are in cooldown. Do not call tools again. Use the evidence already "
@@ -254,6 +322,7 @@ def _venv_subprocess_env(python_path: Path) -> dict[str, str]:
     """Return subprocess environment aligned with the selected venv."""
 
     env = os.environ.copy()
+    apply_loopback_proxy_bypass(env)
     venv_path = python_path.parent.parent
     env["VIRTUAL_ENV"] = str(venv_path)
     env["PATH"] = str(python_path.parent) + os.pathsep + env.get("PATH", "")
@@ -672,9 +741,15 @@ def _search_effort(arguments: dict[str, Any] | None) -> str:
 
 
 # Return the per-response quota for one tool call.
-def _tool_quota_limit(quota_tool_id: str, arguments: dict[str, Any] | None = None) -> int:
+def _tool_quota_limit(
+    quota_tool_id: str,
+    arguments: dict[str, Any] | None = None,
+    tool_event: dict[str, Any] | None = None,
+) -> int:
     """Return the per-response quota for one tool call."""
 
+    if bool((tool_event or {}).get("instant_mode")):
+        return INSTANT_TOOL_CALL_QUOTAS.get(quota_tool_id, TOOL_CALL_QUOTAS[quota_tool_id])
     if quota_tool_id == "web_search" and _search_effort(arguments) == "high":
         return HIGH_EFFORT_WEB_SEARCH_QUOTA
     return TOOL_CALL_QUOTAS[quota_tool_id]
@@ -771,7 +846,7 @@ def consume_tool_quota(
     if not quota_tool_id:
         return None
 
-    limit = _tool_quota_limit(quota_tool_id, arguments)
+    limit = _tool_quota_limit(quota_tool_id, arguments, tool_event)
     current = int(counters.get(quota_tool_id, 0) or 0)
     if current >= limit:
         display_name = str((tool_event or {}).get("tool_name") or quota_tool_id).strip() or quota_tool_id
@@ -795,9 +870,19 @@ def is_blocking_tool_result(result: Any) -> bool:
 
     if is_tool_execution_cancelled(result):
         return True
-    text = str(result or "").strip()
+    if isinstance(result, dict):
+        text = str(
+            result.get("model_context")
+            or result.get("content")
+            or result.get("error")
+            or ""
+        ).strip()
+    else:
+        text = str(result or "").strip()
     return text.startswith(
         (
+            "INVALID_SEARCH_PLAN:",
+            "PARALLEL_SEARCH_BATCH_REJECTED:",
             "Duplicate tool call blocked:",
             "Duplicate web_search blocked:",
             "Duplicate read_page blocked:",
@@ -1614,6 +1699,23 @@ def _normalize_tool_handlers(module: ModuleType) -> dict[str, Any]:
 
     return normalized_handlers
 
+
+def _normalize_tool_preparers(module: ModuleType) -> dict[str, Any]:
+    """Collect optional argument-only preflight handlers from an in-process server."""
+
+    raw_preparers: Any = None
+    for attr_name in TOOL_PREPARER_NAMES:
+        raw_preparers = getattr(module, attr_name, None)
+        if raw_preparers is not None:
+            break
+    if not isinstance(raw_preparers, dict):
+        return {}
+    return {
+        _slugify(str(raw_key or "")): raw_value
+        for raw_key, raw_value in raw_preparers.items()
+        if callable(raw_value)
+    }
+
 # Validate the tool list.
 def _normalize_server_tools(raw_tools: Any, server_id: str) -> list[dict[str, Any]]:
     """Validate and normalize tool definitions exposed by one server."""
@@ -1723,8 +1825,12 @@ def _extract_server_definition(module: ModuleType, folder_name: str, server_file
     description = str(raw_server.get("description") or "").strip()
     supports_fn = getattr(module, "supports", None)
     tool_handlers = _normalize_tool_handlers(module)
+    tool_preparers = _normalize_tool_preparers(module)
     server_callable = _resolve_server_callable(module)
     tools = _normalize_server_tools(raw_tools, server_id)
+    for tool_definition in tools:
+        if tool_definition["id"] in tool_preparers:
+            tool_definition["prepares_arguments"] = True
 
     # A server is valid only if it exposes either dedicated handlers per tool
     # or one generic dispatcher that can receive tool invocations.
@@ -1743,6 +1849,7 @@ def _extract_server_definition(module: ModuleType, folder_name: str, server_file
         "supports": supports_fn if callable(supports_fn) else None,
         "server_callable": server_callable,
         "tool_handlers": tool_handlers,
+        "tool_preparers": tool_preparers,
         "server_file": server_file,
         "external": False,
         "source_tools_dir": str(server_file.parent.parent),
@@ -1935,6 +2042,8 @@ def build_ollama_tools(
     *,
     tool_source_map: dict[str, dict[str, Any]] | None = None,
     allowed_tool_aliases: list[str] | set[str] | tuple[str, ...] | None = None,
+    instant_mode: bool = False,
+    instant_search_batch_size: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     """Return Ollama-compatible tool payloads for one or more selected servers."""
 
@@ -1969,17 +2078,40 @@ def build_ollama_tools(
             # when multiple selected servers resolve to the same public alias.
             if alias in tool_lookup:
                 continue
+            public_tool_definition = tool_definition
+            if instant_mode and server_definition.get("id") == "web_search":
+                public_tool_definition = copy.deepcopy(tool_definition)
+                public_tool_definition["instant_mode"] = True
+                if public_tool_definition.get("id") == "web_search":
+                    required_batch_size = (
+                        INSTANT_SEARCH_BATCH_LIMIT
+                        if instant_search_batch_size == INSTANT_SEARCH_BATCH_LIMIT
+                        else None
+                    )
+                    description, parameters = _instant_web_search_contract(required_batch_size)
+                    public_tool_definition["description"] = description
+                    public_tool_definition["parameters"] = parameters
+                    if required_batch_size is not None:
+                        public_tool_definition["instant_search_batch_size"] = required_batch_size
+                elif public_tool_definition.get("id") == "read_page":
+                    parameters = copy.deepcopy(public_tool_definition.get("parameters") or {})
+                    url_schema = (parameters.get("properties") or {}).get("url")
+                    if isinstance(url_schema, dict):
+                        for option in url_schema.get("oneOf") or []:
+                            if isinstance(option, dict) and option.get("type") == "array":
+                                option["maxItems"] = INSTANT_SEARCH_BATCH_LIMIT
+                    public_tool_definition["parameters"] = parameters
             tools.append(
                 {
                     "type": "function",
                     "function": {
                         "name": alias,
-                        "description": tool_definition["description"] or tool_definition["name"],
-                        "parameters": tool_definition["parameters"],
+                        "description": public_tool_definition["description"] or public_tool_definition["name"],
+                        "parameters": public_tool_definition["parameters"],
                     },
                 }
             )
-            tool_lookup[alias] = {"server": server_definition, "tool": tool_definition}
+            tool_lookup[alias] = {"server": server_definition, "tool": public_tool_definition}
 
     if tools and _is_debug_logging_enabled():
         selected_servers = []
@@ -2299,19 +2431,80 @@ def prepare_tool_call(
         return prepared_call
     tool_definition = lookup_entry.get("tool") if isinstance(lookup_entry.get("tool"), dict) else {}
     server_definition = lookup_entry.get("server") if isinstance(lookup_entry.get("server"), dict) else {}
+    instant_mode = bool(tool_definition.get("instant_mode"))
+    required_search_batch_size = int(tool_definition.get("instant_search_batch_size", 0) or 0)
+    if instant_mode and tool_definition.get("id") == "web_search" and required_search_batch_size:
+        raw_queries = raw_arguments.get("query")
+        query_count = len(raw_queries) if isinstance(raw_queries, list) else 0
+        if query_count != required_search_batch_size:
+            description = str(raw_arguments.get("description") or "").strip()
+            message = (
+                "INVALID_INSTANT_SEARCH_BATCH: this slash-command search requires exactly "
+                f"{required_search_batch_size} query strings in one web_search call."
+            )
+            prepared_call["arguments"] = {}
+            prepared_call["tool_ui"] = {
+                "kind": "web_search",
+                "status": "rejected",
+                "instant_mode": True,
+                "description": description,
+                "query_count": query_count,
+                "error": {"code": "INVALID_INSTANT_SEARCH_BATCH"},
+            }
+            prepared_call["preflight_error_result"] = {
+                "sources": [],
+                "model_context": message,
+                "ui": dict(prepared_call["tool_ui"]),
+            }
+            return prepared_call
+    if instant_mode and tool_definition.get("id") == "read_page":
+        raw_urls = raw_arguments.get("url")
+        urls = raw_urls if isinstance(raw_urls, list) else [raw_urls]
+        urls = [str(url or "").strip() for url in urls if str(url or "").strip()]
+        prepared_call["tool_ui"] = {
+            "kind": "read_page",
+            "status": "pending",
+            "instant_mode": True,
+        }
+        if not urls or len(urls) > INSTANT_SEARCH_BATCH_LIMIT:
+            message = (
+                "INVALID_READ_PAGE_BATCH: instant mode requires one to three exact URLs "
+                "in a single read_page call."
+            )
+            prepared_call["arguments"] = {}
+            prepared_call["preflight_error_result"] = {
+                "sources": [],
+                "model_context": message,
+                "ui": {
+                    "kind": "read_page",
+                    "status": "rejected",
+                    "instant_mode": True,
+                },
+            }
+            return prepared_call
+        prepared_call["arguments"] = {"url": urls[0] if len(urls) == 1 else urls}
+        return prepared_call
     if not tool_definition.get("prepares_arguments"):
         prepared_call["arguments"] = raw_arguments
         return prepared_call
 
     try:
-        if not server_definition.get("external"):
-            raise RuntimeError("argument preflight is currently supported only for isolated tools")
-        result = _run_worker(
-            Path(server_definition["server_file"]),
-            "prepare",
-            {"tool_id": tool_definition.get("id"), "arguments": raw_arguments},
-            persistent=not bool(server_definition.get("fresh_process_per_call")),
-        )
+        worker_arguments = dict(raw_arguments)
+        if instant_mode and tool_definition.get("id") == "web_search":
+            worker_arguments["_instant_mode"] = True
+        if server_definition.get("external"):
+            result = _run_worker(
+                Path(server_definition["server_file"]),
+                "prepare",
+                {"tool_id": tool_definition.get("id"), "arguments": worker_arguments},
+                persistent=not bool(server_definition.get("fresh_process_per_call")),
+            )
+        else:
+            preparers = server_definition.get("tool_preparers")
+            preparer = preparers.get(tool_definition.get("id")) if isinstance(preparers, dict) else None
+            if not callable(preparer):
+                raise RuntimeError("tool argument preparer is not registered")
+            result = _execute_callable(preparer, worker_arguments)
         if not isinstance(result, dict):
             raise RuntimeError("tool preparer returned a non-object response")
     except Exception as exc:  # noqa: BLE001
@@ -2331,9 +2524,13 @@ def prepare_tool_call(
     parallel_batch_size = int(prepared_call.get("parallel_batch_size", 0) or 0)
     if isinstance(result.get("tool_ui"), dict):
         prepared_call["tool_ui"] = copy.deepcopy(result["tool_ui"])
+        if instant_mode:
+            prepared_call["tool_ui"]["instant_mode"] = True
         if parallel_batch_size > 1:
             prepared_call["tool_ui"]["collapsed_parallel_calls"] = parallel_batch_size
     if not bool(result.get("ok", True)):
+        if isinstance(prepared_call.get("tool_ui"), dict):
+            prepared_call["tool_ui"]["rejected_arguments"] = copy.deepcopy(raw_arguments)
         error_result = copy.deepcopy(result.get("error_result") or "Tool preparation failed.")
         if parallel_batch_size > 1 and isinstance(error_result, dict):
             existing_context = str(error_result.get("model_context") or "").strip()
@@ -2344,6 +2541,8 @@ def prepare_tool_call(
             error_result["model_context"] = prefix + existing_context
             if isinstance(error_result.get("ui"), dict):
                 error_result["ui"]["collapsed_parallel_calls"] = parallel_batch_size
+        if instant_mode and isinstance(error_result, dict) and isinstance(error_result.get("ui"), dict):
+            error_result["ui"]["instant_mode"] = True
         prepared_call["preflight_error_result"] = error_result
     return prepared_call
 
@@ -2435,6 +2634,28 @@ def _merge_parallel_web_search_calls(tool_calls: list[dict[str, Any]]) -> dict[s
 
     mode = next(iter(modes))
     merged_arguments = copy.deepcopy(raw_arguments[0])
+    instant_shape = mode == "legacy" and all(
+        "description" in arguments and "query" in arguments
+        for arguments in raw_arguments
+    )
+    if instant_shape:
+        operator_values = [
+            _canonical_tool_arguments(arguments.get("operators") or {})
+            for arguments in raw_arguments
+        ]
+        if any(value != operator_values[0] for value in operator_values[1:]):
+            first["raw_arguments"] = raw_arguments
+            return _rejected_parallel_search_call(
+                first,
+                message="parallel instant searches must use the same operators",
+                call_count=len(tool_calls),
+            )
+        descriptions: list[str] = []
+        for arguments in raw_arguments:
+            description = str(arguments.get("description") or "").strip()
+            if description and description not in descriptions:
+                descriptions.append(description)
+        merged_arguments["description"] = " · ".join(descriptions)[:80]
     if mode == "advanced":
         for vertical in _ADVANCED_SEARCH_VERTICAL_KEYS:
             merged_values: list[Any] = []
@@ -2501,10 +2722,54 @@ def _coalesce_parallel_web_search_calls(
     return output
 
 
+def _tool_definition_is_instant(
+    tool_lookup: dict[str, dict[str, Any]], tool_call: dict[str, Any]
+) -> bool:
+    lookup_entry = tool_lookup.get(str((tool_call or {}).get("name") or "")) or {}
+    tool_definition = lookup_entry.get("tool") if isinstance(lookup_entry, dict) else {}
+    return bool(isinstance(tool_definition, dict) and tool_definition.get("instant_mode"))
+
+
+def _coalesce_parallel_instant_read_page_calls(
+    tool_lookup: dict[str, dict[str, Any]], tool_calls: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for tool_call in tool_calls:
+        if (
+            _tool_definition_id(tool_lookup, tool_call) == "read_page"
+            and _tool_definition_is_instant(tool_lookup, tool_call)
+        ):
+            groups.setdefault(str(tool_call.get("name") or ""), []).append(tool_call)
+
+    emitted_aliases: set[str] = set()
+    output: list[dict[str, Any]] = []
+    for tool_call in tool_calls:
+        alias = str(tool_call.get("name") or "")
+        group = groups.get(alias, [])
+        if len(group) < 2:
+            output.append(tool_call)
+            continue
+        if alias in emitted_aliases:
+            continue
+        emitted_aliases.add(alias)
+        merged = dict(group[0])
+        merged["absorbed_tool_calls"] = [dict(call) for call in group[1:]]
+        merged["parallel_batch_size"] = len(group)
+        urls: list[Any] = []
+        for call in group:
+            arguments = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
+            value = arguments.get("url")
+            urls.extend(value if isinstance(value, list) else [value])
+        merged["arguments"] = {"url": urls}
+        output.append(merged)
+    return output
+
+
 def prepare_tool_calls(
     tool_lookup: dict[str, dict[str, Any]], tool_calls: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     coalesced = _coalesce_parallel_web_search_calls(tool_lookup, list(tool_calls or []))
+    coalesced = _coalesce_parallel_instant_read_page_calls(tool_lookup, coalesced)
     return [
         tool_call
         if tool_call.get("preflight_error_result") is not None
@@ -2530,8 +2795,16 @@ def build_tool_event(
         "tool_name": tool_definition.get("name") or alias,
         "arguments": tool_call.get("arguments") or {},
     }
+    if tool_definition.get("instant_mode"):
+        event["instant_mode"] = True
     if isinstance(tool_call.get("tool_ui"), dict):
         event["tool_ui"] = tool_call["tool_ui"]
+    elif tool_definition.get("instant_mode"):
+        event["tool_ui"] = {
+            "kind": str(tool_definition.get("id") or "tool"),
+            "status": "pending",
+            "instant_mode": True,
+        }
     return event
 
 
@@ -2759,6 +3032,12 @@ def call_ollama_tool(
                 )
             else:
                 return f"Tool execution failed: no handler registered for {tool_definition['id']}"
+
+        if tool_definition.get("instant_mode") and isinstance(result, dict):
+            result = copy.deepcopy(result)
+            result_ui = result.get("ui") if isinstance(result.get("ui"), dict) else {}
+            result_ui["instant_mode"] = True
+            result["ui"] = result_ui
 
         # Image payloads stay structured so multimodal adapters can feed them
         # back to the model without flattening them into plain text.

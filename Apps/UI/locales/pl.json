@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "To narzędzie wymaga Dockera.",
-    "refreshDocker": "Sprawdź Docker ponownie"
+    "refreshDocker": "Sprawdź Docker ponownie",
+    "unsupportedByModel": "Model nie obsługuje narzędzi",
+    "dockerRequiredShort": "Wymagany Docker"
+  },
+  "common": {
+    "download": "Pobierz",
+    "enabled": "Włączone"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -14,6 +20,7 @@
     "noPreviousChats": "Brak wcześniejszych czatów",
     "chatOptions": "Opcje czatu",
     "rename": "Zmień nazwę",
+    "download": "Pobierz czat",
     "delete": "Usuń",
     "ago": "{time} temu"
   },
@@ -37,7 +44,8 @@
     "sendMessage": "Wyślij wiadomość",
     "queueMessage": "Dodaj do kolejki",
     "stopGeneration": "Zatrzymaj generowanie",
-    "contextUsage": "Wykorzystanie kontekstu"
+    "contextUsage": "Wykorzystanie kontekstu",
+    "searchCommandLabel": "Wyszukiwanie w internecie"
   },
   "reasoning": {
     "panel": "Panel rozumowania",
@@ -48,6 +56,55 @@
     "panel": "Panel źródeł",
     "title": "Źródła",
     "closePanel": "Zamknij panel źródeł"
+  },
+  "research": {
+    "title": "Dogłębne badanie",
+    "statusPlanning": "Planowanie",
+    "statusAwaitingApproval": "Oczekiwanie na zatwierdzenie",
+    "statusRevising": "Aktualizowanie planu",
+    "statusStarting": "Uruchamianie",
+    "statusRunning": "Prowadzenie badania",
+    "statusReflecting": "Analiza wyników",
+    "statusSynthesizing": "Tworzenie raportu",
+    "statusStopping": "Zatrzymywanie",
+    "statusStopped": "Zatrzymano",
+    "statusCompleted": "Ukończono",
+    "statusPartial": "Częściowo ukończono",
+    "statusFailed": "Niepowodzenie",
+    "statusExpired": "Wygasło",
+    "sendingApproval": "Wysyłanie zatwierdzenia",
+    "savingPlan": "Zapisywanie planu",
+    "sendingStop": "Wysyłanie żądania zatrzymania",
+    "updating": "Aktualizowanie",
+    "preparingPlan": "Przygotowywanie planu badania",
+    "searchingFor": "Wyszukiwanie „{query}”",
+    "searchingSources": "Wyszukiwanie źródeł",
+    "searchBackendUnavailable": "Wyszukiwanie jest chwilowo niedostępne; wynik może być niepełny",
+    "readingSource": "Odczytywanie źródła",
+    "runningAnalysis": "Analizowanie dowodów",
+    "planChanged": "Plan zmienił się przed zastosowaniem tej operacji. Sprawdź najnowszą wersję.",
+    "commandRejected": "Nie udało się zastosować operacji badania.",
+    "reviewUpdatedPlan": "Sprawdź zaktualizowany plan",
+    "reviewPlan": "Sprawdź plan przed rozpoczęciem badania",
+    "starting": "Uruchamianie zatwierdzonego planu badania",
+    "planUpdated": "Plan badania zaktualizowany",
+    "collectingEvidence": "Gromadzenie dowodów",
+    "reflecting": "Przeglądanie dowodów i dopracowywanie kolejnych zapytań",
+    "writingReport": "Tworzenie raportu końcowego",
+    "finalizingReport": "Finalizowanie raportu",
+    "stopping": "Bezpieczne zatrzymywanie badania",
+    "stopped": "Badanie zatrzymane",
+    "completedPartial": "Badanie ukończone z ograniczeniami",
+    "completed": "Badanie ukończone",
+    "editPlan": "Edytuj plan",
+    "updatePlan": "Aktualizuj plan",
+    "cancel": "Anuluj",
+    "stop": "Zatrzymaj badanie",
+    "approve": "Zatwierdź i uruchom",
+    "activityPending": "Aktywność badania pojawi się tutaj.",
+    "openActivity": "Otwórz aktywność badania",
+    "planRequired": "Plan badania nie może być pusty.",
+    "applyingChanges": "Stosowanie zmian w planie"
   },
   "settings": {
     "modelSettings": "Ustawienia modelu",
@@ -77,6 +134,7 @@
     "tools": "Narzędzia",
     "mcp": "MCP",
     "skills": "Umiejętności",
+    "paramInfo": "Szczegóły parametru",
     "systemPrompt": "Prompt systemowy",
     "systemPromptPlaceholder": "np. „Odpowiadaj tylko rymami”",
     "load": "Wczytaj",
@@ -118,6 +176,13 @@
     "extraHigh": "Bardzo wysoki"
   },
   "messages": {
+    "branch": "Utwórz odgałęzienie od tego miejsca",
+    "editMessage": "Edytuj wiadomość",
+    "editTitle": "Edytuj wiadomość",
+    "editHint": "Dalsza część rozmowy zostanie wygenerowana ponownie.",
+    "saveAndRegenerate": "Zapisz i wygeneruj ponownie",
+    "branchedFrom": "Odgałęzienie utworzone z „{title}”",
+    "openBranch": "Otwórz „{title}”",
     "more": "Więcej",
     "hide": "Ukryj",
     "copyCode": "Kopiuj kod",
@@ -168,6 +233,7 @@
   },
   "skills": {
     "title": "Umiejętności",
+    "disabledShort": "Wyłączona",
     "refresh": "Odśwież",
     "noSkills": "Nie znaleziono umiejętności",
     "loadError": "Nie udało się wczytać umiejętności",
@@ -466,6 +532,7 @@
     "editConfig": "Edytuj mcp.json",
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} narzędzi)",
+    "toolCountShort": "{count} narzędzi",
     "cancel": "Anuluj",
     "save": "Zapisz",
     "noServers": "Brak serwerów MCP",

@@ -1,7 +1,13 @@
 {
   "tools": {
     "requiresDocker": "تتطلب هذه الأداة Docker.",
-    "refreshDocker": "إعادة فحص Docker"
+    "refreshDocker": "إعادة فحص Docker",
+    "unsupportedByModel": "النموذج لا يدعم الأدوات",
+    "dockerRequiredShort": "Docker مطلوب"
+  },
+  "common": {
+    "download": "تنزيل",
+    "enabled": "مفعّل"
   },
   "meta": {
     "appTitle": "ASLM Chat",
@@ -14,6 +20,7 @@
     "noPreviousChats": "لا توجد محادثات سابقة",
     "chatOptions": "خيارات المحادثة",
     "rename": "إعادة التسمية",
+    "download": "تنزيل المحادثة",
     "delete": "حذف",
     "ago": "منذ {time}"
   },
@@ -37,7 +44,8 @@
     "sendMessage": "إرسال الرسالة",
     "queueMessage": "إدراج الرسالة في الطابور",
     "stopGeneration": "إيقاف التوليد",
-    "contextUsage": "استخدام السياق"
+    "contextUsage": "استخدام السياق",
+    "searchCommandLabel": "بحث الويب"
   },
   "reasoning": {
     "panel": "لوحة الاستدلال",
@@ -48,6 +56,55 @@
     "panel": "لوحة المصادر",
     "title": "المصادر",
     "closePanel": "إغلاق لوحة المصادر"
+  },
+  "research": {
+    "title": "بحث متعمّق",
+    "statusPlanning": "جارٍ التخطيط",
+    "statusAwaitingApproval": "بانتظار الموافقة",
+    "statusRevising": "جارٍ تحديث الخطة",
+    "statusStarting": "جارٍ البدء",
+    "statusRunning": "جارٍ إجراء البحث",
+    "statusReflecting": "جارٍ تقييم النتائج",
+    "statusSynthesizing": "جارٍ إعداد التقرير",
+    "statusStopping": "جارٍ الإيقاف",
+    "statusStopped": "متوقف",
+    "statusCompleted": "مكتمل",
+    "statusPartial": "مكتمل جزئيًا",
+    "statusFailed": "فشل",
+    "statusExpired": "انتهت الصلاحية",
+    "sendingApproval": "جارٍ إرسال الموافقة",
+    "savingPlan": "جارٍ حفظ الخطة",
+    "sendingStop": "جارٍ إرسال طلب الإيقاف",
+    "updating": "جارٍ التحديث",
+    "preparingPlan": "جارٍ إعداد خطة البحث",
+    "searchingFor": "جارٍ البحث عن «{query}»",
+    "searchingSources": "جارٍ البحث في المصادر",
+    "searchBackendUnavailable": "البحث غير متاح مؤقتًا؛ قد تكون النتيجة غير مكتملة",
+    "readingSource": "جارٍ قراءة مصدر",
+    "runningAnalysis": "جارٍ تحليل الأدلة",
+    "planChanged": "تغيّرت الخطة قبل تطبيق هذا الإجراء. راجع أحدث إصدار.",
+    "commandRejected": "تعذّر تطبيق إجراء البحث.",
+    "reviewUpdatedPlan": "راجع الخطة المحدّثة",
+    "reviewPlan": "راجع الخطة قبل بدء البحث",
+    "starting": "جارٍ بدء خطة البحث المعتمدة",
+    "planUpdated": "تم تحديث خطة البحث",
+    "collectingEvidence": "جارٍ جمع الأدلة",
+    "reflecting": "جارٍ مراجعة الأدلة وتحسين الاستعلامات التالية",
+    "writingReport": "جارٍ إعداد التقرير النهائي",
+    "finalizingReport": "جارٍ وضع اللمسات النهائية على التقرير",
+    "stopping": "جارٍ إيقاف البحث بأمان",
+    "stopped": "تم إيقاف البحث",
+    "completedPartial": "اكتمل البحث مع بعض القيود",
+    "completed": "اكتمل البحث",
+    "editPlan": "تعديل الخطة",
+    "updatePlan": "تحديث الخطة",
+    "cancel": "إلغاء",
+    "stop": "إيقاف البحث",
+    "approve": "الموافقة والبدء",
+    "activityPending": "سيظهر نشاط البحث هنا.",
+    "openActivity": "فتح نشاط البحث",
+    "planRequired": "لا يمكن أن تكون خطة البحث فارغة.",
+    "applyingChanges": "جارٍ تطبيق تغييرات الخطة"
   },
   "settings": {
     "modelSettings": "إعدادات النموذج",
@@ -77,6 +134,7 @@
     "tools": "الأدوات",
     "mcp": "MCP",
     "skills": "المهارات",
+    "paramInfo": "تفاصيل المعلمة",
     "systemPrompt": "موجّه النظام",
     "systemPromptPlaceholder": "مثال: \"أجب فقط بالقافية\"",
     "load": "تحميل",
@@ -118,6 +176,13 @@
     "extraHigh": "مرتفع جدًا"
   },
   "messages": {
+    "branch": "إنشاء فرع من هنا",
+    "editMessage": "تعديل الرسالة",
+    "editTitle": "تعديل الرسالة",
+    "editHint": "سيُعاد إنشاء الجزء اللاحق من المحادثة.",
+    "saveAndRegenerate": "الحفظ وإعادة الإنشاء",
+    "branchedFrom": "تم إنشاء فرع من «{title}»",
+    "openBranch": "فتح «{title}»",
     "more": "المزيد",
     "hide": "إخفاء",
     "copyCode": "نسخ الكود",
@@ -168,6 +233,7 @@
   },
   "skills": {
     "title": "المهارات",
+    "disabledShort": "معطّلة",
     "refresh": "تحديث",
     "noSkills": "لم تُعثر على مهارات",
     "loadError": "تعذّر تحميل المهارات",
@@ -466,6 +532,7 @@
     "editConfig": "تحرير mcp.json",
     "modalTitle": "mcp.json",
     "serverTools": "{name} ({count} أدوات)",
+    "toolCountShort": "{count} أدوات",
     "cancel": "إلغاء",
     "save": "حفظ",
     "noServers": "لا توجد خوادم MCP",

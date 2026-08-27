@@ -1,6 +1,7 @@
 # Copyright NEXTGGTECH. Elastic License 2.0.
 
 import logging
+import os
 import threading
 
 from django.apps import AppConfig
@@ -15,6 +16,14 @@ class UiConfig(AppConfig):
 
     def ready(self) -> None:
         """Prepare enabled engine runtimes without blocking Django startup."""
+
+        # ASLM owns long-running engine processes through dedicated manifest
+        # run commands. Starting the standalone reconciliation path here would
+        # only import every enabled adapter in parallel with the first UI page,
+        # competing for the Python import lock and delaying WebView startup.
+        if os.environ.get("ASLM_MODULE_ID") or os.environ.get("ASLM_MODULE_DIR"):
+            logger.debug("ASLM owns engine runtime startup; skipping Django runtime sync.")
+            return
 
         def _sync_enabled_engine_runtimes() -> None:
             try:

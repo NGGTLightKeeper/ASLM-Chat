@@ -8,6 +8,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from Settings.proxy_policy import urlopen_with_loopback_bypass
+
 
 # Resolve the ASLM host module interop base URL from the environment.
 def _base_url() -> str:
@@ -23,7 +25,7 @@ def _base_url() -> str:
 # Fetch installed and running modules from GET /v1/registry.
 def get_registry() -> dict[str, Any]:
     req = urllib.request.Request(_base_url() + "v1/registry", method="GET")
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urlopen_with_loopback_bypass(req, timeout=30) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -40,7 +42,7 @@ def request_start(*, caller_module_id: str, module_ids: list[str]) -> dict[str, 
         headers={"Content-Type": "application/json; charset=utf-8"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urlopen_with_loopback_bypass(req, timeout=120) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as ex:
         payload = ex.read().decode("utf-8", errors="replace")

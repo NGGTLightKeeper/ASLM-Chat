@@ -85,11 +85,13 @@ TOOLS = [
         "description": READ_PAGE_TOOL_DESCRIPTION,
         "parameters": {
             "type": "object",
+            "additionalProperties": False,
             "properties": {
                 "url": {
                     "description": (
-                        "An exact non-empty URL, normally copied from web_search results, or "
-                        "a list of exact URLs. Never put a search topic or empty string here."
+                        "One exact non-empty URL copied from web_search results, or an array "
+                        "of exact URLs for a batch read. Never use an object, search topic, "
+                        "or empty string."
                     ),
                     "oneOf": [
                         {"type": "string", "minLength": 8, "format": "uri"},
@@ -121,15 +123,16 @@ def supports(engine: str | None = None, model_name: str | None = None) -> bool:
 # The model routes query strings through the vertical fields and chooses effort. Recency
 # is parsed from the query, while region and safe-search remain internal routing details.
 async def _call_web_search(
-    args: dict[str, Any], *, preflight_warnings: list[dict[str, Any]] | None = None
+    args: dict[str, Any], *, preflight_warnings: list[dict[str, Any]] | None = None,
+    instant_mode: bool = False,
 ) -> dict[str, Any]:
-    prepared = prepare_search_arguments(args)
+    prepared = prepare_search_arguments(args, instant_mode=instant_mode)
     if not prepared.get("ok"):
         return dict(prepared.get("error_result") or {})
 
     canonical_args = dict(prepared.get("arguments") or {})
     search_request = dict(prepared.get("search_request") or {})
-    if search_request.get("schema_mode") == "advanced":
+    if search_request.get("schema_mode") in {"advanced", "instant"}:
         queries = [
             str(item.get("compiled_query") or "")
             for item in search_request.get("queries", [])
@@ -171,7 +174,7 @@ async def _call_web_search(
     )
     started = time.perf_counter()
     try:
-        if search_request.get("schema_mode") == "advanced":
+        if search_request.get("schema_mode") in {"advanced", "instant"}:
             result = await run_web_search_plan(search_request)
         elif len(queries) > 1:
             result = await run_web_search_batch(
@@ -364,17 +367,22 @@ async def call_tool(
     args = dict(arguments or {})
     _evict_caches_once()
     if tool_id == "web_search":
+        instant_mode = bool((context or {}).get("instant_mode"))
         inherited_warnings: list[dict[str, Any]] = []
         raw_arguments = (context or {}).get("raw_tool_arguments")
         if isinstance(raw_arguments, dict):
-            raw_preflight = prepare_search_arguments(raw_arguments)
+            raw_preflight = prepare_search_arguments(raw_arguments, instant_mode=instant_mode)
             if raw_preflight.get("ok"):
                 inherited_warnings = [
                     dict(warning)
                     for warning in raw_preflight.get("warnings", [])
                     if isinstance(warning, dict)
                 ]
-        return await _call_web_search(args, preflight_warnings=inherited_warnings)
+        return await _call_web_search(
+            args,
+            preflight_warnings=inherited_warnings,
+            instant_mode=instant_mode,
+        )
     if tool_id == "read_page":
         return await _call_read_page(args)
     raise ValueError(f"Unknown tool: {tool_id}")
