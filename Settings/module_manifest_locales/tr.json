@@ -40,6 +40,10 @@
             "name": "Konsol günlük düzeyi",
             "description": "ASLM-Chat'in ASLM konsoluna yazdığı çalışma zamanı ayrıntısı miktarı"
         },
+        "generate-chat-titles": {
+            "name": "Sohbet başlıkları oluştur",
+            "description": "Yeni bir sohbette ilk mesaj gönderildiğinde seçili modelle bir başlık oluşturur."
+        },
         "llm-engine": {
             "name": "Etkin LLM motoru",
             "description": "Sohbet arayüzünde üretim için kullanılan motor"

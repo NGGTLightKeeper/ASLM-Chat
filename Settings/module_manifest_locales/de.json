@@ -40,6 +40,10 @@
             "name": "Konsolen-Protokollstufe",
             "description": "Wie viele Laufzeitdetails ASLM-Chat in die ASLM-Konsole schreibt."
         },
+        "generate-chat-titles": {
+            "name": "Chattitel generieren",
+            "description": "Erstellt mit dem ausgewählten Modell einen Titel, wenn die erste Nachricht in einem neuen Chat gesendet wird."
+        },
         "llm-engine": {
             "name": "Aktive LLM-Engine",
             "description": "Engine für die Textgenerierung in der Chat-Oberfläche"

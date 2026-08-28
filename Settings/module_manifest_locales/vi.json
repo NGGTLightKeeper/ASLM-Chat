@@ -40,6 +40,10 @@
             "name": "Mức nhật ký console",
             "description": "Mức chi tiết runtime mà ASLM-Chat in ra console ASLM"
         },
+        "generate-chat-titles": {
+            "name": "Tạo tiêu đề cuộc trò chuyện",
+            "description": "Tạo tiêu đề bằng mô hình đã chọn khi tin nhắn đầu tiên được gửi trong cuộc trò chuyện mới."
+        },
         "llm-engine": {
             "name": "Công cụ LLM đang hoạt động",
             "description": "Công cụ dùng để tạo nội dung trong giao diện chat"

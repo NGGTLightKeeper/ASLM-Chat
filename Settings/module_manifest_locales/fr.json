@@ -40,6 +40,10 @@
             "name": "Niveau de journalisation console",
             "description": "Volume de détails d'exécution qu'ASLM-Chat affiche dans la console ASLM."
         },
+        "generate-chat-titles": {
+            "name": "Générer les titres des discussions",
+            "description": "Génère un titre avec le modèle sélectionné lors de l'envoi du premier message d'une nouvelle discussion."
+        },
         "llm-engine": {
             "name": "Moteur LLM actif",
             "description": "Moteur utilisé pour la génération dans l'interface de chat"

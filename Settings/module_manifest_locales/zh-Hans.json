@@ -40,6 +40,10 @@
             "name": "控制台日志级别",
             "description": "ASLM-Chat 输出到 ASLM 控制台的运行时详细信息量"
         },
+        "generate-chat-titles": {
+            "name": "生成聊天标题",
+            "description": "在新聊天中发送第一条消息时，使用所选模型生成标题。"
+        },
         "llm-engine": {
             "name": "活动 LLM 引擎",
             "description": "在聊天界面中用于生成的引擎"

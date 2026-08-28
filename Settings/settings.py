@@ -54,6 +54,7 @@ DEFAULTS: dict[str, Any] = {
     "api-port": 20001,
     "debug": True,
     "console_log_level": "debug",
+    "generate-chat-titles": True,
     "secret_key": "",
     "allowed_hosts": ["127.0.0.1", "localhost"],
     "llm-engine": "ollama-service",

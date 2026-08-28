@@ -40,6 +40,10 @@
             "name": "コンソールログレベル",
             "description": "ASLM-Chat が ASLM コンソールに出力する実行時の詳細レベル"
         },
+        "generate-chat-titles": {
+            "name": "チャットタイトルを生成",
+            "description": "新しいチャットで最初のメッセージを送信したときに、選択したモデルでタイトルを生成します。"
+        },
         "llm-engine": {
             "name": "アクティブな LLM エンジン",
             "description": "チャット UI での生成に使用するエンジン"

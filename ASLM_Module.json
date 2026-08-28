@@ -121,6 +121,16 @@
             "setExec": "main.py set_setting --key console_log_level --value {value}"
         },
         {
+            "key": "generate-chat-titles",
+            "name": "Generate Chat Titles",
+            "description": "Generate a title with the selected model when the first message is sent in a new chat.",
+            "type": "boolean",
+            "default": true,
+            "engine": "python-runtime",
+            "getExec": "main.py get_setting --key generate-chat-titles",
+            "setExec": "main.py set_setting --key generate-chat-titles --value {value}"
+        },
+        {
             "key": "llm-engine",
             "name": "Active LLM Engine",
             "description": "Engine used for chat generation in the UI",

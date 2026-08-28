@@ -40,6 +40,10 @@
             "name": "Consolelogniveau",
             "description": "Hoeveel runtime-details ASLM-Chat naar de ASLM-console schrijft."
         },
+        "generate-chat-titles": {
+            "name": "Chattitels genereren",
+            "description": "Genereert een titel met het geselecteerde model wanneer het eerste bericht in een nieuwe chat wordt verzonden."
+        },
         "llm-engine": {
             "name": "Actieve LLM-engine",
             "description": "Engine die wordt gebruikt voor generatie in de chatinterface"

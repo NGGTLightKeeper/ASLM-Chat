@@ -40,6 +40,10 @@
             "name": "콘솔 로그 수준",
             "description": "ASLM-Chat이 ASLM 콘솔에 출력하는 런타임 세부 정보의 양"
         },
+        "generate-chat-titles": {
+            "name": "채팅 제목 생성",
+            "description": "새 채팅에서 첫 메시지를 보낼 때 선택한 모델로 제목을 생성합니다."
+        },
         "llm-engine": {
             "name": "활성 LLM 엔진",
             "description": "채팅 UI에서 생성에 사용되는 엔진"

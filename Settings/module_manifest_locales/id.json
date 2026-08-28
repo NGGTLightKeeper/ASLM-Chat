@@ -40,6 +40,10 @@
             "name": "Tingkat log konsol",
             "description": "Seberapa banyak detail runtime yang ASLM-Chat cetak ke konsol ASLM"
         },
+        "generate-chat-titles": {
+            "name": "Buat Judul Chat",
+            "description": "Buat judul dengan model yang dipilih saat pesan pertama dikirim dalam chat baru."
+        },
         "llm-engine": {
             "name": "Mesin LLM aktif",
             "description": "Mesin yang digunakan untuk generasi di antarmuka chat"

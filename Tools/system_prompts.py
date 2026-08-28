@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 
+CHAT_TITLE_INSTRUCTIONS = """Generate a concise title for this chat in the language of the user's message.
+Return only the title. Do not use quotation marks, markdown, labels, explanations, or ending punctuation."""
+
+
 BASE_INSTRUCTIONS = """You are a helpful coding and research assistant.
 
 When a tool is needed, call it directly without any preceding visible text.

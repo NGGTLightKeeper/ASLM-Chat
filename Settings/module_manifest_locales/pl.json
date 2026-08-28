@@ -40,6 +40,10 @@
             "name": "Poziom logowania konsoli",
             "description": "Ile szczegółów działania ASLM-Chat wypisuje w konsoli ASLM."
         },
+        "generate-chat-titles": {
+            "name": "Generuj tytuły czatów",
+            "description": "Generuje tytuł za pomocą wybranego modelu po wysłaniu pierwszej wiadomości w nowym czacie."
+        },
         "llm-engine": {
             "name": "Aktywny silnik LLM",
             "description": "Silnik używany do generowania w interfejsie czatu"

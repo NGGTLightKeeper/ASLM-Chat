@@ -40,6 +40,10 @@
             "name": "Nivel de registro de consola",
             "description": "Cantidad de detalle de ejecución que ASLM-Chat imprime en la consola de ASLM."
         },
+        "generate-chat-titles": {
+            "name": "Generar títulos de chat",
+            "description": "Genera un título con el modelo seleccionado al enviar el primer mensaje de un chat nuevo."
+        },
         "llm-engine": {
             "name": "Motor LLM activo",
             "description": "Motor utilizado para la generación en la interfaz de chat"

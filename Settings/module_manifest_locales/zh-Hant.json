@@ -40,6 +40,10 @@
             "name": "主控台記錄層級",
             "description": "ASLM-Chat 輸出至 ASLM 主控台的執行階段詳細資訊量"
         },
+        "generate-chat-titles": {
+            "name": "產生聊天標題",
+            "description": "在新聊天中傳送第一則訊息時，使用所選模型產生標題。"
+        },
         "llm-engine": {
             "name": "使用中 LLM 引擎",
             "description": "在聊天介面中用於生成的引擎"

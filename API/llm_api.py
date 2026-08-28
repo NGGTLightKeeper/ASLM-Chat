@@ -5,11 +5,13 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
+import re
 from types import ModuleType
 from typing import Any
 
 from API import mcp as tool_registry
 from Settings import settings
+from Tools.system_prompts import CHAT_TITLE_INSTRUCTIONS
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,18 @@ ENGINE_MODULES = {
     "google": "API.google_genai",
     "gemini": "API.google_genai",
 }
+
+CHAT_TITLE_SOURCE_LIMIT = 2048
+CHAT_TITLE_OUTPUT_LIMIT = 32
+CHAT_TITLE_REASONING_OUTPUT_LIMIT = 1024
+CHAT_TITLE_CONTEXT_LIMIT = 4096
+CHAT_TITLE_LENGTH_LIMIT = 255
+REASONING_LEVEL_ORDER = ("minimal", "low", "medium", "high", "xhigh")
+REASONING_TAG_PAIRS = (
+    ("<think>", "</think>"),
+    ("<thinking>", "</thinking>"),
+    ("<reasoning>", "</reasoning>"),
+)
 
 
 # Resolve the engine adapter module.
@@ -77,6 +91,146 @@ def generate(engine: str | None, model_name: str, messages: list[dict[str, Any]]
         return module.generate(model_name, messages, **kwargs)
 
     raise NotImplementedError(f"Engine {engine} does not implement generate")
+
+
+# Return visible content from one normalized adapter chunk.
+def _extract_chat_title_chunk(chunk: Any) -> str:
+    raw_message = chunk.get("message", {}) if isinstance(chunk, dict) else getattr(chunk, "message", {})
+    if isinstance(raw_message, dict):
+        return str(raw_message.get("content", "") or "")
+    return str(getattr(raw_message, "content", "") or "")
+
+
+# Clean one generated title before it is persisted or returned in a header.
+def _sanitize_chat_title(title: str) -> str:
+    cleaned = str(title or "")
+    for start_tag, end_tag in REASONING_TAG_PAIRS:
+        while True:
+            start_index = cleaned.lower().find(start_tag)
+            if start_index < 0:
+                break
+            end_index = cleaned.lower().find(end_tag, start_index + len(start_tag))
+            if end_index < 0:
+                cleaned = cleaned[:start_index]
+                break
+            cleaned = cleaned[:start_index] + cleaned[end_index + len(end_tag):]
+
+    cleaned = re.sub(r"<\|[^>]+\|>", "", cleaned)
+    cleaned = " ".join(cleaned.split()).strip(" `\"'“”‘’#")
+    if cleaned.lower().startswith("[error during generation:"):
+        return ""
+    return cleaned[:CHAT_TITLE_LENGTH_LIMIT].rstrip()
+
+
+# Generate a title through the selected model without touching chat history.
+def generate_chat_title(
+    engine: str | None,
+    model_name: str,
+    user_message: str,
+    model_info: dict[str, Any] | None = None,
+) -> str:
+    """Return a generated title or an empty string when the fallback should be used."""
+
+    source = str(user_message or "").strip()[:CHAT_TITLE_SOURCE_LIMIT]
+    if not source:
+        return ""
+
+    canonical_engine = settings.normalize_engine_name(engine)
+    model_info = model_info if isinstance(model_info, dict) else {}
+    supports_think_toggle = bool(model_info.get("supports_think_toggle", False))
+    supports_think_level = bool(model_info.get("supports_think_level", False))
+    supports_thinking = bool(
+        model_info.get("supports_thinking", False)
+        or supports_think_toggle
+        or supports_think_level
+    )
+    advertised_levels = [
+        str(level).strip().lower()
+        for level in model_info.get("think_level_options", [])
+        if str(level).strip()
+    ]
+    lowest_level = next(
+        (level for level in REASONING_LEVEL_ORDER if level in advertised_levels),
+        advertised_levels[0] if advertised_levels else "low",
+    )
+    reasoning_level = lowest_level if supports_think_level or canonical_engine == "google-genai" else None
+
+    attempts: list[tuple[bool, str | None, int]] = []
+    if supports_thinking and supports_think_toggle:
+        attempts.append((True, None, CHAT_TITLE_OUTPUT_LIMIT))
+        attempts.append((False, reasoning_level, CHAT_TITLE_REASONING_OUTPUT_LIMIT))
+    elif supports_thinking:
+        attempts.append((False, reasoning_level, CHAT_TITLE_REASONING_OUTPUT_LIMIT))
+    else:
+        attempts.append((False, None, CHAT_TITLE_OUTPUT_LIMIT))
+        attempts.append((False, reasoning_level, CHAT_TITLE_REASONING_OUTPUT_LIMIT))
+
+    messages = [
+        {"role": "system", "content": CHAT_TITLE_INSTRUCTIONS},
+        {"role": "user", "content": source},
+    ]
+    supported_parameters = {
+        str(name).strip()
+        for name in model_info.get("supported_parameters", [])
+        if str(name).strip()
+    }
+
+    for disable_thinking, think_level, output_limit in attempts:
+        options: dict[str, Any]
+        if settings.is_ollama_engine(canonical_engine):
+            context_length = model_info.get("context_length", CHAT_TITLE_CONTEXT_LIMIT)
+            try:
+                context_limit = min(max(int(context_length), 1), CHAT_TITLE_CONTEXT_LIMIT)
+            except (TypeError, ValueError):
+                context_limit = CHAT_TITLE_CONTEXT_LIMIT
+            options = {"num_ctx": context_limit, "num_predict": output_limit}
+        elif canonical_engine == "lms":
+            options = {"maxTokens": output_limit}
+        elif canonical_engine == "google-genai":
+            options = {"max_output_tokens": output_limit}
+        else:
+            token_option = (
+                "max_completion_tokens"
+                if "max_completion_tokens" in supported_parameters
+                else "max_tokens"
+            )
+            options = {token_option: output_limit}
+
+        generate_kwargs: dict[str, Any] = {
+            "engine": canonical_engine,
+            "model_name": model_name,
+            "messages": messages,
+            "options": options,
+            "stream": True,
+        }
+        if disable_thinking:
+            if canonical_engine == "google-genai":
+                options["thinking_budget"] = 0
+            else:
+                generate_kwargs["think"] = False
+                generate_kwargs["think_param_name"] = str(model_info.get("think_param_name", "think") or "think")
+        elif think_level:
+            if canonical_engine == "google-genai":
+                options["thinking_level"] = think_level
+            else:
+                generate_kwargs["think_level"] = think_level
+                generate_kwargs["think_level_param_name"] = str(
+                    model_info.get("think_level_param_name", "think_level") or "think_level"
+                )
+        try:
+            visible_parts = [
+                _extract_chat_title_chunk(chunk)
+                for chunk in generate(**generate_kwargs)
+            ]
+        except Exception as exc:
+            logger.debug("Chat title generation failed for %s through %s: %s", model_name, canonical_engine, exc)
+            continue
+
+        title = _sanitize_chat_title("".join(visible_parts))
+        if title:
+            return title
+
+    return ""
 
 
 # Abort active generation for one engine or all loaded engines.
