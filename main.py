@@ -281,14 +281,17 @@ def cmd_get_setting(key: str) -> None:
 def cmd_set_setting(key: str, value: str) -> None:
     """Update a single setting key from string input."""
 
-    from Settings.settings import normalize_setting_value, set
+    from Settings.settings import HOST_KEY_SETTING_KEYS, normalize_setting_value, set
 
     parsed_value = normalize_setting_value(value)
     # ASLM invokes this command in a short-lived process before the module's
     # run commands exist. Persisting a setting must not make that helper own a
     # long-running engine runtime (or wait for the dedicated runtime command).
     set(key, parsed_value, sync_runtime=False)
-    print(f"[ASLM-Chat] Setting '{key}' updated to {parsed_value}")
+    if key in HOST_KEY_SETTING_KEYS:
+        print(f"[ASLM-Chat] Setting '{key}' updated.")
+    else:
+        print(f"[ASLM-Chat] Setting '{key}' updated to {parsed_value}")
 
 
 def cmd_apply_aslm_host_theme(theme_file: str) -> None:

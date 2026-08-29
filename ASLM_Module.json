@@ -106,6 +106,22 @@
             "setExec": "main.py apply_aslm_locale --file {value}"
         },
         {
+            "key": "key-aslm",
+            "name": "ASLM key",
+            "description": "ASLM account key supplied by the host application.",
+            "type": "key-aslm",
+            "engine": "python-runtime",
+            "setExec": "main.py set_setting --key key-aslm --value {value}"
+        },
+        {
+            "key": "key-gh",
+            "name": "GitHub key",
+            "description": "GitHub account key supplied by the host application.",
+            "type": "key-gh",
+            "engine": "python-runtime",
+            "setExec": "main.py set_setting --key key-gh --value {value}"
+        },
+        {
             "key": "console_log_level",
             "name": "Console Log Level",
             "description": "How much runtime detail ASLM-Chat prints into the ASLM console.",

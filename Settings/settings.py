@@ -49,6 +49,8 @@ ENGINE_API_KEY_KEYS = {
     "google-genai": "google_genai_api_key",
 }
 
+HOST_KEY_SETTING_KEYS = frozenset({"key-aslm", "key-gh"})
+
 DEFAULTS: dict[str, Any] = {
     "ui-port": 20000,
     "api-port": 20001,
@@ -72,6 +74,8 @@ DEFAULTS: dict[str, Any] = {
     "google-genai": False,
     "google_genai_url": "generativelanguage.googleapis.com",
     "google_genai_api_key": "",
+    "key-aslm": None,
+    "key-gh": None,
 }
 
 CONSOLE_LOG_LEVELS = {"basic", "debug", "trace"}
@@ -454,8 +458,9 @@ def set(key: str, value: Any, *, sync_runtime: bool = True) -> None:
     _apply_process_environment_value(key, value)
     _invalidate_settings_cache()
 
-    # Mirror the updated setting into the ASLM module manifest when available.
-    _sync_module_manifest_setting(key, value)
+    # Host account keys belong only to the local settings file, not the module manifest.
+    if key not in HOST_KEY_SETTING_KEYS:
+        _sync_module_manifest_setting(key, value)
 
     if sync_runtime and key in ENGINE_IDS:
         try:
