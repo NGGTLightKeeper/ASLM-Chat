@@ -4,101 +4,300 @@
     "commands": {
         "firstRun": [
             {
-                "name": "Початкове налаштування",
-                "description": "Створює settings.json і застосовує міграції бази даних"
+                "name": "Початкове налаштування"
             }
         ],
         "run": [
             {
-                "name": "UI-сервер",
-                "description": "Запускає сервер розробки Django"
+                "name": "UI-сервер"
             },
             {
-                "name": "Середовище виконання Ollama",
-                "description": "Запускає керовану службу Ollama в окремій консольній сесії"
+                "name": "Середовище виконання Ollama"
             }
         ]
     },
+    "settingCategories": [
+        {
+            "id": "engines",
+            "name": "Рушії"
+        },
+        {
+            "id": "browser-agent",
+            "name": "Браузерний агент"
+        },
+        {
+            "id": "sandbox",
+            "name": "Пісочниця"
+        },
+        {
+            "id": "web-search",
+            "name": "WebSearch"
+        },
+        {
+            "id": "web-search-engines",
+            "name": "Пошукові системи WebSearch"
+        },
+        {
+            "id": "web-search-api",
+            "name": "API WebSearch"
+        },
+        {
+            "id": "web-search-search",
+            "name": "Пошук WebSearch"
+        },
+        {
+            "id": "web-search-extraction",
+            "name": "Видобування вмісту WebSearch"
+        },
+        {
+            "id": "web-search-cache",
+            "name": "Кеш WebSearch"
+        }
+    ],
     "settings": {
-        "ui-port": {
-            "name": "Порт UI-сервера",
-            "description": "Порт, на якому слухає UI-сервер"
-        },
-        "api-port": {
-            "name": "Порт API-сервера",
-            "description": "Порт, на якому слухає API-сервер"
-        },
-        "aslm-host-theme": {
-            "name": "Тема хоста ASLM",
-            "description": "Знімок теми з програми ASLM; застосовується під час кожного запуску модуля. Керується лише ASLM."
-        },
-        "aslm-host-locale": {
-            "name": "Локаль хоста ASLM",
-            "description": "Знімок мови з програми ASLM; застосовується під час кожного запуску модуля. Керується лише ASLM."
+        "generate-chat-titles": {
+            "name": "Генерувати назви чатів"
         },
         "console_log_level": {
-            "name": "Рівень журналювання консолі",
-            "description": "Обсяг відомостей про роботу, які ASLM-Chat виводить у консоль ASLM."
-        },
-        "generate-chat-titles": {
-            "name": "Генерувати назви чатів",
-            "description": "Створювати назву вибраною моделлю після надсилання першого повідомлення в новому чаті."
+            "name": "Рівень журналювання консолі"
         },
         "llm-engine": {
-            "name": "Активний LLM-движок",
-            "description": "Движок, який використовується для генерації в інтерфейсі чату"
+            "name": "Активний LLM-рушій"
         },
         "ollama-service": {
-            "name": "Ollama",
-            "description": "Чи встановлено службу виведення Ollama"
+            "name": "Ollama"
         },
         "ollama-service_path": {
-            "name": "Шлях до Ollama",
-            "description": "Шлях до виконуваного файлу Ollama"
+            "name": "Використовувати власний шлях до Ollama"
         },
         "ollama-service_data": {
-            "name": "Дані Ollama",
-            "description": "Шлях до каталогу даних Ollama"
+            "name": "Використовувати власний шлях до даних Ollama"
         },
         "ollama-service_models": {
-            "name": "Моделі Ollama",
-            "description": "Шлях до каталогу моделей Ollama"
-        },
-        "ollama-service_port": {
-            "name": "Порт Ollama",
-            "description": "Порт, на якому слухає локальна служба Ollama"
+            "name": "Використовувати власний шлях до моделей Ollama"
         },
         "lms": {
-            "name": "LM Studio",
-            "description": "Чи доступна інтеграція з LM Studio"
+            "name": "LM Studio"
         },
         "lms_url": {
-            "name": "Адреса LM Studio",
-            "description": "Базова адреса API сервера LM Studio"
+            "name": "URL сервера LM Studio"
         },
         "openai": {
-            "name": "API, сумісний з OpenAI",
-            "description": "Чи доступна кінцева точка API, сумісна з OpenAI"
+            "name": "API, сумісний з OpenAI"
         },
         "openai_url": {
-            "name": "Адреса OpenAI-сумісного API",
-            "description": "Базовий URL кінцевої точки API, сумісної з OpenAI"
+            "name": "URL OpenAI-сумісного API"
         },
         "openai_api_key": {
-            "name": "API-ключ OpenAI-сумісного API",
-            "description": "Необов'язковий API-ключ для захищених кінцевих точок"
+            "name": "API-ключ OpenAI-сумісного API (необов’язково)"
         },
         "google-genai": {
-            "name": "Google GenAI",
-            "description": "Чи доступна інтеграція з Google GenAI"
+            "name": "API Google GenAI"
         },
         "google_genai_url": {
-            "name": "Адреса Google GenAI",
-            "description": "Базовий URL кінцевої точки API Google GenAI Gemini"
+            "name": "URL API Google GenAI"
         },
         "google_genai_api_key": {
-            "name": "API-ключ Google GenAI",
-            "description": "API-ключ для запитів до API Google GenAI Gemini"
+            "name": "API-ключ Google GenAI"
+        },
+        "web-search-tavily-api-key": {
+            "name": "API-ключ Tavily (необов’язково)"
+        },
+        "web-search-firecrawl-api-key": {
+            "name": "API-ключ Firecrawl (необов’язково)"
+        },
+        "web-search-brave-api-key": {
+            "name": "API-ключ Brave Search (необов’язково)"
+        },
+        "web-search-serpapi-api-key": {
+            "name": "API-ключ SerpApi (необов’язково)"
+        },
+        "web-search-max-results": {
+            "name": "Максимальна кількість результатів пошуку"
+        },
+        "web-search-total-context-budget": {
+            "name": "Загальний ліміт контексту пошуку"
+        },
+        "web-search-prefetch-timeout": {
+            "name": "Тайм-аут попереднього завантаження"
+        },
+        "web-search-preview-max-chars": {
+            "name": "Максимальна довжина попереднього перегляду"
+        },
+        "web-search-extraction-timeout": {
+            "name": "Тайм-аут видобування"
+        },
+        "web-search-max-page-chars": {
+            "name": "Максимальна довжина сторінки"
+        },
+        "web-search-min-content-length": {
+            "name": "Мінімальна довжина вмісту"
+        },
+        "web-search-compress-read-pages": {
+            "name": "Стискати довгі сторінки"
+        },
+        "web-search-compress-threshold": {
+            "name": "Поріг стиснення"
+        },
+        "web-search-compress-target": {
+            "name": "Цільовий розмір стиснення"
+        },
+        "web-search-cache-ttl": {
+            "name": "Термін зберігання кешу результатів пошуку"
+        },
+        "web-search-negative-cache-ttl": {
+            "name": "Термін зберігання негативного кешу пошуку"
+        },
+        "web-search-page-cache-ttl": {
+            "name": "Термін зберігання кешу сторінок"
+        },
+        "web-search-repeat-block-window": {
+            "name": "Інтервал блокування повторів",
+            "description": "Період у секундах, протягом якого блокується повторний ідентичний запит"
+        },
+        "web-search-seen-source-window": {
+            "name": "Інтервал урахування переглянутих джерел",
+            "description": "Період у секундах, протягом якого нещодавно повернуті джерела вилучаються з результатів"
+        },
+        "web-search-prefetch-max-urls": {
+            "name": "Максимум URL для попереднього завантаження",
+            "description": "Максимальна кількість URL результатів, що попередньо завантажуються для одного пошуку. Нуль вимикає попереднє завантаження"
+        },
+        "web-search-tor-enabled": {
+            "name": "Увімкнути пошук через Tor",
+            "description": "Підтримується лише у Windows і потребує запущеного Tor"
+        },
+        "web-search-profile-import-enabled": {
+            "name": "Увімкнути імпорт профілів браузерів",
+            "description": "Імпортувати файли cookie з Chrome/Edge/Brave/Firefox"
+        },
+        "web-search-profile-import-all-profiles": {
+            "name": "Імпортувати всі профілі",
+            "description": "Імпортувати кожен профіль із браузерів"
+        },
+        "web-search-profile-import-refresh-hours": {
+            "name": "Період оновлення профілів"
+        },
+        "web-search-profile-import-purge-on-disable": {
+            "name": "Видаляти імпортовані профілі",
+            "description": "Видаляти імпортовані файли cookie після вимкнення імпорту профілів браузерів"
+        },
+        "browser-agent-width": {
+            "name": "Ширина вікна браузера"
+        },
+        "browser-agent-height": {
+            "name": "Висота вікна браузера"
+        },
+        "browser-agent-headless": {
+            "name": "Фоновий режим",
+            "description": "Запускати браузерний агент без видимого вікна браузера"
+        },
+        "browser-agent-max-a11y-depth": {
+            "name": "Глибина дерева спеціальних можливостей",
+            "description": "Максимальна глибина обходу дерева спеціальних можливостей"
+        },
+        "browser-agent-max-elements": {
+            "name": "Ліміт елементів",
+            "description": "Максимальна кількість елементів, зібраних з однієї сторінки"
+        },
+        "browser-agent-max-main-interactive": {
+            "name": "Ліміт інтерактивних елементів",
+            "description": "Максимальна кількість інтерактивних елементів у компактному знімку"
+        },
+        "browser-agent-auto-text-preview-length": {
+            "name": "Довжина попереднього перегляду тексту",
+            "description": "Максимальна довжина тексту для автоматичного попереднього перегляду сторінки"
+        },
+        "sandbox-container-name": {
+            "name": "Назва контейнера пісочниці"
+        },
+        "sandbox-image": {
+            "name": "Образ пісочниці",
+            "description": "Образ Docker Hub, який використовує пісочниця"
+        },
+        "sandbox-cpu-limit": {
+            "name": "Ліміт потоків CPU"
+        },
+        "sandbox-memory-limit": {
+            "name": "Ліміт пам’яті (ГБ)"
+        },
+        "sandbox-memory-swap-limit": {
+            "name": "Ліміт пам’яті та підкачки (ГБ)",
+            "description": "Спільний ліміт оперативної пам’яті та простору підкачки"
+        },
+        "sandbox-pids-limit": {
+            "name": "Ліміт процесів"
+        },
+        "sandbox-storage-limit": {
+            "name": "Ліміт сховища (ГБ)"
+        },
+        "sandbox-network-limit-mbit": {
+            "name": "Ліміт мережі (Мбіт/с)"
+        },
+        "sandbox-default-timeout": {
+            "name": "Тайм-аут команд за замовчуванням"
+        },
+        "sandbox-max-output-bytes": {
+            "name": "Ліміт виводу"
+        },
+        "sandbox-output-head-ratio": {
+            "name": "Частка початку виводу",
+            "description": "Частка скороченого виводу, що зберігається від його початку"
+        },
+        "sandbox-max-read-bytes": {
+            "name": "Ліміт читання"
+        },
+        "sandbox-max-cat-file-bytes": {
+            "name": "Ліміт файлу для cat"
+        },
+        "sandbox-max-cat-line-threshold": {
+            "name": "Поріг рядків для cat"
+        },
+        "sandbox-max-image-preview-bytes": {
+            "name": "Ліміт попереднього перегляду зображень",
+            "description": "Максимальний розмір зображення в байтах, що повертається для попереднього перегляду"
+        },
+        "sandbox-max-ls-entries": {
+            "name": "Ліміт записів каталогу"
+        },
+        "sandbox-max-find-results": {
+            "name": "Ліміт результатів find"
+        },
+        "sandbox-max-grep-results": {
+            "name": "Ліміт результатів grep"
+        },
+        "sandbox-background-timeout-threshold": {
+            "name": "Поріг фонового виконання",
+            "description": "Поріг тайм-ауту в секундах, що визначає перехід до фонового виконання"
+        },
+        "sandbox-thread-limit": {
+            "name": "Ліміт потоків",
+            "description": "Максимальна кількість потоків робочих процесів і чисельних бібліотек"
+        },
+        "sandbox-default-task-dir": {
+            "name": "Каталог робочого простору"
+        },
+        "sandbox-workspace-cleanup-enabled": {
+            "name": "Очищення робочих просторів",
+            "description": "Автоматично перестворювати неактивні робочі простори пісочниці"
+        },
+        "sandbox-workspace-cleanup-idle-seconds": {
+            "name": "Час простою до очищення",
+            "description": "Час простою в секундах перед очищенням робочого простору"
+        },
+        "sandbox-workspace-cleanup-recycle-seconds": {
+            "name": "Термін життя робочого простору",
+            "description": "Максимальний термін життя робочого простору в секундах до його перестворення"
+        },
+        "sandbox-workspace-cleanup-interval-seconds": {
+            "name": "Інтервал очищення робочих просторів"
+        },
+        "sandbox-max-file-map-symbols": {
+            "name": "Ліміт символів у карті файлу",
+            "description": "Максимальна кількість символів для одного файлу в створених картах"
+        },
+        "sandbox-docker-start-timeout-seconds": {
+            "name": "Тайм-аут запуску Docker"
         }
     },
     "downloadsBridge": {

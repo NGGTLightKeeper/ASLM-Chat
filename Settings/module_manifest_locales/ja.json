@@ -4,101 +4,300 @@
     "commands": {
         "firstRun": [
             {
-                "name": "初回セットアップ",
-                "description": "settings.json を生成し、データベースのマイグレーションを適用します"
+                "name": "初回セットアップ"
             }
         ],
         "run": [
             {
-                "name": "UI サーバー",
-                "description": "Django 開発サーバーを起動します"
+                "name": "UI サーバー"
             },
             {
-                "name": "Ollama ランタイム",
-                "description": "専用コンソールセッションで管理対象の Ollama サービスを起動します"
+                "name": "Ollama ランタイム"
             }
         ]
     },
+    "settingCategories": [
+        {
+            "id": "engines",
+            "name": "エンジン"
+        },
+        {
+            "id": "browser-agent",
+            "name": "ブラウザーエージェント"
+        },
+        {
+            "id": "sandbox",
+            "name": "サンドボックス"
+        },
+        {
+            "id": "web-search",
+            "name": "WebSearch"
+        },
+        {
+            "id": "web-search-engines",
+            "name": "WebSearch エンジン"
+        },
+        {
+            "id": "web-search-api",
+            "name": "WebSearch API"
+        },
+        {
+            "id": "web-search-search",
+            "name": "WebSearch 検索"
+        },
+        {
+            "id": "web-search-extraction",
+            "name": "WebSearch コンテンツ抽出"
+        },
+        {
+            "id": "web-search-cache",
+            "name": "WebSearch キャッシュ"
+        }
+    ],
     "settings": {
-        "ui-port": {
-            "name": "UI サーバーポート",
-            "description": "UI サーバーが待ち受けるポート"
-        },
-        "api-port": {
-            "name": "API サーバーポート",
-            "description": "API サーバーが待ち受けるポート"
-        },
-        "aslm-host-theme": {
-            "name": "ASLM ホストテーマ",
-            "description": "ASLM アプリからのテーマのスナップショット。モジュール起動のたびに適用されます。ASLM のみが管理します。"
-        },
-        "aslm-host-locale": {
-            "name": "ASLM ホスト言語",
-            "description": "ASLM アプリからの言語のスナップショット。モジュール起動のたびに適用されます。ASLM のみが管理します。"
+        "generate-chat-titles": {
+            "name": "チャットタイトルを生成"
         },
         "console_log_level": {
-            "name": "コンソールログレベル",
-            "description": "ASLM-Chat が ASLM コンソールに出力する実行時の詳細レベル"
-        },
-        "generate-chat-titles": {
-            "name": "チャットタイトルを生成",
-            "description": "新しいチャットで最初のメッセージを送信したときに、選択したモデルでタイトルを生成します。"
+            "name": "コンソールログレベル"
         },
         "llm-engine": {
-            "name": "アクティブな LLM エンジン",
-            "description": "チャット UI での生成に使用するエンジン"
+            "name": "使用中の LLM エンジン"
         },
         "ollama-service": {
-            "name": "Ollama",
-            "description": "Ollama 推論サービスがインストールされているか"
+            "name": "Ollama"
         },
         "ollama-service_path": {
-            "name": "Ollama パス",
-            "description": "Ollama 実行ファイルへのパス"
+            "name": "カスタム Ollama パスを使用"
         },
         "ollama-service_data": {
-            "name": "Ollama データ",
-            "description": "Ollama データディレクトリへのパス"
+            "name": "カスタム Ollama データパスを使用"
         },
         "ollama-service_models": {
-            "name": "Ollama モデル",
-            "description": "Ollama モデルディレクトリへのパス"
-        },
-        "ollama-service_port": {
-            "name": "Ollama ポート",
-            "description": "ローカル Ollama サービスが待ち受けるポート"
+            "name": "カスタム Ollama モデルパスを使用"
         },
         "lms": {
-            "name": "LM Studio",
-            "description": "LM Studio 連携が利用可能か"
+            "name": "LM Studio"
         },
         "lms_url": {
-            "name": "LM Studio アドレス",
-            "description": "LM Studio サーバー API のベースアドレス"
+            "name": "LM Studio サーバー URL"
         },
         "openai": {
-            "name": "OpenAI 互換 API",
-            "description": "OpenAI 互換 API エンドポイントが利用可能か"
+            "name": "OpenAI 互換 API"
         },
         "openai_url": {
-            "name": "OpenAI 互換アドレス",
-            "description": "OpenAI 互換 API エンドポイントのベース URL"
+            "name": "OpenAI 互換 URL"
         },
         "openai_api_key": {
-            "name": "OpenAI 互換 API キー",
-            "description": "保護されたエンドポイント用の任意の API キー"
+            "name": "OpenAI 互換 API キー（任意）"
         },
         "google-genai": {
-            "name": "Google GenAI",
-            "description": "Google GenAI 連携が利用可能か"
+            "name": "Google GenAI API"
         },
         "google_genai_url": {
-            "name": "Google GenAI アドレス",
-            "description": "Google GenAI Gemini API エンドポイントのベース URL"
+            "name": "Google GenAI API URL"
         },
         "google_genai_api_key": {
-            "name": "Google GenAI API キー",
-            "description": "Google GenAI Gemini API リクエスト用の API キー"
+            "name": "Google GenAI API キー"
+        },
+        "web-search-tavily-api-key": {
+            "name": "Tavily API キー（任意）"
+        },
+        "web-search-firecrawl-api-key": {
+            "name": "Firecrawl API キー（任意）"
+        },
+        "web-search-brave-api-key": {
+            "name": "Brave Search API キー（任意）"
+        },
+        "web-search-serpapi-api-key": {
+            "name": "SerpApi API キー（任意）"
+        },
+        "web-search-max-results": {
+            "name": "検索結果の最大件数"
+        },
+        "web-search-total-context-budget": {
+            "name": "検索コンテキストの総予算"
+        },
+        "web-search-prefetch-timeout": {
+            "name": "プリフェッチのタイムアウト"
+        },
+        "web-search-preview-max-chars": {
+            "name": "プレビューの最大文字数"
+        },
+        "web-search-extraction-timeout": {
+            "name": "コンテンツ抽出のタイムアウト"
+        },
+        "web-search-max-page-chars": {
+            "name": "ページの最大文字数"
+        },
+        "web-search-min-content-length": {
+            "name": "コンテンツの最小文字数"
+        },
+        "web-search-compress-read-pages": {
+            "name": "長いページを圧縮"
+        },
+        "web-search-compress-threshold": {
+            "name": "圧縮しきい値"
+        },
+        "web-search-compress-target": {
+            "name": "圧縮後の目標サイズ"
+        },
+        "web-search-cache-ttl": {
+            "name": "検索結果キャッシュの有効期間"
+        },
+        "web-search-negative-cache-ttl": {
+            "name": "検索ネガティブキャッシュの有効期間"
+        },
+        "web-search-page-cache-ttl": {
+            "name": "ページキャッシュの有効期間"
+        },
+        "web-search-repeat-block-window": {
+            "name": "再検索のブロック期間",
+            "description": "同一の検索クエリを再度ブロックする期間（秒）"
+        },
+        "web-search-seen-source-window": {
+            "name": "参照済みソースの抑制期間",
+            "description": "直近に返されたソースを表示しない期間（秒）"
+        },
+        "web-search-prefetch-max-urls": {
+            "name": "URL プリフェッチ結果の最大件数",
+            "description": "検索ごとにプリフェッチする結果 URL の最大件数。0 にするとプリフェッチを無効にします"
+        },
+        "web-search-tor-enabled": {
+            "name": "Tor 検索を有効化",
+            "description": "Windows でのみサポートされ、Tor が実行中である必要があります"
+        },
+        "web-search-profile-import-enabled": {
+            "name": "ブラウザープロファイルのインポートを有効化",
+            "description": "Chrome、Edge、Brave、Firefox から Cookie をインポートします"
+        },
+        "web-search-profile-import-all-profiles": {
+            "name": "すべてのプロファイルをインポート",
+            "description": "各ブラウザーからすべてのプロファイルをインポートします"
+        },
+        "web-search-profile-import-refresh-hours": {
+            "name": "プロファイルの更新間隔"
+        },
+        "web-search-profile-import-purge-on-disable": {
+            "name": "インポート済みプロファイルを削除",
+            "description": "ブラウザープロファイルのインポートを無効にしたとき、インポート済み Cookie を削除します"
+        },
+        "browser-agent-width": {
+            "name": "ブラウザーウィンドウの幅"
+        },
+        "browser-agent-height": {
+            "name": "ブラウザーウィンドウの高さ"
+        },
+        "browser-agent-headless": {
+            "name": "ヘッドレスモード",
+            "description": "表示されるブラウザーウィンドウを開かずにブラウザーエージェントを実行します"
+        },
+        "browser-agent-max-a11y-depth": {
+            "name": "アクセシビリティの深さ",
+            "description": "アクセシビリティツリーを走査する最大深度"
+        },
+        "browser-agent-max-elements": {
+            "name": "要素数の上限",
+            "description": "1 ページから収集する要素の最大数"
+        },
+        "browser-agent-max-main-interactive": {
+            "name": "操作可能要素数の上限",
+            "description": "簡易スナップショットに含める操作可能要素の最大数"
+        },
+        "browser-agent-auto-text-preview-length": {
+            "name": "テキストプレビューの長さ",
+            "description": "ページの自動プレビューに使用するテキストの最大文字数"
+        },
+        "sandbox-container-name": {
+            "name": "サンドボックスコンテナ名"
+        },
+        "sandbox-image": {
+            "name": "サンドボックスイメージ",
+            "description": "サンドボックスで使用する Docker Hub イメージ"
+        },
+        "sandbox-cpu-limit": {
+            "name": "CPU スレッド数の上限"
+        },
+        "sandbox-memory-limit": {
+            "name": "メモリ上限（GB）"
+        },
+        "sandbox-memory-swap-limit": {
+            "name": "メモリと Swap の上限（GB）",
+            "description": "メモリとスワップを合わせた上限"
+        },
+        "sandbox-pids-limit": {
+            "name": "プロセス数の上限"
+        },
+        "sandbox-storage-limit": {
+            "name": "ストレージ上限（GB）"
+        },
+        "sandbox-network-limit-mbit": {
+            "name": "ネットワーク上限（Mbit/s）"
+        },
+        "sandbox-default-timeout": {
+            "name": "既定のコマンドタイムアウト"
+        },
+        "sandbox-max-output-bytes": {
+            "name": "出力サイズの上限"
+        },
+        "sandbox-output-head-ratio": {
+            "name": "出力先頭の保持率",
+            "description": "切り詰めた出力のうち、先頭から保持する割合"
+        },
+        "sandbox-max-read-bytes": {
+            "name": "読み取りサイズの上限"
+        },
+        "sandbox-max-cat-file-bytes": {
+            "name": "cat のファイルサイズ上限"
+        },
+        "sandbox-max-cat-line-threshold": {
+            "name": "cat の行数しきい値"
+        },
+        "sandbox-max-image-preview-bytes": {
+            "name": "画像プレビューの上限",
+            "description": "プレビューとして返す画像の最大サイズ（バイト）"
+        },
+        "sandbox-max-ls-entries": {
+            "name": "ディレクトリエントリ数の上限"
+        },
+        "sandbox-max-find-results": {
+            "name": "find 結果数の上限"
+        },
+        "sandbox-max-grep-results": {
+            "name": "grep 結果数の上限"
+        },
+        "sandbox-background-timeout-threshold": {
+            "name": "バックグラウンド実行のタイムアウトしきい値",
+            "description": "バックグラウンド実行を選択するためのタイムアウトしきい値（秒）"
+        },
+        "sandbox-thread-limit": {
+            "name": "スレッド数の上限",
+            "description": "ワーカーおよび数値計算ライブラリの最大スレッド数"
+        },
+        "sandbox-default-task-dir": {
+            "name": "ワークスペースディレクトリ"
+        },
+        "sandbox-workspace-cleanup-enabled": {
+            "name": "ワークスペースのクリーンアップ",
+            "description": "使用されていないサンドボックスのワークスペースを自動的に再作成します"
+        },
+        "sandbox-workspace-cleanup-idle-seconds": {
+            "name": "クリーンアップまでのアイドル時間",
+            "description": "ワークスペースをクリーンアップするまでのアイドル時間（秒）"
+        },
+        "sandbox-workspace-cleanup-recycle-seconds": {
+            "name": "ワークスペースの再作成時間",
+            "description": "再作成するまでのワークスペースの最大存続時間（秒）"
+        },
+        "sandbox-workspace-cleanup-interval-seconds": {
+            "name": "ワークスペースのクリーンアップ間隔"
+        },
+        "sandbox-max-file-map-symbols": {
+            "name": "ファイルマップのシンボル数上限",
+            "description": "生成するマップでファイルごとに含めるシンボルの最大数"
+        },
+        "sandbox-docker-start-timeout-seconds": {
+            "name": "Docker 起動タイムアウト"
         }
     },
     "downloadsBridge": {

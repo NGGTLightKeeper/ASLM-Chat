@@ -232,6 +232,10 @@ Tools/mcp-sandbox/todo.md
 Tools/mcp-sandbox/.env.local
 Tools/mcp-sandbox/docker.dev.env
 Tools/mcp-sandbox/sandbox.env
+Tools/mcp-sandbox/sandbox.json
+
+# Tools/mcp-browser-agent
+Tools/mcp-browser-agent/config.json
 
 # Tools/mcp-web-search
 Tools/mcp-web-search/core/config/api_keys.json

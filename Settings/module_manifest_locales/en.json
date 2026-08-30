@@ -4,101 +4,300 @@
     "commands": {
         "firstRun": [
             {
-                "name": "First Run Setup",
-                "description": "Generates settings.json and applies database migrations"
+                "name": "First Run Setup"
             }
         ],
         "run": [
             {
-                "name": "UI Server",
-                "description": "Launches the Django development server"
+                "name": "UI Server"
             },
             {
-                "name": "Ollama Runtime",
-                "description": "Launches the managed Ollama service in a dedicated console session"
+                "name": "Ollama Runtime"
             }
         ]
     },
+    "settingCategories": [
+        {
+            "id": "engines",
+            "name": "Engines"
+        },
+        {
+            "id": "browser-agent",
+            "name": "Browser Agent"
+        },
+        {
+            "id": "sandbox",
+            "name": "Sandbox"
+        },
+        {
+            "id": "web-search",
+            "name": "WebSearch"
+        },
+        {
+            "id": "web-search-engines",
+            "name": "WebSearch Engines"
+        },
+        {
+            "id": "web-search-api",
+            "name": "WebSearch API"
+        },
+        {
+            "id": "web-search-search",
+            "name": "WebSearch Search"
+        },
+        {
+            "id": "web-search-extraction",
+            "name": "WebSearch Extraction"
+        },
+        {
+            "id": "web-search-cache",
+            "name": "WebSearch Cache"
+        }
+    ],
     "settings": {
-        "ui-port": {
-            "name": "UI Server Port",
-            "description": "Port the UI server listens on"
-        },
-        "api-port": {
-            "name": "API Server Port",
-            "description": "Port the UI server listens on"
-        },
-        "aslm-host-theme": {
-            "name": "ASLM host theme",
-            "description": "Theme snapshot from the host ASLM app; applied on each module start. Managed only by ASLM."
-        },
-        "aslm-host-locale": {
-            "name": "ASLM host locale",
-            "description": "Language snapshot from the host ASLM app; applied on each module start. Managed only by ASLM."
+        "generate-chat-titles": {
+            "name": "Generate Chat Titles"
         },
         "console_log_level": {
-            "name": "Console Log Level",
-            "description": "How much runtime detail ASLM-Chat prints into the ASLM console."
-        },
-        "generate-chat-titles": {
-            "name": "Generate Chat Titles",
-            "description": "Generate a title with the selected model when the first message is sent in a new chat."
+            "name": "Console Log Level"
         },
         "llm-engine": {
-            "name": "Active LLM Engine",
-            "description": "Engine used for chat generation in the UI"
+            "name": "Active LLM Engine"
         },
         "ollama-service": {
-            "name": "Ollama",
-            "description": "Whether the Ollama inference service is installed"
+            "name": "Ollama"
         },
         "ollama-service_path": {
-            "name": "Ollama Path",
-            "description": "Path to the Ollama executable"
+            "name": "Use custom Ollama path"
         },
         "ollama-service_data": {
-            "name": "Ollama Data",
-            "description": "Path to the Ollama data directory"
+            "name": "Use custom Ollama data path"
         },
         "ollama-service_models": {
-            "name": "Ollama Models",
-            "description": "Path to the Ollama models directory"
-        },
-        "ollama-service_port": {
-            "name": "Ollama Port",
-            "description": "Port that the local Ollama service listens on"
+            "name": "Use custom Ollama models path"
         },
         "lms": {
-            "name": "LM Studio",
-            "description": "Whether LM Studio integration is available"
+            "name": "LM Studio"
         },
         "lms_url": {
-            "name": "LM Studio Address",
-            "description": "Base address of the LM Studio Server API"
+            "name": "LM Studio Server URL"
         },
         "openai": {
-            "name": "OpenAI-Compatible API",
-            "description": "Whether an OpenAI-compatible API endpoint is available"
+            "name": "OpenAI-Compatible API"
         },
         "openai_url": {
-            "name": "OpenAI-Compatible Address",
-            "description": "Base URL of the OpenAI-compatible API endpoint"
+            "name": "OpenAI-Compatible URL"
         },
         "openai_api_key": {
-            "name": "OpenAI-Compatible API Key",
-            "description": "Optional API key for secured OpenAI-compatible endpoints"
+            "name": "OpenAI-Compatible API Key (optional)"
         },
         "google-genai": {
-            "name": "Google GenAI",
-            "description": "Whether Google GenAI integration is available"
+            "name": "Google GenAI API"
         },
         "google_genai_url": {
-            "name": "Google GenAI Address",
-            "description": "Base URL of the Google GenAI Gemini API endpoint"
+            "name": "Google GenAI API URL"
         },
         "google_genai_api_key": {
-            "name": "Google GenAI API Key",
-            "description": "API key for Google GenAI Gemini API requests"
+            "name": "Google GenAI API Key"
+        },
+        "web-search-tavily-api-key": {
+            "name": "Tavily API Key (optional)"
+        },
+        "web-search-firecrawl-api-key": {
+            "name": "Firecrawl API Key (optional)"
+        },
+        "web-search-brave-api-key": {
+            "name": "Brave Search API Key (optional)"
+        },
+        "web-search-serpapi-api-key": {
+            "name": "SerpApi API Key (optional)"
+        },
+        "web-search-max-results": {
+            "name": "Maximum search results"
+        },
+        "web-search-total-context-budget": {
+            "name": "Total search context budget"
+        },
+        "web-search-prefetch-timeout": {
+            "name": "Prefetch timeout"
+        },
+        "web-search-preview-max-chars": {
+            "name": "Maximum preview length"
+        },
+        "web-search-extraction-timeout": {
+            "name": "Extraction timeout"
+        },
+        "web-search-max-page-chars": {
+            "name": "Maximum page length"
+        },
+        "web-search-min-content-length": {
+            "name": "Minimum content length"
+        },
+        "web-search-compress-read-pages": {
+            "name": "Compress long pages"
+        },
+        "web-search-compress-threshold": {
+            "name": "Compression threshold"
+        },
+        "web-search-compress-target": {
+            "name": "Compression target"
+        },
+        "web-search-cache-ttl": {
+            "name": "Search result cache lifetime"
+        },
+        "web-search-negative-cache-ttl": {
+            "name": "Search negative cache lifetime"
+        },
+        "web-search-page-cache-ttl": {
+            "name": "Page cache lifetime"
+        },
+        "web-search-repeat-block-window": {
+            "name": "Repeat block window",
+            "description": "Time in seconds that blocks an identical repeated query"
+        },
+        "web-search-seen-source-window": {
+            "name": "Seen source window",
+            "description": "Time in seconds that suppresses recently returned sources"
+        },
+        "web-search-prefetch-max-urls": {
+            "name": "Maximum URL prefetch results",
+            "description": "Maximum result URLs prefetched per search. Zero disables prefetching"
+        },
+        "web-search-tor-enabled": {
+            "name": "Enable Tor Search",
+            "description": "Supported only on Windows and requires running Tor"
+        },
+        "web-search-profile-import-enabled": {
+            "name": "Enable browser profile import",
+            "description": "Import cookies from Chrome/Edge/Brave/Firefox"
+        },
+        "web-search-profile-import-all-profiles": {
+            "name": "Import all profiles",
+            "description": "Import every profile from browsers"
+        },
+        "web-search-profile-import-refresh-hours": {
+            "name": "Profile refresh time"
+        },
+        "web-search-profile-import-purge-on-disable": {
+            "name": "Purge imported profiles",
+            "description": "Remove imported cookies when browser profile import is disabled"
+        },
+        "browser-agent-width": {
+            "name": "Browser window width"
+        },
+        "browser-agent-height": {
+            "name": "Browser window height"
+        },
+        "browser-agent-headless": {
+            "name": "Headless Mode",
+            "description": "Run the browser agent without a visible browser window"
+        },
+        "browser-agent-max-a11y-depth": {
+            "name": "Accessibility depth",
+            "description": "Maximum accessibility tree traversal depth"
+        },
+        "browser-agent-max-elements": {
+            "name": "Element limit",
+            "description": "Maximum number of elements collected from one page"
+        },
+        "browser-agent-max-main-interactive": {
+            "name": "Interactive element limit",
+            "description": "Maximum number of interactive elements included in a compact snapshot"
+        },
+        "browser-agent-auto-text-preview-length": {
+            "name": "Text preview length",
+            "description": "Maximum text length used by the automatic page preview"
+        },
+        "sandbox-container-name": {
+            "name": "Sandbox Container name"
+        },
+        "sandbox-image": {
+            "name": "Sandbox Image",
+            "description": "Docker Hub image used by the sandbox"
+        },
+        "sandbox-cpu-limit": {
+            "name": "CPU threads limit"
+        },
+        "sandbox-memory-limit": {
+            "name": "Memory limit (GB)"
+        },
+        "sandbox-memory-swap-limit": {
+            "name": "Memory and Swap limit (GB)",
+            "description": "Combined memory and swap limit"
+        },
+        "sandbox-pids-limit": {
+            "name": "Process limit"
+        },
+        "sandbox-storage-limit": {
+            "name": "Storage limit (GB)"
+        },
+        "sandbox-network-limit-mbit": {
+            "name": "Network limit (Mbit/s)"
+        },
+        "sandbox-default-timeout": {
+            "name": "Default command timeout"
+        },
+        "sandbox-max-output-bytes": {
+            "name": "Output limit"
+        },
+        "sandbox-output-head-ratio": {
+            "name": "Output head ratio",
+            "description": "Fraction of truncated output retained from the beginning"
+        },
+        "sandbox-max-read-bytes": {
+            "name": "Read limit"
+        },
+        "sandbox-max-cat-file-bytes": {
+            "name": "Cat file limit"
+        },
+        "sandbox-max-cat-line-threshold": {
+            "name": "Cat line threshold"
+        },
+        "sandbox-max-image-preview-bytes": {
+            "name": "Image preview limit",
+            "description": "Maximum image size in bytes returned as a preview"
+        },
+        "sandbox-max-ls-entries": {
+            "name": "Directory entry limit"
+        },
+        "sandbox-max-find-results": {
+            "name": "Find result limit"
+        },
+        "sandbox-max-grep-results": {
+            "name": "Grep result limit"
+        },
+        "sandbox-background-timeout-threshold": {
+            "name": "Background timeout threshold",
+            "description": "Timeout threshold in seconds used to select background execution"
+        },
+        "sandbox-thread-limit": {
+            "name": "Thread limit",
+            "description": "Maximum worker and numerical-library thread count"
+        },
+        "sandbox-default-task-dir": {
+            "name": "Workspace directory"
+        },
+        "sandbox-workspace-cleanup-enabled": {
+            "name": "Workspace Cleanup",
+            "description": "Automatically recycle inactive sandbox workspaces"
+        },
+        "sandbox-workspace-cleanup-idle-seconds": {
+            "name": "Workspace cleanup idle time",
+            "description": "Idle time in seconds before workspace cleanup"
+        },
+        "sandbox-workspace-cleanup-recycle-seconds": {
+            "name": "Workspace recycle time",
+            "description": "Maximum workspace lifetime in seconds before recycling"
+        },
+        "sandbox-workspace-cleanup-interval-seconds": {
+            "name": "Workspace cleanup interval"
+        },
+        "sandbox-max-file-map-symbols": {
+            "name": "File map symbol limit",
+            "description": "Maximum symbols included per file in generated maps"
+        },
+        "sandbox-docker-start-timeout-seconds": {
+            "name": "Docker start timeout"
         }
     },
     "downloadsBridge": {

@@ -84,7 +84,8 @@ class Read1Stream:
 
 
 class HostProxyTests(unittest.TestCase):
-    def test_ensure_docker_running_does_not_launch_desktop_by_default(self) -> None:
+    # Verify an explicit empty override disables automatic Docker startup.
+    def test_ensure_docker_running_respects_explicit_disable(self) -> None:
         info_result = MagicMock(returncode=1)
 
         with patch.object(docker_host_mod, "_docker_cli_available", return_value=True), \

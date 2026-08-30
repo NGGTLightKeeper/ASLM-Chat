@@ -4,101 +4,300 @@
     "commands": {
         "firstRun": [
             {
-                "name": "Первоначальная настройка",
-                "description": "Создаёт settings.json и применяет миграции базы данных"
+                "name": "Первоначальная настройка"
             }
         ],
         "run": [
             {
-                "name": "UI-сервер",
-                "description": "Запускает сервер разработки Django"
+                "name": "UI-сервер"
             },
             {
-                "name": "Среда выполнения Ollama",
-                "description": "Запускает управляемую службу Ollama в отдельной консольной сессии"
+                "name": "Среда выполнения Ollama"
             }
         ]
     },
+    "settingCategories": [
+        {
+            "id": "engines",
+            "name": "Движки"
+        },
+        {
+            "id": "browser-agent",
+            "name": "Браузерный агент"
+        },
+        {
+            "id": "sandbox",
+            "name": "Песочница"
+        },
+        {
+            "id": "web-search",
+            "name": "WebSearch"
+        },
+        {
+            "id": "web-search-engines",
+            "name": "Поисковые системы WebSearch"
+        },
+        {
+            "id": "web-search-api",
+            "name": "API WebSearch"
+        },
+        {
+            "id": "web-search-search",
+            "name": "Поиск WebSearch"
+        },
+        {
+            "id": "web-search-extraction",
+            "name": "Извлечение содержимого WebSearch"
+        },
+        {
+            "id": "web-search-cache",
+            "name": "Кэш WebSearch"
+        }
+    ],
     "settings": {
-        "ui-port": {
-            "name": "Порт UI-сервера",
-            "description": "Порт, на котором слушает UI-сервер"
-        },
-        "api-port": {
-            "name": "Порт API-сервера",
-            "description": "Порт, на котором слушает API-сервер"
-        },
-        "aslm-host-theme": {
-            "name": "Тема хоста ASLM",
-            "description": "Снимок темы из приложения ASLM; применяется при каждом запуске модуля. Управляется только ASLM."
-        },
-        "aslm-host-locale": {
-            "name": "Локаль хоста ASLM",
-            "description": "Снимок языка из приложения ASLM; применяется при каждом запуске модуля. Управляется только ASLM."
+        "generate-chat-titles": {
+            "name": "Генерировать названия чатов"
         },
         "console_log_level": {
-            "name": "Уровень журналирования консоли",
-            "description": "Объём сведений о работе, которые ASLM-Chat выводит в консоль ASLM."
-        },
-        "generate-chat-titles": {
-            "name": "Генерировать названия чатов",
-            "description": "Создавать название выбранной моделью при отправке первого сообщения в новом чате."
+            "name": "Уровень журналирования консоли"
         },
         "llm-engine": {
-            "name": "Активный LLM-движок",
-            "description": "Движок, используемый для генерации в интерфейсе чата"
+            "name": "Активный LLM-движок"
         },
         "ollama-service": {
-            "name": "Ollama",
-            "description": "Установлена ли служба вывода Ollama"
+            "name": "Ollama"
         },
         "ollama-service_path": {
-            "name": "Путь к Ollama",
-            "description": "Путь к исполняемому файлу Ollama"
+            "name": "Использовать собственный путь к Ollama"
         },
         "ollama-service_data": {
-            "name": "Данные Ollama",
-            "description": "Путь к каталогу данных Ollama"
+            "name": "Использовать собственный путь к данным Ollama"
         },
         "ollama-service_models": {
-            "name": "Модели Ollama",
-            "description": "Путь к каталогу моделей Ollama"
-        },
-        "ollama-service_port": {
-            "name": "Порт Ollama",
-            "description": "Порт, на котором слушает локальная служба Ollama"
+            "name": "Использовать собственный путь к моделям Ollama"
         },
         "lms": {
-            "name": "LM Studio",
-            "description": "Доступна ли интеграция с LM Studio"
+            "name": "LM Studio"
         },
         "lms_url": {
-            "name": "Адрес LM Studio",
-            "description": "Базовый адрес API сервера LM Studio"
+            "name": "URL сервера LM Studio"
         },
         "openai": {
-            "name": "API, совместимый с OpenAI",
-            "description": "Доступна ли конечная точка API, совместимая с OpenAI"
+            "name": "API, совместимый с OpenAI"
         },
         "openai_url": {
-            "name": "Адрес OpenAI-совместимого API",
-            "description": "Базовый URL конечной точки API, совместимой с OpenAI"
+            "name": "URL OpenAI-совместимого API"
         },
         "openai_api_key": {
-            "name": "API-ключ OpenAI-совместимого API",
-            "description": "Необязательный API-ключ для защищённых конечных точек"
+            "name": "API-ключ OpenAI-совместимого API (необязательно)"
         },
         "google-genai": {
-            "name": "Google GenAI",
-            "description": "Доступна ли интеграция с Google GenAI"
+            "name": "API Google GenAI"
         },
         "google_genai_url": {
-            "name": "Адрес Google GenAI",
-            "description": "Базовый URL конечной точки API Google GenAI Gemini"
+            "name": "URL API Google GenAI"
         },
         "google_genai_api_key": {
-            "name": "API-ключ Google GenAI",
-            "description": "API-ключ для запросов к API Google GenAI Gemini"
+            "name": "API-ключ Google GenAI"
+        },
+        "web-search-tavily-api-key": {
+            "name": "API-ключ Tavily (необязательно)"
+        },
+        "web-search-firecrawl-api-key": {
+            "name": "API-ключ Firecrawl (необязательно)"
+        },
+        "web-search-brave-api-key": {
+            "name": "API-ключ Brave Search (необязательно)"
+        },
+        "web-search-serpapi-api-key": {
+            "name": "API-ключ SerpApi (необязательно)"
+        },
+        "web-search-max-results": {
+            "name": "Максимальное количество результатов поиска"
+        },
+        "web-search-total-context-budget": {
+            "name": "Общий лимит контекста поиска"
+        },
+        "web-search-prefetch-timeout": {
+            "name": "Тайм-аут предварительной загрузки"
+        },
+        "web-search-preview-max-chars": {
+            "name": "Максимальная длина предпросмотра"
+        },
+        "web-search-extraction-timeout": {
+            "name": "Тайм-аут извлечения"
+        },
+        "web-search-max-page-chars": {
+            "name": "Максимальная длина страницы"
+        },
+        "web-search-min-content-length": {
+            "name": "Минимальная длина содержимого"
+        },
+        "web-search-compress-read-pages": {
+            "name": "Сжимать длинные страницы"
+        },
+        "web-search-compress-threshold": {
+            "name": "Порог сжатия"
+        },
+        "web-search-compress-target": {
+            "name": "Целевой размер сжатия"
+        },
+        "web-search-cache-ttl": {
+            "name": "Срок хранения кэша результатов поиска"
+        },
+        "web-search-negative-cache-ttl": {
+            "name": "Срок хранения отрицательного кэша поиска"
+        },
+        "web-search-page-cache-ttl": {
+            "name": "Срок хранения кэша страниц"
+        },
+        "web-search-repeat-block-window": {
+            "name": "Интервал блокировки повторов",
+            "description": "Период в секундах, в течение которого блокируется повторный идентичный запрос"
+        },
+        "web-search-seen-source-window": {
+            "name": "Интервал учёта просмотренных источников",
+            "description": "Период в секундах, в течение которого недавно возвращённые источники исключаются из результатов"
+        },
+        "web-search-prefetch-max-urls": {
+            "name": "Максимум URL для предварительной загрузки",
+            "description": "Максимальное количество URL результатов, предварительно загружаемых для одного поиска. Ноль отключает предварительную загрузку"
+        },
+        "web-search-tor-enabled": {
+            "name": "Включить поиск через Tor",
+            "description": "Поддерживается только в Windows и требует запущенного Tor"
+        },
+        "web-search-profile-import-enabled": {
+            "name": "Включить импорт профилей браузеров",
+            "description": "Импортировать файлы cookie из Chrome/Edge/Brave/Firefox"
+        },
+        "web-search-profile-import-all-profiles": {
+            "name": "Импортировать все профили",
+            "description": "Импортировать каждый профиль из браузеров"
+        },
+        "web-search-profile-import-refresh-hours": {
+            "name": "Период обновления профилей"
+        },
+        "web-search-profile-import-purge-on-disable": {
+            "name": "Удалять импортированные профили",
+            "description": "Удалять импортированные файлы cookie при отключении импорта профилей браузеров"
+        },
+        "browser-agent-width": {
+            "name": "Ширина окна браузера"
+        },
+        "browser-agent-height": {
+            "name": "Высота окна браузера"
+        },
+        "browser-agent-headless": {
+            "name": "Фоновый режим",
+            "description": "Запускать браузерный агент без видимого окна браузера"
+        },
+        "browser-agent-max-a11y-depth": {
+            "name": "Глубина дерева специальных возможностей",
+            "description": "Максимальная глубина обхода дерева специальных возможностей"
+        },
+        "browser-agent-max-elements": {
+            "name": "Лимит элементов",
+            "description": "Максимальное количество элементов, собираемых с одной страницы"
+        },
+        "browser-agent-max-main-interactive": {
+            "name": "Лимит интерактивных элементов",
+            "description": "Максимальное количество интерактивных элементов в компактном снимке"
+        },
+        "browser-agent-auto-text-preview-length": {
+            "name": "Длина предпросмотра текста",
+            "description": "Максимальная длина текста для автоматического предпросмотра страницы"
+        },
+        "sandbox-container-name": {
+            "name": "Имя контейнера песочницы"
+        },
+        "sandbox-image": {
+            "name": "Образ песочницы",
+            "description": "Образ Docker Hub, используемый песочницей"
+        },
+        "sandbox-cpu-limit": {
+            "name": "Лимит потоков CPU"
+        },
+        "sandbox-memory-limit": {
+            "name": "Лимит памяти (ГБ)"
+        },
+        "sandbox-memory-swap-limit": {
+            "name": "Лимит памяти и подкачки (ГБ)",
+            "description": "Общий лимит оперативной памяти и пространства подкачки"
+        },
+        "sandbox-pids-limit": {
+            "name": "Лимит процессов"
+        },
+        "sandbox-storage-limit": {
+            "name": "Лимит хранилища (ГБ)"
+        },
+        "sandbox-network-limit-mbit": {
+            "name": "Лимит сети (Мбит/с)"
+        },
+        "sandbox-default-timeout": {
+            "name": "Тайм-аут команд по умолчанию"
+        },
+        "sandbox-max-output-bytes": {
+            "name": "Лимит вывода"
+        },
+        "sandbox-output-head-ratio": {
+            "name": "Доля начала вывода",
+            "description": "Доля усечённого вывода, сохраняемая с его начала"
+        },
+        "sandbox-max-read-bytes": {
+            "name": "Лимит чтения"
+        },
+        "sandbox-max-cat-file-bytes": {
+            "name": "Лимит файла для cat"
+        },
+        "sandbox-max-cat-line-threshold": {
+            "name": "Порог строк для cat"
+        },
+        "sandbox-max-image-preview-bytes": {
+            "name": "Лимит предпросмотра изображений",
+            "description": "Максимальный размер изображения в байтах, возвращаемого для предпросмотра"
+        },
+        "sandbox-max-ls-entries": {
+            "name": "Лимит записей каталога"
+        },
+        "sandbox-max-find-results": {
+            "name": "Лимит результатов find"
+        },
+        "sandbox-max-grep-results": {
+            "name": "Лимит результатов grep"
+        },
+        "sandbox-background-timeout-threshold": {
+            "name": "Порог фонового выполнения",
+            "description": "Порог тайм-аута в секундах, определяющий переход к фоновому выполнению"
+        },
+        "sandbox-thread-limit": {
+            "name": "Лимит потоков",
+            "description": "Максимальное количество потоков рабочих процессов и численных библиотек"
+        },
+        "sandbox-default-task-dir": {
+            "name": "Каталог рабочего пространства"
+        },
+        "sandbox-workspace-cleanup-enabled": {
+            "name": "Очистка рабочих пространств",
+            "description": "Автоматически пересоздавать неактивные рабочие пространства песочницы"
+        },
+        "sandbox-workspace-cleanup-idle-seconds": {
+            "name": "Время простоя до очистки",
+            "description": "Время простоя в секундах перед очисткой рабочего пространства"
+        },
+        "sandbox-workspace-cleanup-recycle-seconds": {
+            "name": "Срок жизни рабочего пространства",
+            "description": "Максимальный срок жизни рабочего пространства в секундах до его пересоздания"
+        },
+        "sandbox-workspace-cleanup-interval-seconds": {
+            "name": "Интервал очистки рабочих пространств"
+        },
+        "sandbox-max-file-map-symbols": {
+            "name": "Лимит символов в карте файла",
+            "description": "Максимальное количество символов для одного файла в создаваемых картах"
+        },
+        "sandbox-docker-start-timeout-seconds": {
+            "name": "Тайм-аут запуска Docker"
         }
     },
     "downloadsBridge": {

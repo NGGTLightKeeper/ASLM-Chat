@@ -4,101 +4,300 @@
     "commands": {
         "firstRun": [
             {
-                "name": "首次執行設定",
-                "description": "產生 settings.json 並套用資料庫遷移"
+                "name": "首次執行設定"
             }
         ],
         "run": [
             {
-                "name": "UI 伺服器",
-                "description": "啟動 Django 開發伺服器"
+                "name": "UI 伺服器"
             },
             {
-                "name": "Ollama 執行階段",
-                "description": "在專用主控台工作階段中啟動受管理的 Ollama 服務"
+                "name": "Ollama 執行階段"
             }
         ]
     },
+    "settingCategories": [
+        {
+            "id": "engines",
+            "name": "引擎"
+        },
+        {
+            "id": "browser-agent",
+            "name": "瀏覽器代理程式"
+        },
+        {
+            "id": "sandbox",
+            "name": "沙箱"
+        },
+        {
+            "id": "web-search",
+            "name": "WebSearch"
+        },
+        {
+            "id": "web-search-engines",
+            "name": "WebSearch 引擎"
+        },
+        {
+            "id": "web-search-api",
+            "name": "WebSearch API"
+        },
+        {
+            "id": "web-search-search",
+            "name": "WebSearch 搜尋"
+        },
+        {
+            "id": "web-search-extraction",
+            "name": "WebSearch 內容擷取"
+        },
+        {
+            "id": "web-search-cache",
+            "name": "WebSearch 快取"
+        }
+    ],
     "settings": {
-        "ui-port": {
-            "name": "UI 伺服器連接埠",
-            "description": "UI 伺服器監聽的連接埠"
-        },
-        "api-port": {
-            "name": "API 伺服器連接埠",
-            "description": "API 伺服器監聽的連接埠"
-        },
-        "aslm-host-theme": {
-            "name": "ASLM 主機主題",
-            "description": "來自 ASLM 應用程式的主題快照；在每次模組啟動時套用。僅由 ASLM 管理。"
-        },
-        "aslm-host-locale": {
-            "name": "ASLM 主機語言",
-            "description": "來自 ASLM 應用程式的語言快照；在每次模組啟動時套用。僅由 ASLM 管理。"
+        "generate-chat-titles": {
+            "name": "產生聊天標題"
         },
         "console_log_level": {
-            "name": "主控台記錄層級",
-            "description": "ASLM-Chat 輸出至 ASLM 主控台的執行階段詳細資訊量"
-        },
-        "generate-chat-titles": {
-            "name": "產生聊天標題",
-            "description": "在新聊天中傳送第一則訊息時，使用所選模型產生標題。"
+            "name": "主控台記錄層級"
         },
         "llm-engine": {
-            "name": "使用中 LLM 引擎",
-            "description": "在聊天介面中用於生成的引擎"
+            "name": "目前的 LLM 引擎"
         },
         "ollama-service": {
-            "name": "Ollama",
-            "description": "是否已安裝 Ollama 推論服務"
+            "name": "Ollama"
         },
         "ollama-service_path": {
-            "name": "Ollama 路徑",
-            "description": "Ollama 可執行檔的路徑"
+            "name": "使用自訂 Ollama 路徑"
         },
         "ollama-service_data": {
-            "name": "Ollama 資料",
-            "description": "Ollama 資料目錄的路徑"
+            "name": "使用自訂 Ollama 資料路徑"
         },
         "ollama-service_models": {
-            "name": "Ollama 模型",
-            "description": "Ollama 模型目錄的路徑"
-        },
-        "ollama-service_port": {
-            "name": "Ollama 連接埠",
-            "description": "本機 Ollama 服務監聽的連接埠"
+            "name": "使用自訂 Ollama 模型路徑"
         },
         "lms": {
-            "name": "LM Studio",
-            "description": "LM Studio 整合是否可用"
+            "name": "LM Studio"
         },
         "lms_url": {
-            "name": "LM Studio 位址",
-            "description": "LM Studio 伺服器 API 的基礎位址"
+            "name": "LM Studio 伺服器 URL"
         },
         "openai": {
-            "name": "OpenAI 相容 API",
-            "description": "OpenAI 相容 API 端點是否可用"
+            "name": "OpenAI 相容 API"
         },
         "openai_url": {
-            "name": "OpenAI 相容位址",
-            "description": "OpenAI 相容 API 端點的基礎 URL"
+            "name": "OpenAI 相容 URL"
         },
         "openai_api_key": {
-            "name": "OpenAI 相容 API 金鑰",
-            "description": "用於受保護端點的選用 API 金鑰"
+            "name": "OpenAI 相容 API 金鑰（選用）"
         },
         "google-genai": {
-            "name": "Google GenAI",
-            "description": "Google GenAI 整合是否可用"
+            "name": "Google GenAI API"
         },
         "google_genai_url": {
-            "name": "Google GenAI 位址",
-            "description": "Google GenAI Gemini API 端點的基礎 URL"
+            "name": "Google GenAI API URL"
         },
         "google_genai_api_key": {
-            "name": "Google GenAI API 金鑰",
-            "description": "用於 Google GenAI Gemini API 請求的 API 金鑰"
+            "name": "Google GenAI API 金鑰"
+        },
+        "web-search-tavily-api-key": {
+            "name": "Tavily API 金鑰（選用）"
+        },
+        "web-search-firecrawl-api-key": {
+            "name": "Firecrawl API 金鑰（選用）"
+        },
+        "web-search-brave-api-key": {
+            "name": "Brave Search API 金鑰（選用）"
+        },
+        "web-search-serpapi-api-key": {
+            "name": "SerpApi API 金鑰（選用）"
+        },
+        "web-search-max-results": {
+            "name": "搜尋結果上限"
+        },
+        "web-search-total-context-budget": {
+            "name": "搜尋內容總預算"
+        },
+        "web-search-prefetch-timeout": {
+            "name": "預先擷取逾時"
+        },
+        "web-search-preview-max-chars": {
+            "name": "預覽長度上限"
+        },
+        "web-search-extraction-timeout": {
+            "name": "內容擷取逾時"
+        },
+        "web-search-max-page-chars": {
+            "name": "頁面長度上限"
+        },
+        "web-search-min-content-length": {
+            "name": "內容長度下限"
+        },
+        "web-search-compress-read-pages": {
+            "name": "壓縮較長頁面"
+        },
+        "web-search-compress-threshold": {
+            "name": "壓縮門檻"
+        },
+        "web-search-compress-target": {
+            "name": "壓縮目標"
+        },
+        "web-search-cache-ttl": {
+            "name": "搜尋結果快取有效期"
+        },
+        "web-search-negative-cache-ttl": {
+            "name": "搜尋負快取有效期"
+        },
+        "web-search-page-cache-ttl": {
+            "name": "頁面快取有效期"
+        },
+        "web-search-repeat-block-window": {
+            "name": "重複查詢封鎖時段",
+            "description": "封鎖相同重複查詢的時間（秒）"
+        },
+        "web-search-seen-source-window": {
+            "name": "已查看來源抑制時段",
+            "description": "抑制近期已傳回來源的時間（秒）"
+        },
+        "web-search-prefetch-max-urls": {
+            "name": "URL 預先擷取結果上限",
+            "description": "每次搜尋預先擷取的結果 URL 數量上限。設為零將停用預先擷取"
+        },
+        "web-search-tor-enabled": {
+            "name": "啟用 Tor 搜尋",
+            "description": "僅支援 Windows，且需要 Tor 正在執行"
+        },
+        "web-search-profile-import-enabled": {
+            "name": "啟用瀏覽器設定檔匯入",
+            "description": "從 Chrome、Edge、Brave 和 Firefox 匯入 Cookie"
+        },
+        "web-search-profile-import-all-profiles": {
+            "name": "匯入所有設定檔",
+            "description": "匯入瀏覽器中的每個設定檔"
+        },
+        "web-search-profile-import-refresh-hours": {
+            "name": "設定檔重新整理間隔"
+        },
+        "web-search-profile-import-purge-on-disable": {
+            "name": "清除已匯入的設定檔",
+            "description": "停用瀏覽器設定檔匯入時移除已匯入的 Cookie"
+        },
+        "browser-agent-width": {
+            "name": "瀏覽器視窗寬度"
+        },
+        "browser-agent-height": {
+            "name": "瀏覽器視窗高度"
+        },
+        "browser-agent-headless": {
+            "name": "無頭模式",
+            "description": "執行瀏覽器代理程式時不顯示瀏覽器視窗"
+        },
+        "browser-agent-max-a11y-depth": {
+            "name": "協助工具樹深度",
+            "description": "周遊協助工具樹的最大深度"
+        },
+        "browser-agent-max-elements": {
+            "name": "元素數量上限",
+            "description": "從單一頁面收集的元素數量上限"
+        },
+        "browser-agent-max-main-interactive": {
+            "name": "互動元素數量上限",
+            "description": "精簡快照中包含的互動元素數量上限"
+        },
+        "browser-agent-auto-text-preview-length": {
+            "name": "文字預覽長度",
+            "description": "自動頁面預覽所使用的最大文字長度"
+        },
+        "sandbox-container-name": {
+            "name": "沙箱 Container 名稱"
+        },
+        "sandbox-image": {
+            "name": "沙箱 Image",
+            "description": "沙箱使用的 Docker Hub image"
+        },
+        "sandbox-cpu-limit": {
+            "name": "CPU 執行緒上限"
+        },
+        "sandbox-memory-limit": {
+            "name": "記憶體上限（GB）"
+        },
+        "sandbox-memory-swap-limit": {
+            "name": "記憶體與 Swap 上限（GB）",
+            "description": "記憶體與交換空間的合計上限"
+        },
+        "sandbox-pids-limit": {
+            "name": "程序數量上限"
+        },
+        "sandbox-storage-limit": {
+            "name": "儲存空間上限（GB）"
+        },
+        "sandbox-network-limit-mbit": {
+            "name": "網路上限（Mbit/s）"
+        },
+        "sandbox-default-timeout": {
+            "name": "預設命令逾時"
+        },
+        "sandbox-max-output-bytes": {
+            "name": "輸出大小上限"
+        },
+        "sandbox-output-head-ratio": {
+            "name": "輸出開頭保留比例",
+            "description": "截斷輸出中從開頭保留的比例"
+        },
+        "sandbox-max-read-bytes": {
+            "name": "讀取大小上限"
+        },
+        "sandbox-max-cat-file-bytes": {
+            "name": "cat 檔案大小上限"
+        },
+        "sandbox-max-cat-line-threshold": {
+            "name": "cat 行數門檻"
+        },
+        "sandbox-max-image-preview-bytes": {
+            "name": "影像預覽上限",
+            "description": "以預覽形式傳回的影像最大位元組數"
+        },
+        "sandbox-max-ls-entries": {
+            "name": "目錄項目數量上限"
+        },
+        "sandbox-max-find-results": {
+            "name": "find 結果數量上限"
+        },
+        "sandbox-max-grep-results": {
+            "name": "grep 結果數量上限"
+        },
+        "sandbox-background-timeout-threshold": {
+            "name": "背景逾時門檻",
+            "description": "用於選擇背景執行的逾時門檻（秒）"
+        },
+        "sandbox-thread-limit": {
+            "name": "執行緒數量上限",
+            "description": "工作執行緒與數值運算程式庫執行緒的最大總數"
+        },
+        "sandbox-default-task-dir": {
+            "name": "工作區目錄"
+        },
+        "sandbox-workspace-cleanup-enabled": {
+            "name": "工作區清理",
+            "description": "自動重建閒置的沙箱工作區"
+        },
+        "sandbox-workspace-cleanup-idle-seconds": {
+            "name": "工作區清理閒置時間",
+            "description": "清理工作區前的閒置時間（秒）"
+        },
+        "sandbox-workspace-cleanup-recycle-seconds": {
+            "name": "工作區重建時間",
+            "description": "工作區重建前的最長存續時間（秒）"
+        },
+        "sandbox-workspace-cleanup-interval-seconds": {
+            "name": "工作區清理間隔"
+        },
+        "sandbox-max-file-map-symbols": {
+            "name": "檔案對應符號數量上限",
+            "description": "所產生對應中每個檔案包含的符號數量上限"
+        },
+        "sandbox-docker-start-timeout-seconds": {
+            "name": "Docker 啟動逾時"
         }
     },
     "downloadsBridge": {

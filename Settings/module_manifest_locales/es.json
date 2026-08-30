@@ -4,101 +4,300 @@
     "commands": {
         "firstRun": [
             {
-                "name": "Configuración inicial",
-                "description": "Genera settings.json y aplica las migraciones de la base de datos"
+                "name": "Configuración inicial"
             }
         ],
         "run": [
             {
-                "name": "Servidor de interfaz",
-                "description": "Inicia el servidor de desarrollo de Django"
+                "name": "Servidor de interfaz"
             },
             {
-                "name": "Runtime de Ollama",
-                "description": "Inicia el servicio Ollama gestionado en una sesión de consola dedicada"
+                "name": "Entorno de ejecución de Ollama"
             }
         ]
     },
+    "settingCategories": [
+        {
+            "id": "engines",
+            "name": "Motores"
+        },
+        {
+            "id": "browser-agent",
+            "name": "Agente de navegador"
+        },
+        {
+            "id": "sandbox",
+            "name": "Entorno aislado"
+        },
+        {
+            "id": "web-search",
+            "name": "WebSearch"
+        },
+        {
+            "id": "web-search-engines",
+            "name": "Motores de WebSearch"
+        },
+        {
+            "id": "web-search-api",
+            "name": "API de WebSearch"
+        },
+        {
+            "id": "web-search-search",
+            "name": "Búsqueda de WebSearch"
+        },
+        {
+            "id": "web-search-extraction",
+            "name": "Extracción de WebSearch"
+        },
+        {
+            "id": "web-search-cache",
+            "name": "Caché de WebSearch"
+        }
+    ],
     "settings": {
-        "ui-port": {
-            "name": "Puerto del servidor de interfaz",
-            "description": "Puerto en el que escucha el servidor de interfaz"
-        },
-        "api-port": {
-            "name": "Puerto del servidor API",
-            "description": "Puerto en el que escucha el servidor API"
-        },
-        "aslm-host-theme": {
-            "name": "Tema del host ASLM",
-            "description": "Instantánea del tema de la aplicación ASLM; se aplica en cada inicio del módulo. Gestionado solo por ASLM."
-        },
-        "aslm-host-locale": {
-            "name": "Idioma del host ASLM",
-            "description": "Instantánea del idioma de la aplicación ASLM; se aplica en cada inicio del módulo. Gestionado solo por ASLM."
+        "generate-chat-titles": {
+            "name": "Generar títulos de chat"
         },
         "console_log_level": {
-            "name": "Nivel de registro de consola",
-            "description": "Cantidad de detalle de ejecución que ASLM-Chat imprime en la consola de ASLM."
-        },
-        "generate-chat-titles": {
-            "name": "Generar títulos de chat",
-            "description": "Genera un título con el modelo seleccionado al enviar el primer mensaje de un chat nuevo."
+            "name": "Nivel de registro de la consola"
         },
         "llm-engine": {
-            "name": "Motor LLM activo",
-            "description": "Motor utilizado para la generación en la interfaz de chat"
+            "name": "Motor LLM activo"
         },
         "ollama-service": {
-            "name": "Ollama",
-            "description": "Si el servicio de inferencia Ollama está instalado"
+            "name": "Ollama"
         },
         "ollama-service_path": {
-            "name": "Ruta de Ollama",
-            "description": "Ruta al ejecutable de Ollama"
+            "name": "Usar una ruta de Ollama personalizada"
         },
         "ollama-service_data": {
-            "name": "Datos de Ollama",
-            "description": "Ruta al directorio de datos de Ollama"
+            "name": "Usar una ruta de datos de Ollama personalizada"
         },
         "ollama-service_models": {
-            "name": "Modelos de Ollama",
-            "description": "Ruta al directorio de modelos de Ollama"
-        },
-        "ollama-service_port": {
-            "name": "Puerto de Ollama",
-            "description": "Puerto en el que escucha el servicio local de Ollama"
+            "name": "Usar una ruta de modelos de Ollama personalizada"
         },
         "lms": {
-            "name": "LM Studio",
-            "description": "Si la integración con LM Studio está disponible"
+            "name": "LM Studio"
         },
         "lms_url": {
-            "name": "Dirección de LM Studio",
-            "description": "Dirección base de la API del servidor LM Studio"
+            "name": "URL del servidor de LM Studio"
         },
         "openai": {
-            "name": "API compatible con OpenAI",
-            "description": "Si hay un punto de conexión API compatible con OpenAI disponible"
+            "name": "API compatible con OpenAI"
         },
         "openai_url": {
-            "name": "Dirección compatible con OpenAI",
-            "description": "URL base del punto de conexión API compatible con OpenAI"
+            "name": "URL compatible con OpenAI"
         },
         "openai_api_key": {
-            "name": "Clave API compatible con OpenAI",
-            "description": "Clave API opcional para puntos de conexión protegidos"
+            "name": "Clave de API compatible con OpenAI (opcional)"
         },
         "google-genai": {
-            "name": "Google GenAI",
-            "description": "Si la integración con Google GenAI está disponible"
+            "name": "API de Google GenAI"
         },
         "google_genai_url": {
-            "name": "Dirección de Google GenAI",
-            "description": "URL base del punto de conexión API de Google GenAI Gemini"
+            "name": "URL de la API de Google GenAI"
         },
         "google_genai_api_key": {
-            "name": "Clave API de Google GenAI",
-            "description": "Clave API para solicitudes a la API de Google GenAI Gemini"
+            "name": "Clave de API de Google GenAI"
+        },
+        "web-search-tavily-api-key": {
+            "name": "Clave de API de Tavily (opcional)"
+        },
+        "web-search-firecrawl-api-key": {
+            "name": "Clave de API de Firecrawl (opcional)"
+        },
+        "web-search-brave-api-key": {
+            "name": "Clave de API de Brave Search (opcional)"
+        },
+        "web-search-serpapi-api-key": {
+            "name": "Clave de API de SerpApi (opcional)"
+        },
+        "web-search-max-results": {
+            "name": "Número máximo de resultados de búsqueda"
+        },
+        "web-search-total-context-budget": {
+            "name": "Presupuesto total del contexto de búsqueda"
+        },
+        "web-search-prefetch-timeout": {
+            "name": "Tiempo de espera de la precarga"
+        },
+        "web-search-preview-max-chars": {
+            "name": "Longitud máxima de la vista previa"
+        },
+        "web-search-extraction-timeout": {
+            "name": "Tiempo de espera de la extracción"
+        },
+        "web-search-max-page-chars": {
+            "name": "Longitud máxima de la página"
+        },
+        "web-search-min-content-length": {
+            "name": "Longitud mínima del contenido"
+        },
+        "web-search-compress-read-pages": {
+            "name": "Comprimir páginas largas"
+        },
+        "web-search-compress-threshold": {
+            "name": "Umbral de compresión"
+        },
+        "web-search-compress-target": {
+            "name": "Tamaño objetivo de compresión"
+        },
+        "web-search-cache-ttl": {
+            "name": "Duración de la caché de resultados"
+        },
+        "web-search-negative-cache-ttl": {
+            "name": "Duración de la caché negativa de búsqueda"
+        },
+        "web-search-page-cache-ttl": {
+            "name": "Duración de la caché de páginas"
+        },
+        "web-search-repeat-block-window": {
+            "name": "Intervalo de bloqueo de repeticiones",
+            "description": "Periodo en segundos durante el que se bloquea una consulta idéntica repetida"
+        },
+        "web-search-seen-source-window": {
+            "name": "Intervalo de fuentes ya consultadas",
+            "description": "Periodo en segundos durante el que se omiten las fuentes devueltas recientemente"
+        },
+        "web-search-prefetch-max-urls": {
+            "name": "Número máximo de URL precargadas",
+            "description": "Número máximo de URL de resultados que se precargan por búsqueda. Cero desactiva la precarga"
+        },
+        "web-search-tor-enabled": {
+            "name": "Activar la búsqueda mediante Tor",
+            "description": "Solo es compatible con Windows y requiere que Tor esté en ejecución"
+        },
+        "web-search-profile-import-enabled": {
+            "name": "Activar la importación de perfiles del navegador",
+            "description": "Importar cookies de Chrome/Edge/Brave/Firefox"
+        },
+        "web-search-profile-import-all-profiles": {
+            "name": "Importar todos los perfiles",
+            "description": "Importar todos los perfiles de los navegadores"
+        },
+        "web-search-profile-import-refresh-hours": {
+            "name": "Intervalo de actualización de perfiles"
+        },
+        "web-search-profile-import-purge-on-disable": {
+            "name": "Eliminar los perfiles importados",
+            "description": "Eliminar las cookies importadas al desactivar la importación de perfiles del navegador"
+        },
+        "browser-agent-width": {
+            "name": "Anchura de la ventana del navegador"
+        },
+        "browser-agent-height": {
+            "name": "Altura de la ventana del navegador"
+        },
+        "browser-agent-headless": {
+            "name": "Modo sin interfaz",
+            "description": "Ejecutar el agente de navegador sin mostrar una ventana del navegador"
+        },
+        "browser-agent-max-a11y-depth": {
+            "name": "Profundidad del árbol de accesibilidad",
+            "description": "Profundidad máxima de recorrido del árbol de accesibilidad"
+        },
+        "browser-agent-max-elements": {
+            "name": "Límite de elementos",
+            "description": "Número máximo de elementos recopilados de una página"
+        },
+        "browser-agent-max-main-interactive": {
+            "name": "Límite de elementos interactivos",
+            "description": "Número máximo de elementos interactivos incluidos en una captura compacta"
+        },
+        "browser-agent-auto-text-preview-length": {
+            "name": "Longitud de la vista previa de texto",
+            "description": "Longitud máxima del texto usado en la vista previa automática de la página"
+        },
+        "sandbox-container-name": {
+            "name": "Nombre del contenedor del entorno aislado"
+        },
+        "sandbox-image": {
+            "name": "Imagen del entorno aislado",
+            "description": "Imagen de Docker Hub que utiliza el entorno aislado"
+        },
+        "sandbox-cpu-limit": {
+            "name": "Límite de hilos de CPU"
+        },
+        "sandbox-memory-limit": {
+            "name": "Límite de memoria (GB)"
+        },
+        "sandbox-memory-swap-limit": {
+            "name": "Límite de memoria e intercambio (GB)",
+            "description": "Límite combinado de memoria y espacio de intercambio"
+        },
+        "sandbox-pids-limit": {
+            "name": "Límite de procesos"
+        },
+        "sandbox-storage-limit": {
+            "name": "Límite de almacenamiento (GB)"
+        },
+        "sandbox-network-limit-mbit": {
+            "name": "Límite de red (Mbit/s)"
+        },
+        "sandbox-default-timeout": {
+            "name": "Tiempo de espera predeterminado de los comandos"
+        },
+        "sandbox-max-output-bytes": {
+            "name": "Límite de salida"
+        },
+        "sandbox-output-head-ratio": {
+            "name": "Proporción inicial de la salida",
+            "description": "Proporción de la salida truncada que se conserva desde el principio"
+        },
+        "sandbox-max-read-bytes": {
+            "name": "Límite de lectura"
+        },
+        "sandbox-max-cat-file-bytes": {
+            "name": "Límite de archivo para cat"
+        },
+        "sandbox-max-cat-line-threshold": {
+            "name": "Umbral de líneas para cat"
+        },
+        "sandbox-max-image-preview-bytes": {
+            "name": "Límite de vista previa de imágenes",
+            "description": "Tamaño máximo en bytes de una imagen devuelta como vista previa"
+        },
+        "sandbox-max-ls-entries": {
+            "name": "Límite de entradas de directorio"
+        },
+        "sandbox-max-find-results": {
+            "name": "Límite de resultados de find"
+        },
+        "sandbox-max-grep-results": {
+            "name": "Límite de resultados de grep"
+        },
+        "sandbox-background-timeout-threshold": {
+            "name": "Umbral de ejecución en segundo plano",
+            "description": "Umbral de tiempo de espera en segundos usado para seleccionar la ejecución en segundo plano"
+        },
+        "sandbox-thread-limit": {
+            "name": "Límite de hilos",
+            "description": "Número máximo de hilos de procesos de trabajo y bibliotecas numéricas"
+        },
+        "sandbox-default-task-dir": {
+            "name": "Directorio del espacio de trabajo"
+        },
+        "sandbox-workspace-cleanup-enabled": {
+            "name": "Limpieza de espacios de trabajo",
+            "description": "Volver a crear automáticamente los espacios de trabajo inactivos del entorno aislado"
+        },
+        "sandbox-workspace-cleanup-idle-seconds": {
+            "name": "Tiempo de inactividad antes de la limpieza",
+            "description": "Tiempo de inactividad en segundos antes de limpiar el espacio de trabajo"
+        },
+        "sandbox-workspace-cleanup-recycle-seconds": {
+            "name": "Vida útil del espacio de trabajo",
+            "description": "Vida útil máxima del espacio de trabajo en segundos antes de volver a crearlo"
+        },
+        "sandbox-workspace-cleanup-interval-seconds": {
+            "name": "Intervalo de limpieza de espacios de trabajo"
+        },
+        "sandbox-max-file-map-symbols": {
+            "name": "Límite de símbolos del mapa de archivos",
+            "description": "Número máximo de símbolos incluidos por archivo en los mapas generados"
+        },
+        "sandbox-docker-start-timeout-seconds": {
+            "name": "Tiempo de espera del inicio de Docker"
         }
     },
     "downloadsBridge": {

@@ -18,68 +18,15 @@ from pathlib import Path
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _ENV_FILE = _SCRIPT_DIR / "sandbox.env"
+_SUPERVISOR_DIR = _SCRIPT_DIR / "supervisor"
+if str(_SUPERVISOR_DIR) not in sys.path:
+    sys.path.insert(0, str(_SUPERVISOR_DIR))
+
+from sandbox.config_bridge import sync_sandbox_env
 
 _DEFAULT_IMAGE = "nggtlightkeeper/aslm-chat-sandbox:latest"
 _REQUIRED_LABEL = "org.aslm.sandbox.supervisor-runtime"
 _REQUIRED_LABEL_VALUE = "container-v2"
-
-_CONFIG_TEMPLATE = """\
-# sandbox.env - generated automatically on first launch.
-# Uncomment and edit any line to override the default without rebuilding the image.
-# Changes take effect the next time the container is (re)started.
-
-# === Container identity ===
-#SANDBOX_CONTAINER_NAME=mcp-sandbox
-#SANDBOX_IMAGE=nggtlightkeeper/aslm-chat-sandbox:latest
-#SANDBOX_IMAGE_SOURCE=registry
-
-# === Resource limits (applied at docker run) ===
-#SANDBOX_CPU_LIMIT=4
-#SANDBOX_MEMORY_LIMIT=3g
-#SANDBOX_MEMORY_SWAP_LIMIT=4g
-#SANDBOX_PIDS_LIMIT=256
-#SANDBOX_STORAGE_LIMIT=12G
-#SANDBOX_NETWORK_LIMIT_MBIT=100
-
-# === Execution limits (inside container) ===
-#SANDBOX_DEFAULT_TIMEOUT=60
-#SANDBOX_MAX_OUTPUT_BYTES=60000
-#SANDBOX_OUTPUT_HEAD_RATIO=0.5
-#SANDBOX_MAX_READ_BYTES=200000
-#SANDBOX_MAX_CAT_FILE_BYTES=30720
-#SANDBOX_MAX_CAT_LINE_THRESHOLD=300
-#SANDBOX_MAX_IMAGE_PREVIEW_BYTES=2000000
-#SANDBOX_MAX_LS_ENTRIES=500
-#SANDBOX_MAX_FIND_RESULTS=200
-#SANDBOX_MAX_GREP_RESULTS=200
-#SANDBOX_BACKGROUND_TIMEOUT_THRESHOLD=10
-
-# === Thread limits ===
-#SANDBOX_THREAD_LIMIT=4
-
-# === Workspace ===
-#SANDBOX_DEFAULT_TASK_DIR=_sandbox
-#SANDBOX_WORKSPACE_CLEANUP_ENABLED=1
-#SANDBOX_WORKSPACE_CLEANUP_IDLE_SECONDS=5400
-#SANDBOX_WORKSPACE_CLEANUP_RECYCLE_SECONDS=10800
-#SANDBOX_WORKSPACE_CLEANUP_INTERVAL_SECONDS=5
-
-#SANDBOX_MAX_FILE_MAP_SYMBOLS=50
-
-# === Docker startup ===
-#SANDBOX_DOCKER_START_TIMEOUT_SECONDS=60
-#SANDBOX_AUTO_START_DOCKER=0
-"""
-
-
-# Create sandbox.env with commented defaults when missing.
-def _ensure_env_file(path: Path) -> None:
-    if path.exists():
-        return
-    try:
-        path.write_text(_CONFIG_TEMPLATE, encoding="utf-8")
-    except OSError:
-        pass
 
 
 # Parse key=value lines from a sandbox.env file.
@@ -97,7 +44,7 @@ def _load_env_file(path: Path) -> dict[str, str]:
     return result
 
 
-_ensure_env_file(_ENV_FILE)
+sync_sandbox_env(env_path=_ENV_FILE)
 _env_overrides = _load_env_file(_ENV_FILE)
 
 
@@ -235,7 +182,7 @@ def main() -> int:
         "--source",
         choices=["local", "registry", "auto"],
         default=None,
-        help="Image source: local=build only, registry=pull only, auto=pull then build (default: from sandbox.env or 'auto')",
+        help="Image source: local=build first, registry=pull first, auto=pull first (default: from sandbox.env or 'registry')",
     )
     parser.add_argument(
         "--force",
@@ -244,9 +191,9 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    source = args.source or _cfg("SANDBOX_IMAGE_SOURCE", "auto")
+    source = args.source or _cfg("SANDBOX_IMAGE_SOURCE", "registry")
     if source not in {"local", "registry", "auto"}:
-        source = "auto"
+        source = "registry"
 
     print("\nmcp-sandbox image setup", flush=True)
     print(f"  image  : {SANDBOX_IMAGE}", flush=True)

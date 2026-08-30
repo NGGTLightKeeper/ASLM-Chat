@@ -4,101 +4,300 @@
     "commands": {
         "firstRun": [
             {
-                "name": "प्रारंभिक सेटअप",
-                "description": "settings.json बनाता है और डेटाबेस माइग्रेशन लागू करता है"
+                "name": "प्रारंभिक सेटअप"
             }
         ],
         "run": [
             {
-                "name": "UI सर्वर",
-                "description": "Django डेवलपमेंट सर्वर चालू करता है"
+                "name": "UI सर्वर"
             },
             {
-                "name": "Ollama रनटाइम",
-                "description": "समर्पित कंसोल सत्र में प्रबंधित Ollama सेवा चालू करता है"
+                "name": "Ollama रनटाइम"
             }
         ]
     },
+    "settingCategories": [
+        {
+            "id": "engines",
+            "name": "इंजन"
+        },
+        {
+            "id": "browser-agent",
+            "name": "ब्राउज़र एजेंट"
+        },
+        {
+            "id": "sandbox",
+            "name": "सैंडबॉक्स"
+        },
+        {
+            "id": "web-search",
+            "name": "WebSearch"
+        },
+        {
+            "id": "web-search-engines",
+            "name": "WebSearch इंजन"
+        },
+        {
+            "id": "web-search-api",
+            "name": "WebSearch API"
+        },
+        {
+            "id": "web-search-search",
+            "name": "WebSearch खोज"
+        },
+        {
+            "id": "web-search-extraction",
+            "name": "WebSearch सामग्री निष्कर्षण"
+        },
+        {
+            "id": "web-search-cache",
+            "name": "WebSearch कैश"
+        }
+    ],
     "settings": {
-        "ui-port": {
-            "name": "UI सर्वर पोर्ट",
-            "description": "पोर्ट जिस पर UI सर्वर सुनता है"
-        },
-        "api-port": {
-            "name": "API सर्वर पोर्ट",
-            "description": "पोर्ट जिस पर API सर्वर सुनता है"
-        },
-        "aslm-host-theme": {
-            "name": "ASLM होस्ट थीम",
-            "description": "ASLM ऐप से थीम का स्नैपशॉट; प्रत्येक मॉड्यूल शुरू होने पर लागू होता है। केवल ASLM द्वारा प्रबंधित।"
-        },
-        "aslm-host-locale": {
-            "name": "ASLM होस्ट भाषा",
-            "description": "ASLM ऐप से भाषा का स्नैपशॉट; प्रत्येक मॉड्यूल शुरू होने पर लागू होता है। केवल ASLM द्वारा प्रबंधित।"
+        "generate-chat-titles": {
+            "name": "चैट शीर्षक बनाएँ"
         },
         "console_log_level": {
-            "name": "कंसोल लॉग स्तर",
-            "description": "ASLM-Chat ASLM कंसोल में कितना रनटाइम विवरण प्रिंट करता है"
-        },
-        "generate-chat-titles": {
-            "name": "चैट शीर्षक बनाएँ",
-            "description": "नई चैट में पहला संदेश भेजे जाने पर चुने गए मॉडल से शीर्षक बनाएँ।"
+            "name": "कंसोल लॉग स्तर"
         },
         "llm-engine": {
-            "name": "सक्रिय LLM इंजन",
-            "description": "चैट UI में जनरेशन के लिए उपयोग किया जाने वाला इंजन"
+            "name": "सक्रिय LLM इंजन"
         },
         "ollama-service": {
-            "name": "Ollama",
-            "description": "क्या Ollama इन्फरेंस सेवा स्थापित है"
+            "name": "Ollama"
         },
         "ollama-service_path": {
-            "name": "Ollama पथ",
-            "description": "Ollama निष्पादन योग्य फ़ाइल का पथ"
+            "name": "कस्टम Ollama पथ का उपयोग करें"
         },
         "ollama-service_data": {
-            "name": "Ollama डेटा",
-            "description": "Ollama डेटा निर्देशिका का पथ"
+            "name": "कस्टम Ollama डेटा पथ का उपयोग करें"
         },
         "ollama-service_models": {
-            "name": "Ollama मॉडल",
-            "description": "Ollama मॉडल निर्देशिका का पथ"
-        },
-        "ollama-service_port": {
-            "name": "Ollama पोर्ट",
-            "description": "पोर्ट जिस पर स्थानीय Ollama सेवा सुनती है"
+            "name": "कस्टम Ollama मॉडल पथ का उपयोग करें"
         },
         "lms": {
-            "name": "LM Studio",
-            "description": "क्या LM Studio एकीकरण उपलब्ध है"
+            "name": "LM Studio"
         },
         "lms_url": {
-            "name": "LM Studio पता",
-            "description": "LM Studio सर्वर API का आधार पता"
+            "name": "LM Studio सर्वर URL"
         },
         "openai": {
-            "name": "OpenAI-संगत API",
-            "description": "क्या OpenAI-संगत API एंडपॉइंट उपलब्ध है"
+            "name": "OpenAI-संगत API"
         },
         "openai_url": {
-            "name": "OpenAI-संगत पता",
-            "description": "OpenAI-संगत API एंडपॉइंट का आधार URL"
+            "name": "OpenAI-संगत URL"
         },
         "openai_api_key": {
-            "name": "OpenAI-संगत API कुंजी",
-            "description": "सुरक्षित एंडपॉइंट के लिए वैकल्पिक API कुंजी"
+            "name": "OpenAI-संगत API कुंजी (वैकल्पिक)"
         },
         "google-genai": {
-            "name": "Google GenAI",
-            "description": "क्या Google GenAI एकीकरण उपलब्ध है"
+            "name": "Google GenAI API"
         },
         "google_genai_url": {
-            "name": "Google GenAI पता",
-            "description": "Google GenAI Gemini API एंडपॉइंट का आधार URL"
+            "name": "Google GenAI API URL"
         },
         "google_genai_api_key": {
-            "name": "Google GenAI API कुंजी",
-            "description": "Google GenAI Gemini API अनुरोधों के लिए API कुंजी"
+            "name": "Google GenAI API कुंजी"
+        },
+        "web-search-tavily-api-key": {
+            "name": "Tavily API कुंजी (वैकल्पिक)"
+        },
+        "web-search-firecrawl-api-key": {
+            "name": "Firecrawl API कुंजी (वैकल्पिक)"
+        },
+        "web-search-brave-api-key": {
+            "name": "Brave Search API कुंजी (वैकल्पिक)"
+        },
+        "web-search-serpapi-api-key": {
+            "name": "SerpApi API कुंजी (वैकल्पिक)"
+        },
+        "web-search-max-results": {
+            "name": "अधिकतम खोज परिणाम"
+        },
+        "web-search-total-context-budget": {
+            "name": "कुल खोज संदर्भ बजट"
+        },
+        "web-search-prefetch-timeout": {
+            "name": "प्रीफ़ेच समय-सीमा"
+        },
+        "web-search-preview-max-chars": {
+            "name": "अधिकतम पूर्वावलोकन लंबाई"
+        },
+        "web-search-extraction-timeout": {
+            "name": "सामग्री निष्कर्षण समय-सीमा"
+        },
+        "web-search-max-page-chars": {
+            "name": "अधिकतम पृष्ठ लंबाई"
+        },
+        "web-search-min-content-length": {
+            "name": "न्यूनतम सामग्री लंबाई"
+        },
+        "web-search-compress-read-pages": {
+            "name": "लंबे पृष्ठ संपीड़ित करें"
+        },
+        "web-search-compress-threshold": {
+            "name": "संपीड़न सीमा"
+        },
+        "web-search-compress-target": {
+            "name": "संपीड़न लक्ष्य"
+        },
+        "web-search-cache-ttl": {
+            "name": "खोज परिणाम कैश अवधि"
+        },
+        "web-search-negative-cache-ttl": {
+            "name": "नकारात्मक खोज कैश अवधि"
+        },
+        "web-search-page-cache-ttl": {
+            "name": "पृष्ठ कैश अवधि"
+        },
+        "web-search-repeat-block-window": {
+            "name": "दोहराव अवरोध अवधि",
+            "description": "वह समय, सेकंड में, जिसके दौरान समान दोहराई गई क्वेरी अवरुद्ध रहती है"
+        },
+        "web-search-seen-source-window": {
+            "name": "देखे गए स्रोतों की अवधि",
+            "description": "वह समय, सेकंड में, जिसके दौरान हाल ही में लौटाए गए स्रोत दबाए जाते हैं"
+        },
+        "web-search-prefetch-max-urls": {
+            "name": "अधिकतम URL प्रीफ़ेच परिणाम",
+            "description": "प्रति खोज प्रीफ़ेच किए जाने वाले परिणाम URL की अधिकतम संख्या। शून्य प्रीफ़ेच को अक्षम करता है"
+        },
+        "web-search-tor-enabled": {
+            "name": "Tor खोज सक्षम करें",
+            "description": "केवल Windows पर समर्थित है और Tor का चालू होना आवश्यक है"
+        },
+        "web-search-profile-import-enabled": {
+            "name": "ब्राउज़र प्रोफ़ाइल आयात सक्षम करें",
+            "description": "Chrome, Edge, Brave और Firefox से कुकीज़ आयात करें"
+        },
+        "web-search-profile-import-all-profiles": {
+            "name": "सभी प्रोफ़ाइल आयात करें",
+            "description": "ब्राउज़रों की प्रत्येक प्रोफ़ाइल आयात करें"
+        },
+        "web-search-profile-import-refresh-hours": {
+            "name": "प्रोफ़ाइल रीफ़्रेश अवधि"
+        },
+        "web-search-profile-import-purge-on-disable": {
+            "name": "आयातित प्रोफ़ाइल हटाएँ",
+            "description": "ब्राउज़र प्रोफ़ाइल आयात अक्षम होने पर आयातित कुकीज़ हटाएँ"
+        },
+        "browser-agent-width": {
+            "name": "ब्राउज़र विंडो की चौड़ाई"
+        },
+        "browser-agent-height": {
+            "name": "ब्राउज़र विंडो की ऊँचाई"
+        },
+        "browser-agent-headless": {
+            "name": "हेडलेस मोड",
+            "description": "ब्राउज़र एजेंट को दृश्यमान ब्राउज़र विंडो के बिना चलाएँ"
+        },
+        "browser-agent-max-a11y-depth": {
+            "name": "अभिगम्यता गहराई",
+            "description": "अभिगम्यता ट्री को पार करने की अधिकतम गहराई"
+        },
+        "browser-agent-max-elements": {
+            "name": "एलिमेंट सीमा",
+            "description": "एक पृष्ठ से एकत्र किए जाने वाले एलिमेंट की अधिकतम संख्या"
+        },
+        "browser-agent-max-main-interactive": {
+            "name": "इंटरैक्टिव एलिमेंट सीमा",
+            "description": "संक्षिप्त स्नैपशॉट में शामिल इंटरैक्टिव एलिमेंट की अधिकतम संख्या"
+        },
+        "browser-agent-auto-text-preview-length": {
+            "name": "टेक्स्ट पूर्वावलोकन लंबाई",
+            "description": "स्वचालित पृष्ठ पूर्वावलोकन में प्रयुक्त टेक्स्ट की अधिकतम लंबाई"
+        },
+        "sandbox-container-name": {
+            "name": "सैंडबॉक्स कंटेनर का नाम"
+        },
+        "sandbox-image": {
+            "name": "सैंडबॉक्स इमेज",
+            "description": "सैंडबॉक्स द्वारा उपयोग की जाने वाली Docker Hub इमेज"
+        },
+        "sandbox-cpu-limit": {
+            "name": "CPU थ्रेड सीमा"
+        },
+        "sandbox-memory-limit": {
+            "name": "मेमोरी सीमा (GB)"
+        },
+        "sandbox-memory-swap-limit": {
+            "name": "मेमोरी और Swap सीमा (GB)",
+            "description": "मेमोरी और स्वैप की संयुक्त सीमा"
+        },
+        "sandbox-pids-limit": {
+            "name": "प्रोसेस सीमा"
+        },
+        "sandbox-storage-limit": {
+            "name": "स्टोरेज सीमा (GB)"
+        },
+        "sandbox-network-limit-mbit": {
+            "name": "नेटवर्क सीमा (Mbit/s)"
+        },
+        "sandbox-default-timeout": {
+            "name": "डिफ़ॉल्ट कमांड समय-सीमा"
+        },
+        "sandbox-max-output-bytes": {
+            "name": "आउटपुट सीमा"
+        },
+        "sandbox-output-head-ratio": {
+            "name": "आउटपुट आरंभ अनुपात",
+            "description": "काटे गए आउटपुट का वह अंश जो आरंभ से रखा जाता है"
+        },
+        "sandbox-max-read-bytes": {
+            "name": "पठन सीमा"
+        },
+        "sandbox-max-cat-file-bytes": {
+            "name": "cat फ़ाइल सीमा"
+        },
+        "sandbox-max-cat-line-threshold": {
+            "name": "cat पंक्ति सीमा"
+        },
+        "sandbox-max-image-preview-bytes": {
+            "name": "इमेज पूर्वावलोकन सीमा",
+            "description": "पूर्वावलोकन के रूप में लौटाई जाने वाली इमेज का अधिकतम आकार, बाइट में"
+        },
+        "sandbox-max-ls-entries": {
+            "name": "डायरेक्टरी प्रविष्टि सीमा"
+        },
+        "sandbox-max-find-results": {
+            "name": "find परिणाम सीमा"
+        },
+        "sandbox-max-grep-results": {
+            "name": "grep परिणाम सीमा"
+        },
+        "sandbox-background-timeout-threshold": {
+            "name": "बैकग्राउंड समय-सीमा थ्रेशोल्ड",
+            "description": "बैकग्राउंड निष्पादन चुनने के लिए प्रयुक्त समय-सीमा थ्रेशोल्ड, सेकंड में"
+        },
+        "sandbox-thread-limit": {
+            "name": "थ्रेड सीमा",
+            "description": "वर्कर और संख्यात्मक लाइब्रेरी थ्रेड की अधिकतम संख्या"
+        },
+        "sandbox-default-task-dir": {
+            "name": "वर्कस्पेस डायरेक्टरी"
+        },
+        "sandbox-workspace-cleanup-enabled": {
+            "name": "वर्कस्पेस क्लीनअप",
+            "description": "निष्क्रिय सैंडबॉक्स वर्कस्पेस को स्वचालित रूप से रीसायकल करें"
+        },
+        "sandbox-workspace-cleanup-idle-seconds": {
+            "name": "वर्कस्पेस क्लीनअप निष्क्रियता समय",
+            "description": "वर्कस्पेस क्लीनअप से पहले निष्क्रियता का समय, सेकंड में"
+        },
+        "sandbox-workspace-cleanup-recycle-seconds": {
+            "name": "वर्कस्पेस रीसायकल समय",
+            "description": "रीसायकल किए जाने से पहले वर्कस्पेस का अधिकतम जीवनकाल, सेकंड में"
+        },
+        "sandbox-workspace-cleanup-interval-seconds": {
+            "name": "वर्कस्पेस क्लीनअप अंतराल"
+        },
+        "sandbox-max-file-map-symbols": {
+            "name": "फ़ाइल मैप सिंबल सीमा",
+            "description": "बनाए गए मैप में प्रति फ़ाइल शामिल सिंबल की अधिकतम संख्या"
+        },
+        "sandbox-docker-start-timeout-seconds": {
+            "name": "Docker प्रारंभ समय-सीमा"
         }
     },
     "downloadsBridge": {

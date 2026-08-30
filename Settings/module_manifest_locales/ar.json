@@ -4,101 +4,300 @@
     "commands": {
         "firstRun": [
             {
-                "name": "الإعداد الأولي",
-                "description": "ينشئ settings.json ويطبّق ترحيلات قاعدة البيانات"
+                "name": "الإعداد الأولي"
             }
         ],
         "run": [
             {
-                "name": "خادم الواجهة",
-                "description": "يشغّل خادم تطوير Django"
+                "name": "خادم الواجهة"
             },
             {
-                "name": "بيئة تشغيل Ollama",
-                "description": "يشغّل خدمة Ollama المُدارة في جلسة وحدة تحكم مخصصة"
+                "name": "بيئة تشغيل Ollama"
             }
         ]
     },
+    "settingCategories": [
+        {
+            "id": "engines",
+            "name": "المحركات"
+        },
+        {
+            "id": "browser-agent",
+            "name": "وكيل المتصفح"
+        },
+        {
+            "id": "sandbox",
+            "name": "البيئة المعزولة"
+        },
+        {
+            "id": "web-search",
+            "name": "WebSearch"
+        },
+        {
+            "id": "web-search-engines",
+            "name": "محركات WebSearch"
+        },
+        {
+            "id": "web-search-api",
+            "name": "واجهة API لـ WebSearch"
+        },
+        {
+            "id": "web-search-search",
+            "name": "إعدادات بحث WebSearch"
+        },
+        {
+            "id": "web-search-extraction",
+            "name": "استخراج المحتوى في WebSearch"
+        },
+        {
+            "id": "web-search-cache",
+            "name": "ذاكرة WebSearch المؤقتة"
+        }
+    ],
     "settings": {
-        "ui-port": {
-            "name": "منفذ خادم الواجهة",
-            "description": "المنفذ الذي يستمع عليه خادم الواجهة"
-        },
-        "api-port": {
-            "name": "منفذ خادم API",
-            "description": "المنفذ الذي يستمع عليه خادم API"
-        },
-        "aslm-host-theme": {
-            "name": "سمة مضيف ASLM",
-            "description": "لقطة السمة من تطبيق ASLM؛ تُطبَّق عند كل بدء للوحدة. تُدار بواسطة ASLM فقط."
-        },
-        "aslm-host-locale": {
-            "name": "لغة مضيف ASLM",
-            "description": "لقطة اللغة من تطبيق ASLM؛ تُطبَّق عند كل بدء للوحدة. تُدار بواسطة ASLM فقط."
+        "generate-chat-titles": {
+            "name": "إنشاء عناوين المحادثات"
         },
         "console_log_level": {
-            "name": "مستوى سجل وحدة التحكم",
-            "description": "مقدار تفاصيل وقت التشغيل التي يطبعها ASLM-Chat في وحدة تحكم ASLM"
-        },
-        "generate-chat-titles": {
-            "name": "إنشاء عناوين الدردشات",
-            "description": "إنشاء عنوان باستخدام النموذج المحدد عند إرسال الرسالة الأولى في دردشة جديدة."
+            "name": "مستوى سجل وحدة التحكم"
         },
         "llm-engine": {
-            "name": "محرك LLM النشط",
-            "description": "المحرك المستخدم للتوليد في واجهة الدردشة"
+            "name": "محرك LLM النشط"
         },
         "ollama-service": {
-            "name": "Ollama",
-            "description": "ما إذا كانت خدمة استدلال Ollama مثبتة"
+            "name": "Ollama"
         },
         "ollama-service_path": {
-            "name": "مسار Ollama",
-            "description": "المسار إلى الملف التنفيذي لـ Ollama"
+            "name": "استخدام مسار مخصص لـ Ollama"
         },
         "ollama-service_data": {
-            "name": "بيانات Ollama",
-            "description": "المسار إلى دليل بيانات Ollama"
+            "name": "استخدام مسار مخصص لبيانات Ollama"
         },
         "ollama-service_models": {
-            "name": "نماذج Ollama",
-            "description": "المسار إلى دليل نماذج Ollama"
-        },
-        "ollama-service_port": {
-            "name": "منفذ Ollama",
-            "description": "المنفذ الذي تستمع عليه خدمة Ollama المحلية"
+            "name": "استخدام مسار مخصص لنماذج Ollama"
         },
         "lms": {
-            "name": "LM Studio",
-            "description": "ما إذا كان تكامل LM Studio متاحًا"
+            "name": "LM Studio"
         },
         "lms_url": {
-            "name": "عنوان LM Studio",
-            "description": "العنوان الأساسي لواجهة برمجة تطبيقات خادم LM Studio"
+            "name": "عنوان URL لخادم LM Studio"
         },
         "openai": {
-            "name": "واجهة API متوافقة مع OpenAI",
-            "description": "ما إذا كان نقطة نهاية API متوافقة مع OpenAI متاحة"
+            "name": "واجهة API متوافقة مع OpenAI"
         },
         "openai_url": {
-            "name": "عنوان متوافق مع OpenAI",
-            "description": "عنوان URL الأساسي لنقطة نهاية API المتوافقة مع OpenAI"
+            "name": "عنوان URL المتوافق مع OpenAI"
         },
         "openai_api_key": {
-            "name": "مفتاح API متوافق مع OpenAI",
-            "description": "مفتاح API اختياري لنقاط النهاية المحمية"
+            "name": "مفتاح API المتوافق مع OpenAI (اختياري)"
         },
         "google-genai": {
-            "name": "Google GenAI",
-            "description": "ما إذا كان تكامل Google GenAI متاحًا"
+            "name": "واجهة Google GenAI API"
         },
         "google_genai_url": {
-            "name": "عنوان Google GenAI",
-            "description": "عنوان URL الأساسي لنقطة نهاية API لـ Google GenAI Gemini"
+            "name": "عنوان URL لواجهة Google GenAI API"
         },
         "google_genai_api_key": {
-            "name": "مفتاح API لـ Google GenAI",
-            "description": "مفتاح API لطلبات API لـ Google GenAI Gemini"
+            "name": "مفتاح Google GenAI API"
+        },
+        "web-search-tavily-api-key": {
+            "name": "مفتاح Tavily API (اختياري)"
+        },
+        "web-search-firecrawl-api-key": {
+            "name": "مفتاح Firecrawl API (اختياري)"
+        },
+        "web-search-brave-api-key": {
+            "name": "مفتاح Brave Search API (اختياري)"
+        },
+        "web-search-serpapi-api-key": {
+            "name": "مفتاح SerpApi API (اختياري)"
+        },
+        "web-search-max-results": {
+            "name": "الحد الأقصى لنتائج البحث"
+        },
+        "web-search-total-context-budget": {
+            "name": "إجمالي ميزانية سياق البحث"
+        },
+        "web-search-prefetch-timeout": {
+            "name": "مهلة الجلب المسبق"
+        },
+        "web-search-preview-max-chars": {
+            "name": "الحد الأقصى لطول المعاينة"
+        },
+        "web-search-extraction-timeout": {
+            "name": "مهلة استخراج المحتوى"
+        },
+        "web-search-max-page-chars": {
+            "name": "الحد الأقصى لطول الصفحة"
+        },
+        "web-search-min-content-length": {
+            "name": "الحد الأدنى لطول المحتوى"
+        },
+        "web-search-compress-read-pages": {
+            "name": "ضغط الصفحات الطويلة"
+        },
+        "web-search-compress-threshold": {
+            "name": "عتبة الضغط"
+        },
+        "web-search-compress-target": {
+            "name": "الحجم المستهدف للضغط"
+        },
+        "web-search-cache-ttl": {
+            "name": "مدة صلاحية ذاكرة نتائج البحث المؤقتة"
+        },
+        "web-search-negative-cache-ttl": {
+            "name": "مدة صلاحية ذاكرة نتائج البحث السلبية"
+        },
+        "web-search-page-cache-ttl": {
+            "name": "مدة صلاحية ذاكرة الصفحات المؤقتة"
+        },
+        "web-search-repeat-block-window": {
+            "name": "نافذة حظر التكرار",
+            "description": "المدة بالثواني التي يُحظر خلالها تكرار استعلام مطابق"
+        },
+        "web-search-seen-source-window": {
+            "name": "نافذة المصادر التي سبق عرضها",
+            "description": "المدة بالثواني التي تُحجب خلالها المصادر التي أُعيدت مؤخراً"
+        },
+        "web-search-prefetch-max-urls": {
+            "name": "الحد الأقصى لنتائج الجلب المسبق لعناوين URL",
+            "description": "الحد الأقصى لعناوين URL التي تُجلب مسبقاً لكل عملية بحث. القيمة صفر تعطل الجلب المسبق"
+        },
+        "web-search-tor-enabled": {
+            "name": "تمكين البحث عبر Tor",
+            "description": "مدعوم على Windows فقط ويتطلب تشغيل Tor"
+        },
+        "web-search-profile-import-enabled": {
+            "name": "تمكين استيراد ملفات تعريف المتصفح",
+            "description": "استيراد ملفات تعريف الارتباط من Chrome وEdge وBrave وFirefox"
+        },
+        "web-search-profile-import-all-profiles": {
+            "name": "استيراد جميع الملفات التعريفية",
+            "description": "استيراد كل الملفات التعريفية من المتصفحات"
+        },
+        "web-search-profile-import-refresh-hours": {
+            "name": "فترة تحديث الملفات التعريفية"
+        },
+        "web-search-profile-import-purge-on-disable": {
+            "name": "مسح الملفات التعريفية المستوردة",
+            "description": "إزالة ملفات تعريف الارتباط المستوردة عند تعطيل استيراد ملفات تعريف المتصفح"
+        },
+        "browser-agent-width": {
+            "name": "عرض نافذة المتصفح"
+        },
+        "browser-agent-height": {
+            "name": "ارتفاع نافذة المتصفح"
+        },
+        "browser-agent-headless": {
+            "name": "الوضع دون واجهة",
+            "description": "تشغيل وكيل المتصفح من دون نافذة متصفح مرئية"
+        },
+        "browser-agent-max-a11y-depth": {
+            "name": "عمق إمكانية الوصول",
+            "description": "الحد الأقصى لعمق اجتياز شجرة إمكانية الوصول"
+        },
+        "browser-agent-max-elements": {
+            "name": "حد العناصر",
+            "description": "الحد الأقصى لعدد العناصر التي تُجمع من صفحة واحدة"
+        },
+        "browser-agent-max-main-interactive": {
+            "name": "حد العناصر التفاعلية",
+            "description": "الحد الأقصى لعدد العناصر التفاعلية المضمنة في لقطة مختصرة"
+        },
+        "browser-agent-auto-text-preview-length": {
+            "name": "طول معاينة النص",
+            "description": "الحد الأقصى لطول النص المستخدم في المعاينة التلقائية للصفحة"
+        },
+        "sandbox-container-name": {
+            "name": "اسم حاوية البيئة المعزولة"
+        },
+        "sandbox-image": {
+            "name": "صورة البيئة المعزولة",
+            "description": "صورة Docker Hub التي تستخدمها البيئة المعزولة"
+        },
+        "sandbox-cpu-limit": {
+            "name": "حد خيوط CPU"
+        },
+        "sandbox-memory-limit": {
+            "name": "حد الذاكرة (GB)"
+        },
+        "sandbox-memory-swap-limit": {
+            "name": "حد الذاكرة وذاكرة Swap (GB)",
+            "description": "الحد الإجمالي للذاكرة وذاكرة التبديل"
+        },
+        "sandbox-pids-limit": {
+            "name": "حد العمليات"
+        },
+        "sandbox-storage-limit": {
+            "name": "حد التخزين (GB)"
+        },
+        "sandbox-network-limit-mbit": {
+            "name": "حد الشبكة (Mbit/s)"
+        },
+        "sandbox-default-timeout": {
+            "name": "مهلة الأوامر الافتراضية"
+        },
+        "sandbox-max-output-bytes": {
+            "name": "حد المخرجات"
+        },
+        "sandbox-output-head-ratio": {
+            "name": "نسبة بداية المخرجات",
+            "description": "نسبة المخرجات المقتطعة التي يُحتفظ بها من البداية"
+        },
+        "sandbox-max-read-bytes": {
+            "name": "حد القراءة"
+        },
+        "sandbox-max-cat-file-bytes": {
+            "name": "حد حجم ملف cat"
+        },
+        "sandbox-max-cat-line-threshold": {
+            "name": "عتبة أسطر cat"
+        },
+        "sandbox-max-image-preview-bytes": {
+            "name": "حد معاينة الصور",
+            "description": "الحد الأقصى لحجم الصورة بالبايت الذي يُعاد كمعاينة"
+        },
+        "sandbox-max-ls-entries": {
+            "name": "حد إدخالات الدليل"
+        },
+        "sandbox-max-find-results": {
+            "name": "حد نتائج find"
+        },
+        "sandbox-max-grep-results": {
+            "name": "حد نتائج grep"
+        },
+        "sandbox-background-timeout-threshold": {
+            "name": "عتبة مهلة التنفيذ في الخلفية",
+            "description": "عتبة المهلة بالثواني المستخدمة لاختيار التنفيذ في الخلفية"
+        },
+        "sandbox-thread-limit": {
+            "name": "حد الخيوط",
+            "description": "الحد الأقصى لخيوط العامل ومكتبات الحوسبة العددية"
+        },
+        "sandbox-default-task-dir": {
+            "name": "دليل مساحة العمل"
+        },
+        "sandbox-workspace-cleanup-enabled": {
+            "name": "تنظيف مساحة العمل",
+            "description": "إعادة تدوير مساحات العمل غير النشطة في البيئة المعزولة تلقائياً"
+        },
+        "sandbox-workspace-cleanup-idle-seconds": {
+            "name": "مدة خمول تنظيف مساحة العمل",
+            "description": "مدة الخمول بالثواني قبل تنظيف مساحة العمل"
+        },
+        "sandbox-workspace-cleanup-recycle-seconds": {
+            "name": "مدة إعادة تدوير مساحة العمل",
+            "description": "الحد الأقصى لعمر مساحة العمل بالثواني قبل إعادة تدويرها"
+        },
+        "sandbox-workspace-cleanup-interval-seconds": {
+            "name": "فاصل تنظيف مساحة العمل"
+        },
+        "sandbox-max-file-map-symbols": {
+            "name": "حد رموز خريطة الملفات",
+            "description": "الحد الأقصى للرموز المضمنة لكل ملف في الخرائط المُنشأة"
+        },
+        "sandbox-docker-start-timeout-seconds": {
+            "name": "مهلة بدء Docker"
         }
     },
     "downloadsBridge": {

@@ -31,14 +31,12 @@ def _venv_declares(packages: list[str], dist: str) -> bool:
 def _build_initial_settings(
     existing: dict[str, Any],
     ui_port: int,
-    api_port: int,
 ) -> dict[str, Any]:
     initial: dict[str, Any] = dict(existing)
     initial.update(
         {
             "secret_key": existing.get("secret_key") or secrets.token_urlsafe(50),
             "ui-port": existing.get("ui-port", ui_port),
-            "api-port": existing.get("api-port", api_port),
             "ollama-service_port": existing.get("ollama-service_port", 20003),
             "allowed_hosts": existing.get("allowed_hosts", ["127.0.0.1", "localhost"]),
             "debug": existing.get("debug", False),
@@ -209,7 +207,6 @@ def _run_tool_bootstrap(log: bool) -> None:
 def _print_summary(settings_file: Path, initial: dict[str, Any]) -> None:
     print(f"[ASLM-Chat] Settings written to: {settings_file}")
     print(f"[ASLM-Chat]   ui-port    : {initial['ui-port']}")
-    print(f"[ASLM-Chat]   api-port   : {initial['api-port']}")
     print(f"[ASLM-Chat]   ollama-port: {initial.get('ollama-service_port', 20003)}")
     print(f"[ASLM-Chat]   debug      : {initial['debug']}")
     print(f"[ASLM-Chat]   llm-engine : {initial['llm-engine']}")
@@ -223,12 +220,11 @@ def _print_summary(settings_file: Path, initial: dict[str, Any]) -> None:
 def run(
     log: bool = False,
     ui_port: int = 20000,
-    api_port: int = 20001,
 ) -> None:
     from Settings.settings import SETTINGS_FILE, load_settings, save_settings
 
     existing = load_settings()
-    initial = _build_initial_settings(existing, ui_port, api_port)
+    initial = _build_initial_settings(existing, ui_port)
     save_settings(initial)
 
     from Settings.mcp_json import ensure_default_mcp_json

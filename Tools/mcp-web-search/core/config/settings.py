@@ -199,8 +199,18 @@ class SearchConfig:
 
 
 _cached_config: SearchConfig | None = None
+_cached_config_signature: tuple[int, int] | None = None
 
 _MISSING = object()
+
+
+# Return the file signature used to invalidate the config cache.
+def _config_signature(path: Path) -> tuple[int, int] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return stat.st_mtime_ns, stat.st_size
 
 
 # Coerce a value to one of an allowed set (case-insensitive), falling back on default.
@@ -244,21 +254,29 @@ def _optional_string(value: object, default: Optional[str]) -> Optional[str]:
 
 # Load search_config.json and cache a SearchConfig singleton (custom path for tests only).
 def load_search_config(path: Path | None = None) -> SearchConfig:
-    global _cached_config
-    if _cached_config is not None and path is None:
-        return _cached_config
+    global _cached_config, _cached_config_signature
 
     target = path or _CONFIG_PATH
+    signature = _config_signature(target)
+    if path is None and _cached_config is not None and _cached_config_signature == signature:
+        return _cached_config
+
     try:
         raw = json.loads(target.read_text(encoding="utf-8"))
     except FileNotFoundError:
         logger.warning("search_config.json not found at %s — using defaults", target)
-        _cached_config = SearchConfig()
-        return _cached_config
+        config = SearchConfig()
+        if path is None:
+            _cached_config = config
+            _cached_config_signature = signature
+        return config
     except json.JSONDecodeError as exc:
         logger.error("Invalid JSON in %s: %s — using defaults", target, exc)
-        _cached_config = SearchConfig()
-        return _cached_config
+        config = SearchConfig()
+        if path is None:
+            _cached_config = config
+            _cached_config_signature = signature
+        return config
 
     s = raw.get("search", {})
     e = raw.get("extraction", {})
@@ -365,4 +383,5 @@ def load_search_config(path: Path | None = None) -> SearchConfig:
 
     if path is None:
         _cached_config = config
+        _cached_config_signature = signature
     return config

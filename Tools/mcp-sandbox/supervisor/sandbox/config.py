@@ -46,11 +46,15 @@ def _load_sandbox_env(path: str) -> None:
 
 
 if not IN_CONTAINER:
+    # Regenerate the ENV bridge before any sandbox-controlled variable is read.
+    from sandbox.config_bridge import sync_sandbox_env
+
+    sync_sandbox_env(env_path=Path(CONFIG_FILE_PATH))
     _load_sandbox_env(CONFIG_FILE_PATH)
 
 CONTAINER_NAME = os.getenv("SANDBOX_CONTAINER_NAME", "aslm-chat-sandbox")
 SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "nggtlightkeeper/aslm-chat-sandbox:latest")
-SANDBOX_IMAGE_SOURCE = os.getenv("SANDBOX_IMAGE_SOURCE", "auto").strip().lower()
+SANDBOX_IMAGE_SOURCE = os.getenv("SANDBOX_IMAGE_SOURCE", "registry").strip().lower()
 SNAPSHOT_IMAGE_PREFIX = os.getenv(
     "SANDBOX_SNAPSHOT_PREFIX",
     f"{CONTAINER_NAME}-snapshot",
@@ -119,8 +123,8 @@ LOOP_BREAK_THRESHOLD = int(os.getenv("SANDBOX_LOOP_BREAK_THRESHOLD", "3"))
 MAX_FILE_MAP_SYMBOLS = int(os.getenv("SANDBOX_MAX_FILE_MAP_SYMBOLS", "50"))
 CPU_LIMIT = os.getenv("SANDBOX_CPU_LIMIT", "4")
 THREAD_LIMIT = int(os.getenv("SANDBOX_THREAD_LIMIT", "4"))
-MEMORY_LIMIT = os.getenv("SANDBOX_MEMORY_LIMIT", "3g")
-MEMORY_SWAP_LIMIT = os.getenv("SANDBOX_MEMORY_SWAP_LIMIT", "4g")
+MEMORY_LIMIT = os.getenv("SANDBOX_MEMORY_LIMIT", "3G")
+MEMORY_SWAP_LIMIT = os.getenv("SANDBOX_MEMORY_SWAP_LIMIT", "4G")
 PIDS_LIMIT = os.getenv("SANDBOX_PIDS_LIMIT", "256")
 STORAGE_LIMIT = os.getenv("SANDBOX_STORAGE_LIMIT", "12G")
 NETWORK_LIMIT_MBIT = int(os.getenv("SANDBOX_NETWORK_LIMIT_MBIT", "0"))

@@ -4,101 +4,300 @@
     "commands": {
         "firstRun": [
             {
-                "name": "Thiết lập lần đầu",
-                "description": "Tạo settings.json và áp dụng di chuyển cơ sở dữ liệu"
+                "name": "Thiết lập lần đầu"
             }
         ],
         "run": [
             {
-                "name": "Máy chủ giao diện",
-                "description": "Khởi chạy máy chủ phát triển Django"
+                "name": "Máy chủ giao diện"
             },
             {
-                "name": "Runtime Ollama",
-                "description": "Khởi chạy dịch vụ Ollama được quản lý trong phiên console riêng"
+                "name": "Runtime Ollama"
             }
         ]
     },
+    "settingCategories": [
+        {
+            "id": "engines",
+            "name": "Công cụ"
+        },
+        {
+            "id": "browser-agent",
+            "name": "Tác nhân Trình duyệt"
+        },
+        {
+            "id": "sandbox",
+            "name": "Hộp cát"
+        },
+        {
+            "id": "web-search",
+            "name": "WebSearch"
+        },
+        {
+            "id": "web-search-engines",
+            "name": "Công cụ WebSearch"
+        },
+        {
+            "id": "web-search-api",
+            "name": "API WebSearch"
+        },
+        {
+            "id": "web-search-search",
+            "name": "Tìm kiếm WebSearch"
+        },
+        {
+            "id": "web-search-extraction",
+            "name": "Trích xuất WebSearch"
+        },
+        {
+            "id": "web-search-cache",
+            "name": "Bộ nhớ đệm WebSearch"
+        }
+    ],
     "settings": {
-        "ui-port": {
-            "name": "Cổng máy chủ giao diện",
-            "description": "Cổng mà máy chủ giao diện lắng nghe"
-        },
-        "api-port": {
-            "name": "Cổng máy chủ API",
-            "description": "Cổng mà máy chủ API lắng nghe"
-        },
-        "aslm-host-theme": {
-            "name": "Chủ đề host ASLM",
-            "description": "Ảnh chụp chủ đề từ ứng dụng ASLM; được áp dụng mỗi lần khởi động mô-đun. Chỉ do ASLM quản lý."
-        },
-        "aslm-host-locale": {
-            "name": "Ngôn ngữ host ASLM",
-            "description": "Ảnh chụp ngôn ngữ từ ứng dụng ASLM; được áp dụng mỗi lần khởi động mô-đun. Chỉ do ASLM quản lý."
+        "generate-chat-titles": {
+            "name": "Tạo Tiêu đề Cuộc trò chuyện"
         },
         "console_log_level": {
-            "name": "Mức nhật ký console",
-            "description": "Mức chi tiết runtime mà ASLM-Chat in ra console ASLM"
-        },
-        "generate-chat-titles": {
-            "name": "Tạo tiêu đề cuộc trò chuyện",
-            "description": "Tạo tiêu đề bằng mô hình đã chọn khi tin nhắn đầu tiên được gửi trong cuộc trò chuyện mới."
+            "name": "Mức Nhật ký Bảng điều khiển"
         },
         "llm-engine": {
-            "name": "Công cụ LLM đang hoạt động",
-            "description": "Công cụ dùng để tạo nội dung trong giao diện chat"
+            "name": "Công cụ LLM Đang hoạt động"
         },
         "ollama-service": {
-            "name": "Ollama",
-            "description": "Dịch vụ suy luận Ollama đã được cài đặt hay chưa"
+            "name": "Ollama"
         },
         "ollama-service_path": {
-            "name": "Đường dẫn Ollama",
-            "description": "Đường dẫn tới tệp thực thi Ollama"
+            "name": "Sử dụng đường dẫn Ollama tùy chỉnh"
         },
         "ollama-service_data": {
-            "name": "Dữ liệu Ollama",
-            "description": "Đường dẫn tới thư mục dữ liệu Ollama"
+            "name": "Sử dụng đường dẫn dữ liệu Ollama tùy chỉnh"
         },
         "ollama-service_models": {
-            "name": "Mô hình Ollama",
-            "description": "Đường dẫn tới thư mục mô hình Ollama"
-        },
-        "ollama-service_port": {
-            "name": "Cổng Ollama",
-            "description": "Cổng mà dịch vụ Ollama cục bộ lắng nghe"
+            "name": "Sử dụng đường dẫn mô hình Ollama tùy chỉnh"
         },
         "lms": {
-            "name": "LM Studio",
-            "description": "Tích hợp LM Studio có khả dụng hay không"
+            "name": "LM Studio"
         },
         "lms_url": {
-            "name": "Địa chỉ LM Studio",
-            "description": "Địa chỉ cơ sở của API máy chủ LM Studio"
+            "name": "URL Máy chủ LM Studio"
         },
         "openai": {
-            "name": "API tương thích OpenAI",
-            "description": "Điểm cuối API tương thích OpenAI có khả dụng hay không"
+            "name": "API Tương thích OpenAI"
         },
         "openai_url": {
-            "name": "Địa chỉ tương thích OpenAI",
-            "description": "URL cơ sở của điểm cuối API tương thích OpenAI"
+            "name": "URL Tương thích OpenAI"
         },
         "openai_api_key": {
-            "name": "Khóa API tương thích OpenAI",
-            "description": "Khóa API tùy chọn cho các điểm cuối được bảo vệ"
+            "name": "Khóa API Tương thích OpenAI (tùy chọn)"
         },
         "google-genai": {
-            "name": "Google GenAI",
-            "description": "Tích hợp Google GenAI có khả dụng hay không"
+            "name": "API Google GenAI"
         },
         "google_genai_url": {
-            "name": "Địa chỉ Google GenAI",
-            "description": "URL cơ sở của điểm cuối API Google GenAI Gemini"
+            "name": "URL API Google GenAI"
         },
         "google_genai_api_key": {
-            "name": "Khóa API Google GenAI",
-            "description": "Khóa API cho các yêu cầu API Google GenAI Gemini"
+            "name": "Khóa API Google GenAI"
+        },
+        "web-search-tavily-api-key": {
+            "name": "Khóa API Tavily (tùy chọn)"
+        },
+        "web-search-firecrawl-api-key": {
+            "name": "Khóa API Firecrawl (tùy chọn)"
+        },
+        "web-search-brave-api-key": {
+            "name": "Khóa API Brave Search (tùy chọn)"
+        },
+        "web-search-serpapi-api-key": {
+            "name": "Khóa API SerpApi (tùy chọn)"
+        },
+        "web-search-max-results": {
+            "name": "Số kết quả tìm kiếm tối đa"
+        },
+        "web-search-total-context-budget": {
+            "name": "Tổng ngân sách ngữ cảnh tìm kiếm"
+        },
+        "web-search-prefetch-timeout": {
+            "name": "Thời gian chờ tải trước"
+        },
+        "web-search-preview-max-chars": {
+            "name": "Độ dài xem trước tối đa"
+        },
+        "web-search-extraction-timeout": {
+            "name": "Thời gian chờ trích xuất"
+        },
+        "web-search-max-page-chars": {
+            "name": "Độ dài trang tối đa"
+        },
+        "web-search-min-content-length": {
+            "name": "Độ dài nội dung tối thiểu"
+        },
+        "web-search-compress-read-pages": {
+            "name": "Nén các trang dài"
+        },
+        "web-search-compress-threshold": {
+            "name": "Ngưỡng nén"
+        },
+        "web-search-compress-target": {
+            "name": "Mục tiêu nén"
+        },
+        "web-search-cache-ttl": {
+            "name": "Thời hạn bộ nhớ đệm kết quả tìm kiếm"
+        },
+        "web-search-negative-cache-ttl": {
+            "name": "Thời hạn bộ nhớ đệm tìm kiếm âm"
+        },
+        "web-search-page-cache-ttl": {
+            "name": "Thời hạn bộ nhớ đệm trang"
+        },
+        "web-search-repeat-block-window": {
+            "name": "Khoảng chặn truy vấn lặp",
+            "description": "Thời gian tính bằng giây để chặn một truy vấn giống hệt được lặp lại"
+        },
+        "web-search-seen-source-window": {
+            "name": "Khoảng ẩn nguồn đã xem",
+            "description": "Thời gian tính bằng giây để ẩn các nguồn vừa được trả về"
+        },
+        "web-search-prefetch-max-urls": {
+            "name": "Số kết quả URL tải trước tối đa",
+            "description": "Số URL kết quả tối đa được tải trước cho mỗi lần tìm kiếm. Đặt bằng 0 để tắt tải trước"
+        },
+        "web-search-tor-enabled": {
+            "name": "Bật Tìm kiếm Tor",
+            "description": "Chỉ được hỗ trợ trên Windows và yêu cầu Tor đang chạy"
+        },
+        "web-search-profile-import-enabled": {
+            "name": "Bật nhập hồ sơ trình duyệt",
+            "description": "Nhập cookie từ Chrome, Edge, Brave và Firefox"
+        },
+        "web-search-profile-import-all-profiles": {
+            "name": "Nhập tất cả hồ sơ",
+            "description": "Nhập mọi hồ sơ từ các trình duyệt"
+        },
+        "web-search-profile-import-refresh-hours": {
+            "name": "Thời gian làm mới hồ sơ"
+        },
+        "web-search-profile-import-purge-on-disable": {
+            "name": "Xóa hồ sơ đã nhập",
+            "description": "Xóa cookie đã nhập khi tắt tính năng nhập hồ sơ trình duyệt"
+        },
+        "browser-agent-width": {
+            "name": "Chiều rộng cửa sổ trình duyệt"
+        },
+        "browser-agent-height": {
+            "name": "Chiều cao cửa sổ trình duyệt"
+        },
+        "browser-agent-headless": {
+            "name": "Chế độ Không giao diện",
+            "description": "Chạy tác nhân trình duyệt mà không hiển thị cửa sổ trình duyệt"
+        },
+        "browser-agent-max-a11y-depth": {
+            "name": "Độ sâu trợ năng",
+            "description": "Độ sâu duyệt cây trợ năng tối đa"
+        },
+        "browser-agent-max-elements": {
+            "name": "Giới hạn phần tử",
+            "description": "Số phần tử tối đa được thu thập từ một trang"
+        },
+        "browser-agent-max-main-interactive": {
+            "name": "Giới hạn phần tử tương tác",
+            "description": "Số phần tử tương tác tối đa được đưa vào bản chụp rút gọn"
+        },
+        "browser-agent-auto-text-preview-length": {
+            "name": "Độ dài xem trước văn bản",
+            "description": "Độ dài văn bản tối đa dùng cho bản xem trước trang tự động"
+        },
+        "sandbox-container-name": {
+            "name": "Tên Container Hộp cát"
+        },
+        "sandbox-image": {
+            "name": "Image Hộp cát",
+            "description": "Image Docker Hub được hộp cát sử dụng"
+        },
+        "sandbox-cpu-limit": {
+            "name": "Giới hạn luồng CPU"
+        },
+        "sandbox-memory-limit": {
+            "name": "Giới hạn bộ nhớ (GB)"
+        },
+        "sandbox-memory-swap-limit": {
+            "name": "Giới hạn bộ nhớ và Swap (GB)",
+            "description": "Giới hạn tổng hợp của bộ nhớ và bộ nhớ hoán đổi"
+        },
+        "sandbox-pids-limit": {
+            "name": "Giới hạn tiến trình"
+        },
+        "sandbox-storage-limit": {
+            "name": "Giới hạn dung lượng lưu trữ (GB)"
+        },
+        "sandbox-network-limit-mbit": {
+            "name": "Giới hạn mạng (Mbit/s)"
+        },
+        "sandbox-default-timeout": {
+            "name": "Thời gian chờ lệnh mặc định"
+        },
+        "sandbox-max-output-bytes": {
+            "name": "Giới hạn đầu ra"
+        },
+        "sandbox-output-head-ratio": {
+            "name": "Tỷ lệ giữ phần đầu đầu ra",
+            "description": "Tỷ lệ đầu ra bị cắt được giữ lại từ phần đầu"
+        },
+        "sandbox-max-read-bytes": {
+            "name": "Giới hạn đọc"
+        },
+        "sandbox-max-cat-file-bytes": {
+            "name": "Giới hạn tệp cat"
+        },
+        "sandbox-max-cat-line-threshold": {
+            "name": "Ngưỡng dòng cat"
+        },
+        "sandbox-max-image-preview-bytes": {
+            "name": "Giới hạn xem trước hình ảnh",
+            "description": "Kích thước hình ảnh tối đa tính bằng byte được trả về dưới dạng bản xem trước"
+        },
+        "sandbox-max-ls-entries": {
+            "name": "Giới hạn mục thư mục"
+        },
+        "sandbox-max-find-results": {
+            "name": "Giới hạn kết quả find"
+        },
+        "sandbox-max-grep-results": {
+            "name": "Giới hạn kết quả grep"
+        },
+        "sandbox-background-timeout-threshold": {
+            "name": "Ngưỡng thời gian chờ chạy nền",
+            "description": "Ngưỡng thời gian chờ tính bằng giây dùng để chọn chế độ thực thi nền"
+        },
+        "sandbox-thread-limit": {
+            "name": "Giới hạn luồng",
+            "description": "Số luồng tối đa cho tiến trình xử lý và thư viện tính toán số"
+        },
+        "sandbox-default-task-dir": {
+            "name": "Thư mục không gian làm việc"
+        },
+        "sandbox-workspace-cleanup-enabled": {
+            "name": "Dọn dẹp Không gian làm việc",
+            "description": "Tự động tái tạo các không gian làm việc hộp cát không hoạt động"
+        },
+        "sandbox-workspace-cleanup-idle-seconds": {
+            "name": "Thời gian không hoạt động trước khi dọn dẹp",
+            "description": "Thời gian không hoạt động tính bằng giây trước khi dọn dẹp không gian làm việc"
+        },
+        "sandbox-workspace-cleanup-recycle-seconds": {
+            "name": "Thời gian tái tạo không gian làm việc",
+            "description": "Tuổi thọ tối đa của không gian làm việc tính bằng giây trước khi được tái tạo"
+        },
+        "sandbox-workspace-cleanup-interval-seconds": {
+            "name": "Khoảng thời gian dọn dẹp không gian làm việc"
+        },
+        "sandbox-max-file-map-symbols": {
+            "name": "Giới hạn ký hiệu sơ đồ tệp",
+            "description": "Số ký hiệu tối đa cho mỗi tệp được đưa vào các sơ đồ được tạo"
+        },
+        "sandbox-docker-start-timeout-seconds": {
+            "name": "Thời gian chờ khởi động Docker"
         }
     },
     "downloadsBridge": {

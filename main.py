@@ -249,14 +249,13 @@ def cmd_collectstatic(log: bool) -> None:
 def cmd_first_run(
     log: bool = True,
     ui_port: int = 30000,
-    api_port: int = 30001,
 ) -> None:
     """Generate settings and apply initial migrations."""
 
     from Settings.first_run import run as first_run
 
     print("[ASLM-Chat] Running first-run setup...")
-    first_run(log=log, ui_port=ui_port, api_port=api_port)
+    first_run(log=log, ui_port=ui_port)
 
     from Services import venv_manager
 
@@ -403,7 +402,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("command", type=str, help="Command to execute")
     parser.add_argument("--port", type=int, default=30000, help="Port for runserver (default: 30000)")
-    parser.add_argument("--api-port", type=int, default=30001, help="API server port (default: 30001)")
     parser.add_argument("--app", type=str, default=None, help="App name for makemigrations")
     parser.add_argument("--key", type=str, default=None, help="Setting key for get_setting/set_setting")
     parser.add_argument("--value", type=str, default=None, help="Setting value for set_setting")
@@ -483,7 +481,7 @@ def main() -> None:
             cmd_collectstatic(args.log)
 
         case "first_run":
-            cmd_first_run(log=True, ui_port=args.port, api_port=args.api_port)
+            cmd_first_run(log=True, ui_port=args.port)
 
         case "get_setting":
             if not args.key:
