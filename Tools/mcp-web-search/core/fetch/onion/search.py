@@ -130,26 +130,54 @@ async def _discover_for_service(svc, query: str, *, limit: int, serp_timeout: fl
 # Fetch one result page over Tor and return its BM25-compressed content (None on any failure).
 async def _scrape_one(url: str, query: str, provider: str, *, timeout: float, max_chars: int):
     from core.extract.content_processor import compress_to_budget
-    from core.extract.page_normalizer import normalize_page
+    from core.extract.page_normalizer import has_extractable_content, normalize_page
     from core.fetch.antibot import is_antibot
     from core.fetch.thread_pool import io_pool as _io_pool
 
     try:
         r = await asyncio.wait_for(onion_fetch(url, timeout=timeout), timeout=timeout + 5)
-    except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+    except asyncio.TimeoutError:
+        logger.warning("onion fetch timed out provider=%s url=%r", provider, url)
         return None
-    if not r.ok or not r.text or is_antibot(r.text):
+    except Exception:  # noqa: BLE001 — one failed source must not sink the search
+        logger.warning("onion fetch raised provider=%s url=%r", provider, url, exc_info=True)
+        return None
+    if not r.ok or not r.text:
+        logger.warning(
+            "onion fetch failed provider=%s url=%r http_status=%d error=%s",
+            provider,
+            url,
+            r.http_status,
+            r.error or r.status,
+        )
+        return None
+    if is_antibot(r.text):
+        logger.warning("onion fetch returned an antibot wall provider=%s url=%r", provider, url)
         return None
     loop = asyncio.get_running_loop()
     try:
         md = await asyncio.wait_for(
-            loop.run_in_executor(_io_pool, lambda: normalize_page(url, r.text)), timeout=10
+            loop.run_in_executor(
+                _io_pool,
+                lambda: normalize_page(url, r.text, favor_recall=True),
+            ),
+            timeout=10,
         )
-    except Exception:  # noqa: BLE001
+    except Exception:  # noqa: BLE001 — one failed extraction must not sink the search
+        logger.warning("onion extraction failed provider=%s url=%r", provider, url, exc_info=True)
         return None
-    if not md:
+    if not has_extractable_content(md):
+        logger.warning(
+            "onion extraction returned no page content provider=%s url=%r html_len=%d",
+            provider,
+            url,
+            len(r.text),
+        )
         return None
     content = compress_to_budget(md, query, max_chars)
+    if not content.strip():
+        logger.warning("onion compression returned no content provider=%s url=%r", provider, url)
+        return None
     title = next((ln.lstrip("# ").strip() for ln in (content or md).splitlines() if ln.strip()), url)
     return OnionResult(url=url, host=urlparse(url).netloc, title=title[:200],
                        content=content, provider=provider)

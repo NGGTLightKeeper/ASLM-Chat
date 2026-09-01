@@ -5,7 +5,10 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+import core.config as config_module
+import core.fetch.onion as onion_module
 from core.fetch.browser.models import BrowserFetch, STATUS_OK
+from core.fetch.onion.transport import OnionFetch
 from core.profiles import METHOD_BROWSER, METHOD_HTTPX
 from core.read import service as read_service
 from custom_domains import GenericRequest
@@ -116,3 +119,39 @@ def test_failed_browser_fallback_keeps_original_http_status(monkeypatch):
 
     assert result.ok is False
     assert result.markdown.endswith("(HTTP 402)")
+
+
+# Preserve short but valid Onion content instead of treating the quality threshold as emptiness.
+def test_short_onion_page_remains_a_success(monkeypatch):
+    service = _service()
+    service._cfg = SimpleNamespace(extraction=SimpleNamespace(min_content_length=800))
+    short_markdown = "# Short Onion page\n\n**Site:** example.onion\n\n---\n\nUseful short content."
+
+    # Return a successful Onion response without opening a real Tor connection.
+    async def fetch_onion(url, **_kwargs):
+        return OnionFetch(
+            url=url,
+            status="ok",
+            ok=True,
+            http_status=200,
+            text="<p>Useful short content.</p>",
+        )
+
+    monkeypatch.setattr(
+        config_module,
+        "load_search_config",
+        lambda: SimpleNamespace(tor=SimpleNamespace(enabled=True)),
+    )
+    monkeypatch.setattr(onion_module, "onion_fetch", fetch_onion)
+    monkeypatch.setattr(
+        read_service,
+        "normalize_page",
+        lambda _url, _html, **_kwargs: short_markdown,
+    )
+
+    result = asyncio.run(service._read_onion("http://example.onion/page"))
+
+    assert result.ok is True
+    assert result.method == "onion"
+    assert "Very little content extracted" in result.markdown
+    assert "Useful short content" in result.markdown

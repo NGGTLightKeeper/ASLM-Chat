@@ -17,7 +17,7 @@ from core.cache import get_page_cache
 from core.config import load_search_config
 from core.extract.content_processor import compress_read_page_markdown
 from core.extract.nextjs_rsc import extract_nextjs_rsc_text
-from core.extract.page_normalizer import normalize_page
+from core.extract.page_normalizer import has_extractable_content, normalize_page
 from core.fetch.antibot import is_antibot
 from core.fetch.browser.client import browser_available, browser_fetch
 from core.fetch.browser.models import STATUS_TIMEOUT, BrowserFetch
@@ -718,6 +718,12 @@ class ReadPageService:
             )
         result = await onion_fetch(url)  # timeout=None → tor.fetch_timeout
         if not result.ok or not result.text:
+            logger.warning(
+                "onion fetch failed url=%r http_status=%d error=%s",
+                url,
+                result.http_status,
+                result.error or result.status,
+            )
             return PageResult(
                 markdown=f"Error: could not fetch onion page ({result.error or result.status}): {url}",
                 ok=False,
@@ -726,12 +732,20 @@ class ReadPageService:
         if is_antibot(html):
             return PageResult(markdown=f"Error: onion page returned an antibot/challenge wall: {url}", ok=False)
         md = await asyncio.get_running_loop().run_in_executor(
-            _io_pool, lambda: normalize_page(url, html)
+            _io_pool, lambda: normalize_page(url, html, favor_recall=True)
         )
-        if not md or _is_weak_extraction(md, min_length=self._cfg.extraction.min_content_length):
+        if not has_extractable_content(md):
+            logger.warning(
+                "onion extraction returned no page content url=%r html_len=%d", url, len(html)
+            )
             return PageResult(markdown=f"Error: no extractable content from onion page: {url}", ok=False)
-        self._cache.cache_page(url, md.splitlines()[0].lstrip("# ").strip()[:500], md, "")
-        return PageResult(markdown=md, ok=True, method="onion", apply_budget=True)
+
+        # A short Onion page is still valid content; the generic reader follows the same rule.
+        weak = _is_weak_extraction(md, min_length=self._cfg.extraction.min_content_length)
+        if not weak:
+            self._cache.cache_page(url, md.splitlines()[0].lstrip("# ").strip()[:500], md, "")
+        output = f"Warning: Very little content extracted from: {url}\n\n{md}" if weak else md
+        return PageResult(markdown=output, ok=True, method="onion", apply_budget=True)
 
     # Core read pipeline: SSRF, custom-domain dispatch, then the generic pipeline.
     async def _read(self, url: str) -> str:
