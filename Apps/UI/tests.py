@@ -36,6 +36,7 @@ from API.google_genai import (
     get_models as get_google_genai_models,
 )
 from API.lms import (
+    _prepare_native_prediction_options,
     _prepare_openai_prediction_options,
     _serialize_model_info,
     get_model_settings as get_lms_model_settings,
@@ -3022,6 +3023,14 @@ class OpenAiOptionMappingTests(SimpleTestCase):
         self.assertEqual(payload["extra_body"]["num_ctx"], 4096)
         self.assertEqual(payload["extra_body"]["top_k"], 40)
 
+    # Test top logprobs is dropped unless logprobs output is enabled.
+    def test_top_logprobs_requires_logprobs(self):
+        disabled_payload = _build_openai_request_options({"top_logprobs": 5})
+        enabled_payload = _build_openai_request_options({"logprobs": True, "top_logprobs": 5})
+
+        self.assertNotIn("top_logprobs", disabled_payload)
+        self.assertEqual(enabled_payload["top_logprobs"], 5)
+
     # Test OpenAI client uses placeholder API key when not configured.
     @patch("openai.OpenAI")
     @patch("API.openai.settings.get_engine_url", return_value="http://127.0.0.1:1234/v1")
@@ -3463,11 +3472,10 @@ class GoogleGenAiAdapterTests(SimpleTestCase):
         self.assertEqual([entry["model"] for entry in cached_models], ["gemini-2.5-pro"])
         self.assertEqual(client.models.generate_content.call_count, 1)
 
-    # Test get model settings returns toggle when thinking level is unsupported.
+    # Test published thinking metadata is used without an inference request.
     @patch("API.google_genai._close_client")
     @patch("API.google_genai._get_client")
-    # Verify get model settings returns toggle when thinking level is unsupported.
-    def test_get_model_settings_returns_toggle_when_thinking_level_is_unsupported(
+    def test_get_model_settings_uses_published_thinking_metadata_without_generation(
         self,
         mock_get_client,
         _mock_close_client,
@@ -3480,19 +3488,6 @@ class GoogleGenAiAdapterTests(SimpleTestCase):
             "tools": True,
             "output_token_limit": 65536,
         }
-
-        # Simulate the Gemini generation endpoint.
-        def generate_content(*, model, contents, config):
-            thinking_config = config.get("thinking_config", {})
-            if thinking_config.get("thinking_level") is not None:
-                raise FakeGoogleError(
-                    400,
-                    "INVALID_ARGUMENT",
-                    "Thinking level is not supported for this model.",
-                )
-            return {"candidates": [{"content": {"parts": [{"text": "OK"}]}}]}
-
-        client.models.generate_content.side_effect = generate_content
         mock_get_client.return_value = client
 
         payload = get_google_genai_model_settings("gemini-2.5-flash")
@@ -3508,6 +3503,7 @@ class GoogleGenAiAdapterTests(SimpleTestCase):
         self.assertEqual(payload["defaults"]["max_output_tokens"], 8192)
         self.assertEqual(payload["runtime_limits"]["output_token_limit"], 65536)
         self.assertNotIn("thinking_level", payload["supported_parameters"])
+        client.models.generate_content.assert_not_called()
 
     # Test generate retries without thinking level when model rejects it.
     @patch("API.google_genai._close_client")
@@ -3612,6 +3608,51 @@ class GoogleGenAiAdapterTests(SimpleTestCase):
 
 # Cover generic engine registry behavior for optional capabilities.
 class EngineRegistryTests(SimpleTestCase):
+    # Test title requests use a bounded source, context, and output.
+    @patch("API.llm_api.generate")
+    def test_generate_chat_title_builds_bounded_ollama_request(self, mock_generate):
+        mock_generate.return_value = [{"message": {"content": "  `Useful title`  "}}]
+
+        title = llm_api.generate_chat_title(
+            "ollama-service",
+            "test-model",
+            "x" * 3000,
+            {"context_length": 8192},
+        )
+
+        self.assertEqual(title, "Useful title")
+        request = mock_generate.call_args.kwargs
+        self.assertEqual(len(request["messages"][1]["content"]), 2048)
+        self.assertEqual(request["options"], {"num_ctx": 4096, "num_predict": 32})
+        self.assertTrue(request["stream"])
+
+    # Test a thought-only instant attempt retries with a bounded reasoning budget.
+    @patch("API.llm_api.generate")
+    def test_generate_chat_title_retries_thought_only_response(self, mock_generate):
+        mock_generate.side_effect = [
+            [{"message": {"thinking": "Draft", "content": ""}}],
+            [{"message": {"thinking": "Draft", "content": "Generated title"}}],
+        ]
+
+        title = llm_api.generate_chat_title(
+            "google-genai",
+            "test-model",
+            "Describe the problem",
+            {
+                "supports_thinking": True,
+                "supports_think_toggle": True,
+            },
+        )
+
+        self.assertEqual(title, "Generated title")
+        self.assertEqual(mock_generate.call_count, 2)
+        first_request = mock_generate.call_args_list[0].kwargs
+        second_request = mock_generate.call_args_list[1].kwargs
+        self.assertEqual(first_request["options"]["thinking_budget"], 0)
+        self.assertEqual(first_request["options"]["max_output_tokens"], 32)
+        self.assertEqual(second_request["options"]["thinking_level"], "low")
+        self.assertEqual(second_request["options"]["max_output_tokens"], 1024)
+
     # Test reload model raises for engines without reload support.
     def test_reload_model_raises_for_engines_without_reload_support(self):
         with self.assertRaises(NotImplementedError):
@@ -3896,6 +3937,17 @@ class LoopbackProxyPolicyTests(SimpleTestCase):
 
 # Cover LM Studio metadata normalization and capability fallback.
 class LmsAdapterTests(SimpleTestCase):
+    # Test native prediction options never forward unsupported raw config.
+    def test_native_prediction_options_drop_raw_config(self):
+        payload = _prepare_native_prediction_options(
+            {"raw": {"fields": [{"key": "custom", "value": True}]}, "maxTokens": 32},
+            think=False,
+            think_param_name="ext.virtualModel.customField.reasoning",
+        )
+
+        self.assertNotIn("raw", payload)
+        self.assertEqual(payload["maxTokens"], 32)
+
     # Test serialize model info reads nested info wrapper.
     def test_serialize_model_info_reads_nested_info_wrapper(self):
         # Define info.
@@ -4218,6 +4270,9 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
     def setUp(self):
         super().setUp()
         self.client = Client()
+        self._chat_title_patch = patch("Apps.UI.views.llm_api.generate_chat_title", return_value="")
+        self.mock_generate_chat_title = self._chat_title_patch.start()
+        self.addCleanup(self._chat_title_patch.stop)
 
     # Test chat API rejects invalid JSON before touching runtime services.
     def test_chat_api_rejects_invalid_json_body(self):
@@ -4266,6 +4321,35 @@ class ChatApiTests(ToolRegistryTestMixin, TestCase):
         self.assertEqual(Chat.objects.count(), 1)
         self.assertEqual(Chat.objects.first().messages.count(), 2)
         mock_prepare_runtime.assert_any_call("ollama-service")
+
+    # Test a generated title is stored and returned with a new chat.
+    @patch("Apps.UI.views.llm_api.prepare_runtime")
+    @patch("Apps.UI.views.llm_api.generate")
+    @patch("Apps.UI.views._build_model_info_payload", return_value={})
+    @patch("Apps.UI.views._resolve_request_engine", return_value="ollama-service")
+    def test_chat_api_stores_generated_title(
+        self,
+        _mock_engine,
+        _mock_model_info,
+        mock_generate,
+        _mock_prepare_runtime,
+    ):
+        self.mock_generate_chat_title.return_value = "Название чата"
+        mock_generate.return_value = [{"message": {"content": "Ответ"}}]
+
+        response = self.client.post(
+            reverse("chat_api"),
+            data=json.dumps({"message": "Первое сообщение", "model": "test-model"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response["X-Chat-Title"],
+            "%D0%9D%D0%B0%D0%B7%D0%B2%D0%B0%D0%BD%D0%B8%D0%B5%20%D1%87%D0%B0%D1%82%D0%B0",
+        )
+        self.assertEqual(Chat.objects.get().title, "Название чата")
+        self.mock_generate_chat_title.assert_called_once()
 
     @patch(
         "Apps.UI.views.llm_api.get_model_settings",

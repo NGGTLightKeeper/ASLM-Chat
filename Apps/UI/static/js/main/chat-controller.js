@@ -529,6 +529,16 @@ export function createChatController(context, dependencies) {
       // queued requests so every follow-up stays inside the same thread.
       const returnedChatId = response.headers.get('X-Chat-ID');
       if (returnedChatId && state.currentChatId !== returnedChatId) {
+        let chatTitle = buildChatTitle(request.text, request.attachments.length > 0);
+        const encodedChatTitle = response.headers.get('X-Chat-Title');
+        if (encodedChatTitle) {
+          try {
+            chatTitle = decodeURIComponent(encodedChatTitle);
+          } catch (_error) {
+            // Keep the local fallback when a non-ASLM proxy rewrites the header.
+          }
+        }
+
         state.currentChatId = returnedChatId;
         request.chatId = returnedChatId;
 
@@ -539,13 +549,11 @@ export function createChatController(context, dependencies) {
         });
 
         if (!dom.$historyList.find(`.chat-item[data-chat-id="${state.currentChatId}"]`).length) {
-          const title = buildChatTitle(request.text, request.attachments.length > 0);
-          historyUi.prependChatItem(state.currentChatId, title, 'just now');
+          historyUi.prependChatItem(state.currentChatId, chatTitle, 'just now');
         } else {
           historyUi.setActiveChat(state.currentChatId);
         }
 
-        const chatTitle = buildChatTitle(request.text, request.attachments.length > 0);
         dom.$chatTitle.text(chatTitle);
         document.title = `${chatTitle} - ASLM`;
         history.pushState({ chatId: state.currentChatId }, chatTitle, `/chat/${state.currentChatId}/`);

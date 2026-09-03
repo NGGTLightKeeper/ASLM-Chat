@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import socket
 import threading
+from urllib.parse import urlparse
 
 logger = logging.getLogger("core.fetch.onion.tor_proxy")
 
@@ -31,17 +32,38 @@ _UNSET = object()                             # sentinel: resolution not yet att
 _resolved: str | None | object = _UNSET       # cached socks url (None = resolved-to-unavailable)
 
 
-# True when something accepts a TCP connection on host:port.
-def _port_open(host: str, port: int, timeout: float = 1.0) -> bool:
-    s = socket.socket()
-    s.settimeout(timeout)
+# Receive an exact SOCKS response fragment or fail when the listener closes early.
+def _recv_exact(connection: socket.socket, size: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining > 0:
+        chunk = connection.recv(remaining)
+        if not chunk:
+            raise OSError("SOCKS listener closed the connection")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+# Verify that the endpoint speaks SOCKS5 and accepts Tor's default no-auth method.
+def _socks5_open(socks_url: str, timeout: float = 1.0) -> bool:
     try:
-        s.connect((host, port))
-        return True
-    except OSError:
+        endpoint = urlparse(socks_url)
+        if (
+            endpoint.scheme not in {"socks5", "socks5h"}
+            or not endpoint.hostname
+            or not endpoint.port
+        ):
+            return False
+        with socket.create_connection(
+            (endpoint.hostname, endpoint.port), timeout=timeout
+        ) as connection:
+            connection.settimeout(timeout)
+            connection.sendall(b"\x05\x01\x00")
+            return _recv_exact(connection, 2) == b"\x05\x00"
+    except (OSError, ValueError):
+        logger.debug("SOCKS5 validation failed for %s", socks_url, exc_info=True)
         return False
-    finally:
-        s.close()
 
 
 # Resolve (and cache) a usable tor SOCKS url, or None when unavailable/disabled. Pure probing —
@@ -63,15 +85,14 @@ def resolve_socks(force: bool = False) -> str | None:
 
         # 1. Explicit override.
         if cfg.socks_url:
-            host_port = cfg.socks_url.rsplit("/", 1)[-1]
-            host, _, port = host_port.partition(":")
-            if port.isdigit() and _port_open(host or "127.0.0.1", int(port)):
+            if _socks5_open(cfg.socks_url):
                 result = cfg.socks_url
         # 2. Reuse a running tor (system daemon, then Tor Browser).
         if result is None:
             for port in _REUSE_PORTS:
-                if _port_open("127.0.0.1", port):
-                    result = f"socks5h://127.0.0.1:{port}"
+                candidate = f"socks5h://127.0.0.1:{port}"
+                if _socks5_open(candidate):
+                    result = candidate
                     logger.info("reusing running tor SOCKS on %d", port)
                     break
         if result is None:

@@ -4,97 +4,300 @@
     "commands": {
         "firstRun": [
             {
-                "name": "Eerste configuratie",
-                "description": "Maakt settings.json aan en past databasemigraties toe"
+                "name": "Eerste configuratie"
             }
         ],
         "run": [
             {
-                "name": "UI-server",
-                "description": "Start de Django-ontwikkelingsserver"
+                "name": "UI-server"
             },
             {
-                "name": "Ollama-runtime",
-                "description": "Start de beheerde Ollama-service in een aparte consolesessie"
+                "name": "Ollama-runtime"
             }
         ]
     },
+    "settingCategories": [
+        {
+            "id": "engines",
+            "name": "Engines"
+        },
+        {
+            "id": "browser-agent",
+            "name": "Browseragent"
+        },
+        {
+            "id": "sandbox",
+            "name": "Sandbox"
+        },
+        {
+            "id": "web-search",
+            "name": "WebSearch"
+        },
+        {
+            "id": "web-search-engines",
+            "name": "WebSearch-zoekmachines"
+        },
+        {
+            "id": "web-search-api",
+            "name": "WebSearch-API"
+        },
+        {
+            "id": "web-search-search",
+            "name": "WebSearch-zoekinstellingen"
+        },
+        {
+            "id": "web-search-extraction",
+            "name": "WebSearch-inhoudsextractie"
+        },
+        {
+            "id": "web-search-cache",
+            "name": "WebSearch-cache"
+        }
+    ],
     "settings": {
-        "ui-port": {
-            "name": "UI-serverpoort",
-            "description": "Poort waarop de UI-server luistert"
-        },
-        "api-port": {
-            "name": "API-serverpoort",
-            "description": "Poort waarop de API-server luistert"
-        },
-        "aslm-host-theme": {
-            "name": "ASLM-hostthema",
-            "description": "Themasnapshot uit de ASLM-app; wordt bij elke modulestart toegepast. Alleen beheerd door ASLM."
-        },
-        "aslm-host-locale": {
-            "name": "ASLM-hosttaal",
-            "description": "Taalsnapshot uit de ASLM-app; wordt bij elke modulestart toegepast. Alleen beheerd door ASLM."
+        "generate-chat-titles": {
+            "name": "Chattitels genereren"
         },
         "console_log_level": {
-            "name": "Consolelogniveau",
-            "description": "Hoeveel runtime-details ASLM-Chat naar de ASLM-console schrijft."
+            "name": "Consolelogniveau"
         },
         "llm-engine": {
-            "name": "Actieve LLM-engine",
-            "description": "Engine die wordt gebruikt voor generatie in de chatinterface"
+            "name": "Actieve LLM-engine"
         },
         "ollama-service": {
-            "name": "Ollama",
-            "description": "Of de Ollama-inferenceservice is geïnstalleerd"
+            "name": "Ollama"
         },
         "ollama-service_path": {
-            "name": "Ollama-pad",
-            "description": "Pad naar het Ollama-uitvoerbestand"
+            "name": "Aangepast Ollama-pad gebruiken"
         },
         "ollama-service_data": {
-            "name": "Ollama-gegevens",
-            "description": "Pad naar de Ollama-gegevensmap"
+            "name": "Aangepast pad voor Ollama-gegevens gebruiken"
         },
         "ollama-service_models": {
-            "name": "Ollama-modellen",
-            "description": "Pad naar de Ollama-modellenmap"
-        },
-        "ollama-service_port": {
-            "name": "Ollama-poort",
-            "description": "Poort waarop de lokale Ollama-service luistert"
+            "name": "Aangepast pad voor Ollama-modellen gebruiken"
         },
         "lms": {
-            "name": "LM Studio",
-            "description": "Of LM Studio-integratie beschikbaar is"
+            "name": "LM Studio"
         },
         "lms_url": {
-            "name": "LM Studio-adres",
-            "description": "Basisadres van de LM Studio Server API"
+            "name": "URL van de LM Studio-server"
         },
         "openai": {
-            "name": "OpenAI-compatibele API",
-            "description": "Of een OpenAI-compatibel API-eindpunt beschikbaar is"
+            "name": "OpenAI-compatibele API"
         },
         "openai_url": {
-            "name": "OpenAI-compatibel adres",
-            "description": "Basis-URL van het OpenAI-compatibele API-eindpunt"
+            "name": "OpenAI-compatibele URL"
         },
         "openai_api_key": {
-            "name": "OpenAI-compatibele API-sleutel",
-            "description": "Optionele API-sleutel voor beveiligde eindpunten"
+            "name": "OpenAI-compatibele API-sleutel (optioneel)"
         },
         "google-genai": {
-            "name": "Google GenAI",
-            "description": "Of Google GenAI-integratie beschikbaar is"
+            "name": "Google GenAI API"
         },
         "google_genai_url": {
-            "name": "Google GenAI-adres",
-            "description": "Basis-URL van het Google GenAI Gemini API-eindpunt"
+            "name": "URL van de Google GenAI API"
         },
         "google_genai_api_key": {
-            "name": "Google GenAI API-sleutel",
-            "description": "API-sleutel voor Google GenAI Gemini API-verzoeken"
+            "name": "Google GenAI API-sleutel"
+        },
+        "web-search-tavily-api-key": {
+            "name": "Tavily API-sleutel (optioneel)"
+        },
+        "web-search-firecrawl-api-key": {
+            "name": "Firecrawl API-sleutel (optioneel)"
+        },
+        "web-search-brave-api-key": {
+            "name": "Brave Search API-sleutel (optioneel)"
+        },
+        "web-search-serpapi-api-key": {
+            "name": "SerpApi API-sleutel (optioneel)"
+        },
+        "web-search-max-results": {
+            "name": "Maximumaantal zoekresultaten"
+        },
+        "web-search-total-context-budget": {
+            "name": "Totaalbudget voor zoekcontext"
+        },
+        "web-search-prefetch-timeout": {
+            "name": "Time-out voor vooraf laden"
+        },
+        "web-search-preview-max-chars": {
+            "name": "Maximale voorbeeldlengte"
+        },
+        "web-search-extraction-timeout": {
+            "name": "Time-out voor extractie"
+        },
+        "web-search-max-page-chars": {
+            "name": "Maximale paginalengte"
+        },
+        "web-search-min-content-length": {
+            "name": "Minimale inhoudslengte"
+        },
+        "web-search-compress-read-pages": {
+            "name": "Lange pagina’s comprimeren"
+        },
+        "web-search-compress-threshold": {
+            "name": "Compressiedrempel"
+        },
+        "web-search-compress-target": {
+            "name": "Doelgrootte voor compressie"
+        },
+        "web-search-cache-ttl": {
+            "name": "Bewaartermijn van de zoekresultatencache"
+        },
+        "web-search-negative-cache-ttl": {
+            "name": "Bewaartermijn van de negatieve zoekcache"
+        },
+        "web-search-page-cache-ttl": {
+            "name": "Bewaartermijn van de paginacache"
+        },
+        "web-search-repeat-block-window": {
+            "name": "Blokkeringsvenster voor herhalingen",
+            "description": "Periode in seconden waarin een herhaalde identieke zoekopdracht wordt geblokkeerd"
+        },
+        "web-search-seen-source-window": {
+            "name": "Venster voor eerder gebruikte bronnen",
+            "description": "Periode in seconden waarin onlangs geretourneerde bronnen worden onderdrukt"
+        },
+        "web-search-prefetch-max-urls": {
+            "name": "Maximumaantal vooraf geladen URL’s",
+            "description": "Maximumaantal resultaat-URL’s dat per zoekopdracht vooraf wordt geladen. Nul schakelt vooraf laden uit"
+        },
+        "web-search-tor-enabled": {
+            "name": "Zoeken via Tor inschakelen",
+            "description": "Wordt alleen ondersteund op Windows en vereist dat Tor actief is"
+        },
+        "web-search-profile-import-enabled": {
+            "name": "Importeren van browserprofielen inschakelen",
+            "description": "Cookies importeren uit Chrome/Edge/Brave/Firefox"
+        },
+        "web-search-profile-import-all-profiles": {
+            "name": "Alle profielen importeren",
+            "description": "Elk profiel uit de browsers importeren"
+        },
+        "web-search-profile-import-refresh-hours": {
+            "name": "Vernieuwingsinterval voor profielen"
+        },
+        "web-search-profile-import-purge-on-disable": {
+            "name": "Geïmporteerde profielen wissen",
+            "description": "Geïmporteerde cookies verwijderen wanneer het importeren van browserprofielen wordt uitgeschakeld"
+        },
+        "browser-agent-width": {
+            "name": "Breedte van het browservenster"
+        },
+        "browser-agent-height": {
+            "name": "Hoogte van het browservenster"
+        },
+        "browser-agent-headless": {
+            "name": "Headless-modus",
+            "description": "De browseragent uitvoeren zonder zichtbaar browservenster"
+        },
+        "browser-agent-max-a11y-depth": {
+            "name": "Diepte van de toegankelijkheidsboom",
+            "description": "Maximale doorloopdiepte van de toegankelijkheidsboom"
+        },
+        "browser-agent-max-elements": {
+            "name": "Elementlimiet",
+            "description": "Maximumaantal elementen dat van één pagina wordt verzameld"
+        },
+        "browser-agent-max-main-interactive": {
+            "name": "Limiet voor interactieve elementen",
+            "description": "Maximumaantal interactieve elementen in een compacte momentopname"
+        },
+        "browser-agent-auto-text-preview-length": {
+            "name": "Lengte van het tekstvoorbeeld",
+            "description": "Maximale tekstlengte voor het automatische paginavoorbeeld"
+        },
+        "sandbox-container-name": {
+            "name": "Naam van de sandboxcontainer"
+        },
+        "sandbox-image": {
+            "name": "Sandboximage",
+            "description": "Docker Hub-image die door de sandbox wordt gebruikt"
+        },
+        "sandbox-cpu-limit": {
+            "name": "Limiet voor CPU-threads"
+        },
+        "sandbox-memory-limit": {
+            "name": "Geheugenlimiet (GB)"
+        },
+        "sandbox-memory-swap-limit": {
+            "name": "Geheugen- en swaplimiet (GB)",
+            "description": "Gecombineerde limiet voor geheugen en swapruimte"
+        },
+        "sandbox-pids-limit": {
+            "name": "Proceslimiet"
+        },
+        "sandbox-storage-limit": {
+            "name": "Opslaglimiet (GB)"
+        },
+        "sandbox-network-limit-mbit": {
+            "name": "Netwerklimiet (Mbit/s)"
+        },
+        "sandbox-default-timeout": {
+            "name": "Standaardtime-out voor opdrachten"
+        },
+        "sandbox-max-output-bytes": {
+            "name": "Uitvoerlimiet"
+        },
+        "sandbox-output-head-ratio": {
+            "name": "Aandeel van het begin van de uitvoer",
+            "description": "Aandeel van de afgekorte uitvoer dat vanaf het begin behouden blijft"
+        },
+        "sandbox-max-read-bytes": {
+            "name": "Leeslimiet"
+        },
+        "sandbox-max-cat-file-bytes": {
+            "name": "Bestandslimiet voor cat"
+        },
+        "sandbox-max-cat-line-threshold": {
+            "name": "Regeldrempel voor cat"
+        },
+        "sandbox-max-image-preview-bytes": {
+            "name": "Limiet voor afbeeldingsvoorbeelden",
+            "description": "Maximale afbeeldingsgrootte in bytes die als voorbeeld wordt geretourneerd"
+        },
+        "sandbox-max-ls-entries": {
+            "name": "Limiet voor mapvermeldingen"
+        },
+        "sandbox-max-find-results": {
+            "name": "Limiet voor find-resultaten"
+        },
+        "sandbox-max-grep-results": {
+            "name": "Limiet voor grep-resultaten"
+        },
+        "sandbox-background-timeout-threshold": {
+            "name": "Drempel voor achtergronduitvoering",
+            "description": "Time-outdrempel in seconden voor het kiezen van achtergronduitvoering"
+        },
+        "sandbox-thread-limit": {
+            "name": "Threadlimiet",
+            "description": "Maximumaantal threads voor workers en numerieke bibliotheken"
+        },
+        "sandbox-default-task-dir": {
+            "name": "Werkruimtemap"
+        },
+        "sandbox-workspace-cleanup-enabled": {
+            "name": "Werkruimten opschonen",
+            "description": "Inactieve sandboxwerkruimten automatisch opnieuw maken"
+        },
+        "sandbox-workspace-cleanup-idle-seconds": {
+            "name": "Inactiviteitsduur tot opschonen",
+            "description": "Inactiviteitsduur in seconden voordat de werkruimte wordt opgeschoond"
+        },
+        "sandbox-workspace-cleanup-recycle-seconds": {
+            "name": "Levensduur van de werkruimte",
+            "description": "Maximale levensduur van de werkruimte in seconden voordat deze opnieuw wordt gemaakt"
+        },
+        "sandbox-workspace-cleanup-interval-seconds": {
+            "name": "Opschoningsinterval voor werkruimten"
+        },
+        "sandbox-max-file-map-symbols": {
+            "name": "Symboollimiet van de bestandskaart",
+            "description": "Maximumaantal symbolen per bestand in gegenereerde kaarten"
+        },
+        "sandbox-docker-start-timeout-seconds": {
+            "name": "Time-out voor het starten van Docker"
         }
     },
     "downloadsBridge": {

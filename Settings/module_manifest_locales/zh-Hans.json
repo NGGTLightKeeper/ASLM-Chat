@@ -4,97 +4,300 @@
     "commands": {
         "firstRun": [
             {
-                "name": "首次运行设置",
-                "description": "生成 settings.json 并应用数据库迁移"
+                "name": "首次运行设置"
             }
         ],
         "run": [
             {
-                "name": "UI 服务器",
-                "description": "启动 Django 开发服务器"
+                "name": "UI 服务器"
             },
             {
-                "name": "Ollama 运行时",
-                "description": "在专用控制台会话中启动托管的 Ollama 服务"
+                "name": "Ollama 运行时"
             }
         ]
     },
+    "settingCategories": [
+        {
+            "id": "engines",
+            "name": "引擎"
+        },
+        {
+            "id": "browser-agent",
+            "name": "浏览器代理"
+        },
+        {
+            "id": "sandbox",
+            "name": "沙盒"
+        },
+        {
+            "id": "web-search",
+            "name": "WebSearch"
+        },
+        {
+            "id": "web-search-engines",
+            "name": "WebSearch 引擎"
+        },
+        {
+            "id": "web-search-api",
+            "name": "WebSearch API"
+        },
+        {
+            "id": "web-search-search",
+            "name": "WebSearch 搜索"
+        },
+        {
+            "id": "web-search-extraction",
+            "name": "WebSearch 内容提取"
+        },
+        {
+            "id": "web-search-cache",
+            "name": "WebSearch 缓存"
+        }
+    ],
     "settings": {
-        "ui-port": {
-            "name": "UI 服务器端口",
-            "description": "UI 服务器监听的端口"
-        },
-        "api-port": {
-            "name": "API 服务器端口",
-            "description": "API 服务器监听的端口"
-        },
-        "aslm-host-theme": {
-            "name": "ASLM 主机主题",
-            "description": "来自 ASLM 应用的主题快照；在每次模块启动时应用。仅由 ASLM 管理。"
-        },
-        "aslm-host-locale": {
-            "name": "ASLM 主机语言",
-            "description": "来自 ASLM 应用的语言快照；在每次模块启动时应用。仅由 ASLM 管理。"
+        "generate-chat-titles": {
+            "name": "生成聊天标题"
         },
         "console_log_level": {
-            "name": "控制台日志级别",
-            "description": "ASLM-Chat 输出到 ASLM 控制台的运行时详细信息量"
+            "name": "控制台日志级别"
         },
         "llm-engine": {
-            "name": "活动 LLM 引擎",
-            "description": "在聊天界面中用于生成的引擎"
+            "name": "当前 LLM 引擎"
         },
         "ollama-service": {
-            "name": "Ollama",
-            "description": "是否已安装 Ollama 推理服务"
+            "name": "Ollama"
         },
         "ollama-service_path": {
-            "name": "Ollama 路径",
-            "description": "Ollama 可执行文件的路径"
+            "name": "使用自定义 Ollama 路径"
         },
         "ollama-service_data": {
-            "name": "Ollama 数据",
-            "description": "Ollama 数据目录的路径"
+            "name": "使用自定义 Ollama 数据路径"
         },
         "ollama-service_models": {
-            "name": "Ollama 模型",
-            "description": "Ollama 模型目录的路径"
-        },
-        "ollama-service_port": {
-            "name": "Ollama 端口",
-            "description": "本地 Ollama 服务监听的端口"
+            "name": "使用自定义 Ollama 模型路径"
         },
         "lms": {
-            "name": "LM Studio",
-            "description": "LM Studio 集成是否可用"
+            "name": "LM Studio"
         },
         "lms_url": {
-            "name": "LM Studio 地址",
-            "description": "LM Studio 服务器 API 的基础地址"
+            "name": "LM Studio 服务器 URL"
         },
         "openai": {
-            "name": "OpenAI 兼容 API",
-            "description": "OpenAI 兼容 API 端点是否可用"
+            "name": "OpenAI 兼容 API"
         },
         "openai_url": {
-            "name": "OpenAI 兼容地址",
-            "description": "OpenAI 兼容 API 端点的基础 URL"
+            "name": "OpenAI 兼容 URL"
         },
         "openai_api_key": {
-            "name": "OpenAI 兼容 API 密钥",
-            "description": "用于受保护端点的可选 API 密钥"
+            "name": "OpenAI 兼容 API 密钥（可选）"
         },
         "google-genai": {
-            "name": "Google GenAI",
-            "description": "Google GenAI 集成是否可用"
+            "name": "Google GenAI API"
         },
         "google_genai_url": {
-            "name": "Google GenAI 地址",
-            "description": "Google GenAI Gemini API 端点的基础 URL"
+            "name": "Google GenAI API URL"
         },
         "google_genai_api_key": {
-            "name": "Google GenAI API 密钥",
-            "description": "用于 Google GenAI Gemini API 请求的 API 密钥"
+            "name": "Google GenAI API 密钥"
+        },
+        "web-search-tavily-api-key": {
+            "name": "Tavily API 密钥（可选）"
+        },
+        "web-search-firecrawl-api-key": {
+            "name": "Firecrawl API 密钥（可选）"
+        },
+        "web-search-brave-api-key": {
+            "name": "Brave Search API 密钥（可选）"
+        },
+        "web-search-serpapi-api-key": {
+            "name": "SerpApi API 密钥（可选）"
+        },
+        "web-search-max-results": {
+            "name": "最大搜索结果数"
+        },
+        "web-search-total-context-budget": {
+            "name": "搜索上下文总预算"
+        },
+        "web-search-prefetch-timeout": {
+            "name": "预获取超时时间"
+        },
+        "web-search-preview-max-chars": {
+            "name": "最大预览长度"
+        },
+        "web-search-extraction-timeout": {
+            "name": "内容提取超时时间"
+        },
+        "web-search-max-page-chars": {
+            "name": "最大页面长度"
+        },
+        "web-search-min-content-length": {
+            "name": "最小内容长度"
+        },
+        "web-search-compress-read-pages": {
+            "name": "压缩长页面"
+        },
+        "web-search-compress-threshold": {
+            "name": "压缩阈值"
+        },
+        "web-search-compress-target": {
+            "name": "压缩目标"
+        },
+        "web-search-cache-ttl": {
+            "name": "搜索结果缓存有效期"
+        },
+        "web-search-negative-cache-ttl": {
+            "name": "搜索负缓存有效期"
+        },
+        "web-search-page-cache-ttl": {
+            "name": "页面缓存有效期"
+        },
+        "web-search-repeat-block-window": {
+            "name": "重复查询拦截时段",
+            "description": "拦截相同重复查询的时长（秒）"
+        },
+        "web-search-seen-source-window": {
+            "name": "已见来源抑制时段",
+            "description": "抑制近期已返回来源的时长（秒）"
+        },
+        "web-search-prefetch-max-urls": {
+            "name": "URL 预获取结果上限",
+            "description": "每次搜索预获取的结果 URL 数量上限。设为零将禁用预获取"
+        },
+        "web-search-tor-enabled": {
+            "name": "启用 Tor 搜索",
+            "description": "仅支持 Windows，并且需要 Tor 正在运行"
+        },
+        "web-search-profile-import-enabled": {
+            "name": "启用浏览器配置文件导入",
+            "description": "从 Chrome、Edge、Brave 和 Firefox 导入 Cookie"
+        },
+        "web-search-profile-import-all-profiles": {
+            "name": "导入所有配置文件",
+            "description": "导入浏览器中的每个配置文件"
+        },
+        "web-search-profile-import-refresh-hours": {
+            "name": "配置文件刷新间隔"
+        },
+        "web-search-profile-import-purge-on-disable": {
+            "name": "清除已导入的配置文件",
+            "description": "禁用浏览器配置文件导入时移除已导入的 Cookie"
+        },
+        "browser-agent-width": {
+            "name": "浏览器窗口宽度"
+        },
+        "browser-agent-height": {
+            "name": "浏览器窗口高度"
+        },
+        "browser-agent-headless": {
+            "name": "无头模式",
+            "description": "运行浏览器代理时不显示浏览器窗口"
+        },
+        "browser-agent-max-a11y-depth": {
+            "name": "无障碍树深度",
+            "description": "遍历无障碍树的最大深度"
+        },
+        "browser-agent-max-elements": {
+            "name": "元素数量上限",
+            "description": "从单个页面收集的元素数量上限"
+        },
+        "browser-agent-max-main-interactive": {
+            "name": "交互元素数量上限",
+            "description": "精简快照中包含的交互元素数量上限"
+        },
+        "browser-agent-auto-text-preview-length": {
+            "name": "文本预览长度",
+            "description": "自动页面预览所使用的最大文本长度"
+        },
+        "sandbox-container-name": {
+            "name": "沙盒 Container 名称"
+        },
+        "sandbox-image": {
+            "name": "沙盒 Image",
+            "description": "沙盒使用的 Docker Hub image"
+        },
+        "sandbox-cpu-limit": {
+            "name": "CPU 线程上限"
+        },
+        "sandbox-memory-limit": {
+            "name": "内存上限（GB）"
+        },
+        "sandbox-memory-swap-limit": {
+            "name": "内存与 Swap 上限（GB）",
+            "description": "内存与交换空间的合计上限"
+        },
+        "sandbox-pids-limit": {
+            "name": "进程数上限"
+        },
+        "sandbox-storage-limit": {
+            "name": "存储空间上限（GB）"
+        },
+        "sandbox-network-limit-mbit": {
+            "name": "网络上限（Mbit/s）"
+        },
+        "sandbox-default-timeout": {
+            "name": "默认命令超时时间"
+        },
+        "sandbox-max-output-bytes": {
+            "name": "输出大小上限"
+        },
+        "sandbox-output-head-ratio": {
+            "name": "输出开头保留比例",
+            "description": "截断输出中从开头保留的比例"
+        },
+        "sandbox-max-read-bytes": {
+            "name": "读取大小上限"
+        },
+        "sandbox-max-cat-file-bytes": {
+            "name": "cat 文件大小上限"
+        },
+        "sandbox-max-cat-line-threshold": {
+            "name": "cat 行数阈值"
+        },
+        "sandbox-max-image-preview-bytes": {
+            "name": "图像预览上限",
+            "description": "作为预览返回的图像最大字节数"
+        },
+        "sandbox-max-ls-entries": {
+            "name": "目录项数量上限"
+        },
+        "sandbox-max-find-results": {
+            "name": "find 结果数量上限"
+        },
+        "sandbox-max-grep-results": {
+            "name": "grep 结果数量上限"
+        },
+        "sandbox-background-timeout-threshold": {
+            "name": "后台超时阈值",
+            "description": "用于选择后台执行的超时阈值（秒）"
+        },
+        "sandbox-thread-limit": {
+            "name": "线程数上限",
+            "description": "工作线程与数值计算库线程的最大总数"
+        },
+        "sandbox-default-task-dir": {
+            "name": "工作区目录"
+        },
+        "sandbox-workspace-cleanup-enabled": {
+            "name": "工作区清理",
+            "description": "自动重建不活跃的沙盒工作区"
+        },
+        "sandbox-workspace-cleanup-idle-seconds": {
+            "name": "工作区清理闲置时间",
+            "description": "清理工作区前的闲置时长（秒）"
+        },
+        "sandbox-workspace-cleanup-recycle-seconds": {
+            "name": "工作区重建时间",
+            "description": "工作区重建前的最大存续时长（秒）"
+        },
+        "sandbox-workspace-cleanup-interval-seconds": {
+            "name": "工作区清理间隔"
+        },
+        "sandbox-max-file-map-symbols": {
+            "name": "文件映射符号数量上限",
+            "description": "生成的映射中每个文件所包含的符号数量上限"
+        },
+        "sandbox-docker-start-timeout-seconds": {
+            "name": "Docker 启动超时时间"
         }
     },
     "downloadsBridge": {

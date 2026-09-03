@@ -892,27 +892,6 @@ def _build_reasoning_parsing_config(enabled: bool) -> dict[str, Any]:
     }
 
 
-# Append one raw KV field.
-def _append_raw_kv_field(target: dict[str, Any], key: str, value: Any) -> None:
-    """Append one raw LM Studio KV field to a request config."""
-
-    if not key:
-        return
-
-    raw_config = target.get("raw")
-    if not isinstance(raw_config, dict):
-        raw_config = {}
-
-    fields = raw_config.get("fields")
-    if not isinstance(fields, list):
-        fields = []
-
-    normalized_fields = [field for field in fields if isinstance(field, dict) and str(field.get("key") or "") != key]
-    normalized_fields.append({"key": key, "value": value})
-    raw_config["fields"] = normalized_fields
-    target["raw"] = raw_config
-
-
 # Prepare native prediction options.
 def _prepare_native_prediction_options(
     options: dict[str, Any] | None,
@@ -924,19 +903,14 @@ def _prepare_native_prediction_options(
     """Normalize LM Studio SDK prediction options."""
 
     prepared = dict(options or {})
+    prepared.pop("raw", None)
     prepared["reasoningParsing"] = _build_reasoning_parsing_config(True)
     normalized_think_param = str(think_param_name or "").strip()
     normalized_level_param = str(think_level_param_name or "").strip()
-    if think is not None and normalized_think_param:
-        if normalized_think_param.startswith("ext.virtualModel.customField."):
-            _append_raw_kv_field(prepared, normalized_think_param, think)
-        else:
-            prepared.setdefault(normalized_think_param, think)
-    if think_level is not None and normalized_level_param:
-        if normalized_level_param.startswith("ext.virtualModel.customField."):
-            _append_raw_kv_field(prepared, normalized_level_param, think_level)
-        else:
-            prepared.setdefault(normalized_level_param, think_level)
+    if think is not None and normalized_think_param and not normalized_think_param.startswith("ext."):
+        prepared.setdefault(normalized_think_param, think)
+    if think_level is not None and normalized_level_param and not normalized_level_param.startswith("ext."):
+        prepared.setdefault(normalized_level_param, think_level)
     return prepared
 
 
@@ -954,11 +928,16 @@ def _prepare_openai_prediction_options(
     extra_body: dict[str, Any] = {}
 
     for raw_key, raw_value in (options or {}).items():
+        if raw_key == "raw":
+            continue
         normalized_key = OPENAI_DIRECT_OPTION_ALIASES.get(raw_key, raw_key)
         if normalized_key in OPENAI_DIRECT_OPTION_KEYS:
             direct_options[normalized_key] = raw_value
         else:
             extra_body[raw_key] = raw_value
+
+    if not _bool_from_value(direct_options.get("logprobs")):
+        direct_options.pop("top_logprobs", None)
 
     if think_level and "reasoning_effort" not in direct_options and "reasoning_effort" not in extra_body:
         direct_options["reasoning_effort"] = think_level

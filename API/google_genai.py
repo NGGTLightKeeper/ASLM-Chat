@@ -904,12 +904,8 @@ def _extract_reasoning_level_options(value: Any) -> list[str]:
 
 # Return endpoint-scoped Gemini capabilities for one model.
 def _build_model_capability_snapshot(
-    client: Any,
     model_name: str,
     raw_model: dict[str, Any],
-    *,
-    allow_tool_probe: bool = True,
-    allow_think_level_probe: bool = True,
 ) -> dict[str, Any]:
     """Return endpoint-scoped Gemini capabilities for one model."""
 
@@ -937,19 +933,10 @@ def _build_model_capability_snapshot(
 
     supports_tool_calling = cached_capabilities.get("supports_tool_calling")
     if not isinstance(supports_tool_calling, bool):
-        probed_tool_support = None
-        # Probe only when static metadata is inconclusive, because it is a real
-        # request against the current endpoint and API key.
-        if explicit_tool_support is None and allow_tool_probe and supports_generate_content:
-            probed_tool_support = _probe_tool_calling_support(client, model_name)
         supports_tool_calling = (
             bool(explicit_tool_support)
             if explicit_tool_support is not None
-            else (
-                probed_tool_support
-                if probed_tool_support is not None
-                else supports_generate_content
-            )
+            else bool(capability_tokens & TOOL_CAPABILITY_NAMES) or supports_generate_content
         )
 
     supports_vision = cached_capabilities.get("supports_vision")
@@ -987,30 +974,40 @@ def _build_model_capability_snapshot(
             )
         )
 
-    supports_thinking = cached_capabilities.get("supports_thinking")
+    published_thinking_metadata = (
+        "thinking" in raw_model
+        or explicit_reasoning_support is not None
+        or bool(capability_tokens & REASONING_CAPABILITY_NAMES)
+    )
+    published_thinking_support = (
+        _bool_from_value(raw_model.get("thinking"), default=False)
+        or bool(explicit_reasoning_support)
+        or bool(capability_tokens & REASONING_CAPABILITY_NAMES)
+    )
+    cached_thinking_support = cached_capabilities.get("supports_thinking")
+    supports_thinking = (
+        published_thinking_support
+        if published_thinking_metadata
+        else cached_thinking_support
+    )
     if not isinstance(supports_thinking, bool):
-        supports_thinking = (
-            _bool_from_value(raw_model.get("thinking"), default=False)
-            or bool(explicit_reasoning_support)
-            or bool(capability_tokens & REASONING_CAPABILITY_NAMES)
-        )
+        supports_thinking = False
 
-    # Reuse cached level options before probing because level support is often
-    # learned from previous failed or successful runtime requests.
+    # Reuse level options learned from real model requests when public metadata
+    # does not publish them.
     think_level_options = list(explicit_reasoning_level_options)
     cached_level_options = cached_capabilities.get("think_level_options")
     if not think_level_options and isinstance(cached_level_options, list):
         think_level_options = [str(item) for item in cached_level_options if str(item).strip()]
 
-    supports_think_level = cached_capabilities.get("supports_think_level")
+    cached_think_level_support = cached_capabilities.get("supports_think_level")
+    supports_think_level = (
+        True
+        if think_level_options
+        else cached_think_level_support
+    )
     if not isinstance(supports_think_level, bool):
-        if think_level_options:
-            supports_think_level = True
-        elif allow_think_level_probe and supports_generate_content and supports_thinking:
-            probed_level_support = _probe_thinking_level_support(client, model_name)
-            supports_think_level = bool(probed_level_support)
-        else:
-            supports_think_level = False
+        supports_think_level = False
 
     if supports_think_level and not think_level_options:
         think_level_options = list(THINK_LEVEL_OPTIONS)
@@ -1032,138 +1029,19 @@ def _build_model_capability_snapshot(
         "supports_think_level": bool(supports_think_level),
         "think_level_options": think_level_options,
     }
-    _update_cached_model_capabilities(model_name, **snapshot)
+    cached_snapshot = dict(snapshot)
+    if not published_thinking_metadata:
+        cached_snapshot.pop("supports_thinking", None)
+        cached_snapshot.pop("supports_think_toggle", None)
+    if (
+        not explicit_reasoning_level_options
+        and not cached_level_options
+        and not isinstance(cached_think_level_support, bool)
+    ):
+        cached_snapshot.pop("supports_think_level", None)
+        cached_snapshot.pop("think_level_options", None)
+    _update_cached_model_capabilities(model_name, **cached_snapshot)
     return snapshot
-
-
-# Best-effort runtime validation that a Gemini model accepts function tools.
-def _probe_tool_calling_support(client: Any, model_name: str) -> bool | None:
-    """Best-effort runtime validation that a Gemini model accepts function tools."""
-
-    cached_capabilities = _get_cached_model_capabilities(model_name)
-    cached_value = cached_capabilities.get("supports_tool_calling")
-    if isinstance(cached_value, bool):
-        return cached_value
-
-    # Send the smallest possible tool-enabled request so failures reveal
-    # endpoint capability rather than model-behavior differences.
-    probe_config = {
-        "temperature": 0,
-        "max_output_tokens": 1,
-        "tools": [
-            {
-                "function_declarations": [
-                    {
-                        "name": "aslm_capability_probe",
-                        "description": "Capability probe for Gemini function tools.",
-                        "parameters_json_schema": {
-                            "type": "object",
-                            "properties": {},
-                        },
-                    }
-                ]
-            }
-        ],
-        "automatic_function_calling": {"disable": True},
-        "tool_config": {"function_calling_config": {"mode": "AUTO"}},
-    }
-
-    try:
-        client.models.generate_content(
-            model=model_name,
-            contents=[{"role": "user", "parts": [{"text": "Reply with OK."}]}],
-            config=probe_config,
-        )
-    except Exception as exc:
-        _learn_from_google_error(model_name, exc)
-        if _is_tool_unsupported_error(exc):
-            _update_cached_model_capabilities(model_name, supports_tool_calling=False)
-            return False
-        return None
-
-    _update_cached_model_capabilities(model_name, supports_tool_calling=True)
-    return True
-
-
-# Best-effort runtime validation that a Gemini model accepts thinking_level.
-def _probe_thinking_level_support(client: Any, model_name: str) -> bool | None:
-    """Best-effort runtime validation that a Gemini model accepts ``thinking_level``."""
-
-    cached_capabilities = _get_cached_model_capabilities(model_name)
-    cached_value = cached_capabilities.get("supports_think_level")
-    if isinstance(cached_value, bool):
-        return cached_value
-
-    # Keep the probe tiny so it validates parameter acceptance with minimal cost.
-    probe_config = {
-        "temperature": 0,
-        "max_output_tokens": 1,
-        "thinking_config": {
-            "thinking_level": "LOW",
-            "include_thoughts": True,
-        },
-    }
-
-    try:
-        client.models.generate_content(
-            model=model_name,
-            contents=[{"role": "user", "parts": [{"text": "Reply with OK."}]}],
-            config=probe_config,
-        )
-    except Exception as exc:
-        _learn_from_google_error(model_name, exc)
-        if _is_thinking_level_unsupported_error(exc):
-            _update_cached_model_capabilities(
-                model_name,
-                supports_thinking=True,
-                supports_think_level=False,
-                supports_think_toggle=True,
-                think_level_options=[],
-            )
-            return False
-        return None
-
-    _update_cached_model_capabilities(
-        model_name,
-        supports_thinking=True,
-        supports_think_level=True,
-        supports_think_toggle=False,
-        think_level_options=list(THINK_LEVEL_OPTIONS),
-    )
-    return True
-
-
-# Return whether one Gemini chat model should stay visible for the current key.
-def _probe_model_availability(client: Any, model_name: str) -> bool:
-    """Return whether one Gemini chat model should stay visible for the current key."""
-
-    cached_availability = _get_cached_model_availability(model_name)
-    if isinstance(cached_availability, dict):
-        return bool(cached_availability.get("available", False))
-
-    probe_config = {
-        "temperature": 0,
-        "max_output_tokens": 1,
-    }
-
-    try:
-        client.models.generate_content(
-            model=model_name,
-            contents=[{"role": "user", "parts": [{"text": "Reply with OK."}]}],
-            config=probe_config,
-        )
-    except Exception as exc:
-        learning_reason = _learn_from_google_error(model_name, exc)
-        # Some failures mean the model should be hidden, while others are
-        # treated as soft availability because the endpoint still recognized it.
-        if learning_reason in {"unsupported_generate_content", "zero_quota"}:
-            return False
-        _set_cached_model_availability(model_name, True, learning_reason or "probe_failed_open")
-        return True
-
-    _update_cached_model_capabilities(model_name, supports_generate_content=True)
-    _set_cached_model_availability(model_name, True, "ok")
-    return True
 
 
 # Return one tool-call arguments payload as a dictionary.
@@ -2426,14 +2304,9 @@ def get_models() -> list[Any]:
             model_name = _extract_model_name(payload)
             if not model_name:
                 continue
-            # Skip probing here to keep model listing fast; detailed checks are
-            # deferred until a specific model is inspected or used.
             capability_snapshot = _build_model_capability_snapshot(
-                client,
                 model_name,
                 payload,
-                allow_tool_probe=False,
-                allow_think_level_probe=False,
             )
             if not capability_snapshot.get("supports_generate_content"):
                 continue
@@ -2467,11 +2340,8 @@ def get_model_settings(model_name: str) -> dict[str, Any]:
     try:
         raw_model = _get_model_payload(client, model_name)
         capability_snapshot = _build_model_capability_snapshot(
-            client,
             model_name,
             raw_model,
-            allow_tool_probe=True,
-            allow_think_level_probe=True,
         )
     finally:
         _close_client(client)

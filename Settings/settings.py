@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 SETTINGS_FILE = BASE_DIR / "Settings" / "settings.json"
+WEB_SEARCH_API_KEYS_FILE = BASE_DIR / "Tools" / "mcp-web-search" / "core" / "config" / "api_keys.json"
+WEB_SEARCH_CONFIG_FILE = BASE_DIR / "Tools" / "mcp-web-search" / "core" / "config" / "search_config.json"
+BROWSER_AGENT_CONFIG_FILE = BASE_DIR / "Tools" / "mcp-browser-agent" / "config.json"
+SANDBOX_CONFIG_FILE = BASE_DIR / "Tools" / "mcp-sandbox" / "sandbox.json"
 
 ENGINE_LABELS = {
     "ollama-service": "Ollama",
@@ -49,11 +53,141 @@ ENGINE_API_KEY_KEYS = {
     "google-genai": "google_genai_api_key",
 }
 
+HOST_KEY_SETTING_KEYS = frozenset({"key-aslm", "key-gh"})
+
+WEB_SEARCH_API_KEY_SETTINGS = {
+    "web-search-tavily-api-key": "tavily_api_key",
+    "web-search-firecrawl-api-key": "firecrawl_api_key",
+    "web-search-brave-api-key": "brave_api_key",
+    "web-search-serpapi-api-key": "serpapi_api_key",
+}
+
+WEB_SEARCH_CONFIG_SETTINGS = {
+    "web-search-max-results": ("search", "max_results"),
+    "web-search-total-context-budget": ("search", "total_context_budget"),
+    "web-search-prefetch-timeout": ("search", "prefetch_fetch_timeout"),
+    "web-search-preview-max-chars": ("search", "preview_max_chars"),
+    "web-search-extraction-timeout": ("extraction", "timeout_seconds"),
+    "web-search-max-page-chars": ("extraction", "max_page_chars"),
+    "web-search-min-content-length": ("extraction", "min_content_length"),
+    "web-search-compress-read-pages": ("extraction", "enable_read_page_compress"),
+    "web-search-compress-threshold": ("extraction", "read_page_compress_threshold_chars"),
+    "web-search-compress-target": ("extraction", "read_page_compress_target_chars"),
+    "web-search-cache-ttl": ("cache", "search_ttl_seconds"),
+    "web-search-negative-cache-ttl": ("cache", "search_negative_ttl_seconds"),
+    "web-search-page-cache-ttl": ("cache", "page_ttl_seconds"),
+    "web-search-repeat-block-window": ("cache", "repeat_block_window_seconds"),
+    "web-search-seen-source-window": ("cache", "seen_source_window_seconds"),
+    "web-search-prefetch-max-urls": ("cache", "prefetch_max_urls"),
+    "web-search-tor-enabled": ("tor", "enabled"),
+    "web-search-engine-google": ("engines", "google"),
+    "web-search-engine-duckduckgo": ("engines", "duckduckgo"),
+    "web-search-engine-startpage": ("engines", "startpage"),
+    "web-search-engine-qwant": ("engines", "qwant"),
+    "web-search-engine-brave": ("engines", "brave"),
+    "web-search-engine-yandex": ("engines", "yandex"),
+    "web-search-engine-yep": ("engines", "yep"),
+    "web-search-profile-import-enabled": ("profile_import", "enabled"),
+    "web-search-profile-import-all-profiles": ("profile_import", "all_profiles"),
+    "web-search-profile-import-refresh-hours": ("profile_import", "refresh_hours"),
+    "web-search-profile-import-purge-on-disable": ("profile_import", "purge_on_disable"),
+}
+
+WEB_SEARCH_STATIC_CONFIG = {
+    "profile_import": {
+        "browsers": ["chrome", "edge", "brave", "firefox"],
+        "domains": [
+            "google.com",
+            "bing.com",
+            "duckduckgo.com",
+            "startpage.com",
+            "yandex.com",
+            "yandex.ru",
+            "qwant.com",
+            "brave.com",
+            "search.brave.com",
+            "reddit.com",
+        ],
+    }
+}
+
+BROWSER_AGENT_CONFIG_SETTINGS = {
+    "browser-agent-width": "browser_width",
+    "browser-agent-height": "browser_height",
+    "browser-agent-headless": "browser_headless",
+    "browser-agent-max-a11y-depth": "max_a11y_depth",
+    "browser-agent-max-elements": "max_elements",
+    "browser-agent-max-main-interactive": "max_main_interactive",
+    "browser-agent-auto-text-preview-length": "auto_text_preview_length",
+}
+
+SANDBOX_CONFIG_SETTINGS = {
+    "sandbox-container-name": "SANDBOX_CONTAINER_NAME",
+    "sandbox-image": "SANDBOX_IMAGE",
+    "sandbox-cpu-limit": "SANDBOX_CPU_LIMIT",
+    "sandbox-memory-limit": "SANDBOX_MEMORY_LIMIT",
+    "sandbox-memory-swap-limit": "SANDBOX_MEMORY_SWAP_LIMIT",
+    "sandbox-pids-limit": "SANDBOX_PIDS_LIMIT",
+    "sandbox-storage-limit": "SANDBOX_STORAGE_LIMIT",
+    "sandbox-network-limit-mbit": "SANDBOX_NETWORK_LIMIT_MBIT",
+    "sandbox-default-timeout": "SANDBOX_DEFAULT_TIMEOUT",
+    "sandbox-max-output-bytes": "SANDBOX_MAX_OUTPUT_BYTES",
+    "sandbox-output-head-ratio": "SANDBOX_OUTPUT_HEAD_RATIO",
+    "sandbox-max-read-bytes": "SANDBOX_MAX_READ_BYTES",
+    "sandbox-max-cat-file-bytes": "SANDBOX_MAX_CAT_FILE_BYTES",
+    "sandbox-max-cat-line-threshold": "SANDBOX_MAX_CAT_LINE_THRESHOLD",
+    "sandbox-max-image-preview-bytes": "SANDBOX_MAX_IMAGE_PREVIEW_BYTES",
+    "sandbox-max-ls-entries": "SANDBOX_MAX_LS_ENTRIES",
+    "sandbox-max-find-results": "SANDBOX_MAX_FIND_RESULTS",
+    "sandbox-max-grep-results": "SANDBOX_MAX_GREP_RESULTS",
+    "sandbox-background-timeout-threshold": "SANDBOX_BACKGROUND_TIMEOUT_THRESHOLD",
+    "sandbox-thread-limit": "SANDBOX_THREAD_LIMIT",
+    "sandbox-default-task-dir": "SANDBOX_DEFAULT_TASK_DIR",
+    "sandbox-workspace-cleanup-enabled": "SANDBOX_WORKSPACE_CLEANUP_ENABLED",
+    "sandbox-workspace-cleanup-idle-seconds": "SANDBOX_WORKSPACE_CLEANUP_IDLE_SECONDS",
+    "sandbox-workspace-cleanup-recycle-seconds": "SANDBOX_WORKSPACE_CLEANUP_RECYCLE_SECONDS",
+    "sandbox-workspace-cleanup-interval-seconds": "SANDBOX_WORKSPACE_CLEANUP_INTERVAL_SECONDS",
+    "sandbox-max-file-map-symbols": "SANDBOX_MAX_FILE_MAP_SYMBOLS",
+    "sandbox-docker-start-timeout-seconds": "SANDBOX_DOCKER_START_TIMEOUT_SECONDS",
+}
+
+SANDBOX_STATIC_CONFIG = {
+    "SANDBOX_IMAGE_SOURCE": "registry",
+    "SANDBOX_AUTO_START_DOCKER": True,
+}
+
+SANDBOX_GIGABYTE_SETTINGS = frozenset(
+    {
+        "sandbox-memory-limit",
+        "sandbox-memory-swap-limit",
+        "sandbox-storage-limit",
+    }
+)
+
+DECIMAL_SETTING_KEYS = frozenset(
+    {
+        "web-search-prefetch-timeout",
+        "web-search-extraction-timeout",
+        "web-search-profile-import-refresh-hours",
+        "sandbox-cpu-limit",
+        "sandbox-output-head-ratio",
+    }
+)
+
+REMOVED_TOOL_SETTING_KEYS = frozenset(
+    {
+        "web-search-profile-import-browsers",
+        "web-search-profile-import-domains",
+        "sandbox-image-source",
+        "sandbox-auto-start-docker",
+    }
+)
+
 DEFAULTS: dict[str, Any] = {
     "ui-port": 20000,
-    "api-port": 20001,
     "debug": True,
     "console_log_level": "debug",
+    "generate-chat-titles": True,
     "secret_key": "",
     "allowed_hosts": ["127.0.0.1", "localhost"],
     "llm-engine": "ollama-service",
@@ -71,6 +205,74 @@ DEFAULTS: dict[str, Any] = {
     "google-genai": False,
     "google_genai_url": "generativelanguage.googleapis.com",
     "google_genai_api_key": "",
+    "key-aslm": None,
+    "key-gh": None,
+    "web-search-tavily-api-key": "",
+    "web-search-firecrawl-api-key": "",
+    "web-search-brave-api-key": "",
+    "web-search-serpapi-api-key": "",
+    "web-search-max-results": 10,
+    "web-search-total-context-budget": 40000,
+    "web-search-prefetch-timeout": 8.0,
+    "web-search-preview-max-chars": 4000,
+    "web-search-extraction-timeout": 25.0,
+    "web-search-max-page-chars": 20000,
+    "web-search-min-content-length": 800,
+    "web-search-compress-read-pages": True,
+    "web-search-compress-threshold": 10000,
+    "web-search-compress-target": 10000,
+    "web-search-cache-ttl": 21600,
+    "web-search-negative-cache-ttl": 300,
+    "web-search-page-cache-ttl": 86400,
+    "web-search-repeat-block-window": 30,
+    "web-search-seen-source-window": 30,
+    "web-search-prefetch-max-urls": 4,
+    "web-search-tor-enabled": False,
+    "web-search-engine-google": True,
+    "web-search-engine-duckduckgo": True,
+    "web-search-engine-startpage": True,
+    "web-search-engine-qwant": True,
+    "web-search-engine-brave": True,
+    "web-search-engine-yandex": False,
+    "web-search-engine-yep": False,
+    "web-search-profile-import-enabled": False,
+    "web-search-profile-import-all-profiles": False,
+    "web-search-profile-import-refresh-hours": 12.0,
+    "web-search-profile-import-purge-on-disable": True,
+    "browser-agent-width": 1280,
+    "browser-agent-height": 800,
+    "browser-agent-headless": False,
+    "browser-agent-max-a11y-depth": 15,
+    "browser-agent-max-elements": 200,
+    "browser-agent-max-main-interactive": 60,
+    "browser-agent-auto-text-preview-length": 1500,
+    "sandbox-container-name": "aslm-chat-sandbox",
+    "sandbox-image": "nggtlightkeeper/aslm-chat-sandbox:latest",
+    "sandbox-cpu-limit": 4,
+    "sandbox-memory-limit": 3,
+    "sandbox-memory-swap-limit": 4,
+    "sandbox-pids-limit": 256,
+    "sandbox-storage-limit": 12,
+    "sandbox-network-limit-mbit": 0,
+    "sandbox-default-timeout": 60,
+    "sandbox-max-output-bytes": 60000,
+    "sandbox-output-head-ratio": 0.5,
+    "sandbox-max-read-bytes": 200000,
+    "sandbox-max-cat-file-bytes": 30720,
+    "sandbox-max-cat-line-threshold": 300,
+    "sandbox-max-image-preview-bytes": 2000000,
+    "sandbox-max-ls-entries": 500,
+    "sandbox-max-find-results": 200,
+    "sandbox-max-grep-results": 200,
+    "sandbox-background-timeout-threshold": 10,
+    "sandbox-thread-limit": 4,
+    "sandbox-default-task-dir": "_sandbox",
+    "sandbox-workspace-cleanup-enabled": True,
+    "sandbox-workspace-cleanup-idle-seconds": 5400,
+    "sandbox-workspace-cleanup-recycle-seconds": 10800,
+    "sandbox-workspace-cleanup-interval-seconds": 5,
+    "sandbox-max-file-map-symbols": 50,
+    "sandbox-docker-start-timeout-seconds": 60,
 }
 
 CONSOLE_LOG_LEVELS = {"basic", "debug", "trace"}
@@ -130,6 +332,12 @@ def normalize_setting_value(value: Any) -> Any:
         return float(value)
     except ValueError:
         pass
+
+    if value.count(",") == 1 and "." not in value:
+        try:
+            return float(value.replace(",", "."))
+        except ValueError:
+            pass
 
     if value.startswith(("{", "[")):
         try:
@@ -265,7 +473,7 @@ def _apply_environment_overrides(data: dict[str, Any]) -> dict[str, Any]:
     return updated
 
 
-_PORT_SETTING_KEYS = ("ui-port", "api-port", "ollama-service_port", "browser-daemon-port")
+_PORT_SETTING_KEYS = ("ui-port", "ollama-service_port", "browser-daemon-port")
 
 
 # Log a warning when two services share the same TCP port.
@@ -294,8 +502,17 @@ def _normalize_loaded_settings(data: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(data)
     normalized.pop("lms_load_config", None)
 
+    for key in REMOVED_TOOL_SETTING_KEYS:
+        normalized.pop(key, None)
+
     for key in NORMALIZED_ADDRESS_KEYS:
         normalized[key] = normalize_engine_address(normalized.get(key, DEFAULTS.get(key, "")))
+
+    for key in SANDBOX_GIGABYTE_SETTINGS:
+        normalized[key] = _normalize_gigabyte_value(normalized.get(key), DEFAULTS[key])
+
+    for key in DECIMAL_SETTING_KEYS:
+        normalized[key] = _normalize_decimal_setting_value(normalized.get(key), DEFAULTS[key])
 
     normalized["llm-engine"] = _resolve_enabled_engine_from_settings(
         normalized,
@@ -321,11 +538,141 @@ def load_settings() -> dict[str, Any]:
     return dict(settings_data)
 
 
-# Save the settings snapshot to disk.
-def save_settings(data: dict[str, Any]) -> None:
+# Serialize and atomically replace one generated JSON configuration when its content changed.
+def _write_generated_json(path: Path, data: dict[str, Any]) -> None:
+    serialized = json.dumps(data, indent=4, ensure_ascii=False) + "\n"
+    try:
+        if path.read_text(encoding="utf-8-sig") == serialized:
+            return
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning("Could not compare generated config %s: %s", path, exc)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = path.with_name(path.name + ".tmp")
+    try:
+        temporary_path.write_text(serialized, encoding="utf-8")
+        os.replace(temporary_path, path)
+    except Exception:
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+# Convert a stored optional API key to the nullable value expected by tool configs.
+def _nullable_api_key(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text or None
+
+
+# Normalize a positive integer gigabyte setting.
+def _normalize_gigabyte_value(value: Any, default: int) -> int:
+    normalized = normalize_setting_value(value)
+    if isinstance(normalized, bool) or not isinstance(normalized, int):
+        return default
+    if normalized <= 0:
+        return default
+    return normalized
+
+
+# Format a numeric gigabyte setting for Docker and sandbox.env.
+def _format_gigabytes(value: Any, default: int) -> str:
+    gigabytes = _normalize_gigabyte_value(value, default)
+    return f"{gigabytes}G"
+
+
+# Normalize a decimal setting received with either dot or comma separator.
+def _normalize_decimal_setting_value(value: Any, default: int | float) -> float:
+    normalized = normalize_setting_value(value)
+    if isinstance(normalized, bool) or not isinstance(normalized, (int, float)):
+        return float(default)
+    return float(normalized)
+
+
+# Generate the hosted web-search API key document from the effective module settings.
+def _write_web_search_api_keys(settings_data: dict[str, Any]) -> None:
+    hosted_api = {
+        config_key: _nullable_api_key(settings_data.get(setting_key))
+        for setting_key, config_key in WEB_SEARCH_API_KEY_SETTINGS.items()
+    }
+    _write_generated_json(
+        WEB_SEARCH_API_KEYS_FILE,
+        {"search": {"hosted_api": hosted_api}},
+    )
+
+
+# Read the existing web-search configuration so JSON-only sections survive synchronization.
+def _load_web_search_config_payload() -> dict[str, Any]:
+    try:
+        payload = json.loads(WEB_SEARCH_CONFIG_FILE.read_text(encoding="utf-8-sig"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
+        if not isinstance(exc, FileNotFoundError):
+            logger.warning("Could not read %s: %s", WEB_SEARCH_CONFIG_FILE, exc)
+        return {}
+
+    return payload if isinstance(payload, dict) else {}
+
+
+# Generate managed search_config.json values without replacing JSON-only sections.
+def _write_web_search_config(settings_data: dict[str, Any]) -> None:
+    payload = _load_web_search_config_payload()
+    for section_name, section_values in WEB_SEARCH_STATIC_CONFIG.items():
+        payload.setdefault(section_name, {}).update(section_values)
+
+    for setting_key, (section_name, config_key) in WEB_SEARCH_CONFIG_SETTINGS.items():
+        value = settings_data.get(setting_key, DEFAULTS[setting_key])
+        payload.setdefault(section_name, {})[config_key] = value
+
+    _write_generated_json(WEB_SEARCH_CONFIG_FILE, payload)
+
+
+# Generate the browser-agent runtime configuration from the effective module settings.
+def _write_browser_agent_config(settings_data: dict[str, Any]) -> None:
+    payload = {
+        config_key: settings_data.get(setting_key, DEFAULTS[setting_key])
+        for setting_key, config_key in BROWSER_AGENT_CONFIG_SETTINGS.items()
+    }
+    _write_generated_json(BROWSER_AGENT_CONFIG_FILE, payload)
+
+
+# Generate the sandbox JSON bridge consumed before sandbox.env is loaded.
+def _write_sandbox_config(settings_data: dict[str, Any]) -> None:
+    payload: dict[str, Any] = dict(SANDBOX_STATIC_CONFIG)
+    for setting_key, config_key in SANDBOX_CONFIG_SETTINGS.items():
+        value = settings_data.get(setting_key, DEFAULTS[setting_key])
+        if setting_key in SANDBOX_GIGABYTE_SETTINGS:
+            value = _format_gigabytes(value, DEFAULTS[setting_key])
+        payload[config_key] = value
+    _write_generated_json(SANDBOX_CONFIG_FILE, payload)
+
+
+# Synchronize generated tool configs affected by one setting, or every config during bootstrap.
+def _sync_tool_configs(settings_data: dict[str, Any], setting_key: str | None = None) -> None:
+    effective = dict(DEFAULTS)
+    effective.update(settings_data)
+    effective = _apply_environment_overrides(effective)
+    effective = _normalize_loaded_settings(effective)
+
+    if setting_key is None or setting_key in WEB_SEARCH_API_KEY_SETTINGS:
+        _write_web_search_api_keys(effective)
+    if setting_key is None or setting_key in WEB_SEARCH_CONFIG_SETTINGS:
+        _write_web_search_config(effective)
+    if setting_key is None or setting_key in BROWSER_AGENT_CONFIG_SETTINGS:
+        _write_browser_agent_config(effective)
+    if setting_key is None or setting_key in SANDBOX_CONFIG_SETTINGS:
+        _write_sandbox_config(effective)
+
+
+# Save the settings snapshot and optionally refresh all generated tool configs.
+def save_settings(data: dict[str, Any], *, sync_tool_configs: bool = True) -> None:
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     with SETTINGS_FILE.open("w", encoding="utf-8") as file:
         json.dump(data, file, indent=4, ensure_ascii=False)
+    if sync_tool_configs:
+        _sync_tool_configs(data)
     settings_data = dict(DEFAULTS)
     settings_data.update(data)
     settings_data = _apply_environment_overrides(settings_data)
@@ -435,11 +782,18 @@ def set(key: str, value: Any, *, sync_runtime: bool = True) -> None:
     if key in NORMALIZED_ADDRESS_KEYS:
         value = normalize_engine_address(value)
 
+    if key in SANDBOX_GIGABYTE_SETTINGS:
+        value = _normalize_gigabyte_value(value, DEFAULTS[key])
+
+    if key in DECIMAL_SETTING_KEYS:
+        value = _normalize_decimal_setting_value(value, DEFAULTS[key])
+
     stored_raw_data = _load_settings_from_disk()
     stored_data = dict(DEFAULTS)
     stored_data.update(stored_raw_data)
     stored_data = _normalize_loaded_settings(stored_data)
     if key in stored_raw_data and stored_data.get(key, DEFAULTS.get(key)) == value:
+        _sync_tool_configs(stored_data, key)
         _apply_process_environment_value(key, value)
         _store_settings_cache(_apply_environment_overrides(stored_data), _get_settings_mtime_ns())
         return
@@ -447,14 +801,16 @@ def set(key: str, value: Any, *, sync_runtime: bool = True) -> None:
     # Save the normalized value to disk first.
     data = load_settings()
     data[key] = value
-    save_settings(data)
+    save_settings(data, sync_tool_configs=False)
+    _sync_tool_configs(data, key)
 
     # Keep the current process environment in sync with the saved value.
     _apply_process_environment_value(key, value)
     _invalidate_settings_cache()
 
-    # Mirror the updated setting into the ASLM module manifest when available.
-    _sync_module_manifest_setting(key, value)
+    # Host account keys belong only to the local settings file, not the module manifest.
+    if key not in HOST_KEY_SETTING_KEYS:
+        _sync_module_manifest_setting(key, value)
 
     if sync_runtime and key in ENGINE_IDS:
         try:

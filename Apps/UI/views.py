@@ -22,7 +22,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 from django.db import transaction
 from django.http import FileResponse, HttpResponse, JsonResponse, StreamingHttpResponse
@@ -5532,6 +5532,7 @@ def chat_api(request):
         model_name = data.get("model", "")
         options = data.get("options", {}) or {}
         chat_id = data.get("chat_id", "")
+        is_new_chat = not str(chat_id or "").strip()
         attachments = _normalize_request_attachments(data)
         uploaded_file_ids = _normalize_uploaded_file_ids(data)
         deep_research_requested = data.get("deep_research") is True
@@ -5645,6 +5646,17 @@ def chat_api(request):
         )
         _store_message_attachments(user_message_record, attachments)
         Chat.objects.filter(pk=chat.pk).update(updated_at=timezone.now())
+
+        if is_new_chat and settings.get("generate-chat-titles", True):
+            generated_title = llm_api.generate_chat_title(
+                engine,
+                model_name,
+                llm_user_message or user_message,
+                model_info_payload,
+            )
+            if generated_title:
+                chat.title = generated_title
+                chat.save(update_fields=["title", "updated_at"])
 
         # URL attachments: fetch page content via WebSearch read_page (always, even if tool not selected).
         # This runs AFTER the user message is persisted but BEFORE we build LLM history / call the model.
@@ -5812,6 +5824,8 @@ def chat_api(request):
                 content_type="text/plain; charset=utf-8",
             )
             response["X-Chat-ID"] = str(chat.id)
+            if is_new_chat:
+                response["X-Chat-Title"] = quote(str(chat.title), safe="")
             response["X-LLM-Engine"] = engine
             response["X-User-Message-ID"] = str(user_message_record.id)
             response["X-Assistant-Message-ID"] = str(assistant_message_record.id)
@@ -5878,6 +5892,8 @@ def chat_api(request):
             content_type="text/plain; charset=utf-8",
         )
         response["X-Chat-ID"] = str(chat.id)
+        if is_new_chat:
+            response["X-Chat-Title"] = quote(str(chat.title), safe="")
         response["X-LLM-Engine"] = engine
         response["X-User-Message-ID"] = str(user_message_record.id)
         response["X-Assistant-Message-ID"] = str(assistant_message_record.id)

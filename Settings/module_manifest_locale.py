@@ -44,9 +44,9 @@ def _patch_command_list(commands: list[dict[str, Any]], localized: list[dict[str
         overlay = localized[index]
         if not isinstance(overlay, dict):
             continue
-        if "name" in overlay:
+        if "name" in entry and "name" in overlay:
             entry["name"] = overlay["name"]
-        if "description" in overlay:
+        if "description" in entry and "description" in overlay:
             entry["description"] = overlay["description"]
 
 
@@ -63,9 +63,34 @@ def _patch_settings(settings: list[dict[str, Any]], localized: dict[str, Any] | 
         overlay = localized[key]
         if not isinstance(overlay, dict):
             continue
-        if "name" in overlay:
+        if "name" in entry and "name" in overlay:
             entry["name"] = overlay["name"]
-        if "description" in overlay:
+        if "description" in entry and "description" in overlay:
+            entry["description"] = overlay["description"]
+
+
+# Apply localized fields to setting categories by category id.
+def _patch_setting_categories(
+    categories: list[dict[str, Any]],
+    localized: list[dict[str, Any]] | None,
+) -> None:
+    if not isinstance(localized, list):
+        return
+
+    by_id = {
+        str(item.get("id")): item
+        for item in localized
+        if isinstance(item, dict) and item.get("id") is not None
+    }
+    for entry in categories:
+        if not isinstance(entry, dict):
+            continue
+        overlay = by_id.get(str(entry.get("id", "")))
+        if not isinstance(overlay, dict):
+            continue
+        if "name" in entry and "name" in overlay:
+            entry["name"] = overlay["name"]
+        if "description" in entry and "description" in overlay:
             entry["description"] = overlay["description"]
 
 
@@ -130,6 +155,14 @@ def apply_manifest_locale(language: str | None) -> None:
     settings = manifest.get("settings")
     if isinstance(settings, list):
         _patch_settings(settings, locale.get("settings") if isinstance(locale.get("settings"), dict) else None)
+
+    setting_categories = manifest.get("settingCategories")
+    localized_setting_categories = locale.get("settingCategories")
+    if isinstance(setting_categories, list):
+        _patch_setting_categories(
+            setting_categories,
+            localized_setting_categories if isinstance(localized_setting_categories, list) else None,
+        )
 
     downloads_bridge = manifest.get("downloadsBridge")
     localized_bridge = locale.get("downloadsBridge")

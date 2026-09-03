@@ -1,13 +1,6 @@
 # Copyright NEXTGGTECH. Elastic License 2.0.
 
-"""Hosted search-API keys (optional supplement layer).
-
-Ported from the legacy `core/config/api_keys.py`, trimmed to the providers the new
-pipeline actually wires (Tavily, Firecrawl, Brave, SerpApi) plus a few forward-compat
-key slots. Keys live in `api_keys.json` next to this file; absent file or blank keys
-mean the hosted layer is a no-op and search stays pure scrape. The example template is
-copied in on first load so the shape is discoverable.
-"""
+"""Hosted search-API keys loaded from the ASLM-Chat generated JSON config."""
 
 from __future__ import annotations
 
@@ -19,7 +12,6 @@ from pathlib import Path
 logger = logging.getLogger("services.web_search")
 
 _API_KEYS_PATH = Path(__file__).parent / "api_keys.json"
-_API_KEYS_EXAMPLE_PATH = Path(__file__).parent / "api_keys.json.example"
 
 
 # One nullable key slot per wired hosted provider. Content-bearing providers (Tavily,
@@ -45,6 +37,7 @@ class ApiKeysConfig:
 
 
 _cached_api_keys: ApiKeysConfig | None = None
+_cached_api_keys_signature: tuple[int, int] | None = None
 
 
 # Read a nullable string from a JSON dict (blank → None).
@@ -56,25 +49,24 @@ def _read_nullable_str(raw: dict, key: str) -> str | None:
     return text or None
 
 
-# Create api_keys.json from the example template when missing (best-effort).
-def _bootstrap_api_keys_file(target: Path) -> None:
-    if target.exists() or not _API_KEYS_EXAMPLE_PATH.is_file():
-        return
+# Return a stable file signature for invalidating the default API-key cache.
+def _api_keys_signature(path: Path) -> tuple[int, int] | None:
     try:
-        target.write_text(_API_KEYS_EXAMPLE_PATH.read_text(encoding="utf-8"), encoding="utf-8")
-        logger.info("Created api_keys.json from template at %s", target)
-    except OSError as exc:
-        logger.warning("Failed to create api_keys.json at %s: %s", target, exc)
+        stat = path.stat()
+    except OSError:
+        return None
+    return stat.st_mtime_ns, stat.st_size
 
 
 # Load api_keys.json and cache an ApiKeysConfig singleton (custom path for tests only).
 def load_api_keys(path: Path | None = None) -> ApiKeysConfig:
-    global _cached_api_keys
-    if _cached_api_keys is not None and path is None:
-        return _cached_api_keys
+    global _cached_api_keys, _cached_api_keys_signature
 
     target = path or _API_KEYS_PATH
-    _bootstrap_api_keys_file(target)
+    signature = _api_keys_signature(target)
+    if _cached_api_keys is not None and path is None and signature == _cached_api_keys_signature:
+        return _cached_api_keys
+
     try:
         raw = json.loads(target.read_text(encoding="utf-8-sig"))
     except FileNotFoundError:
@@ -83,6 +75,8 @@ def load_api_keys(path: Path | None = None) -> ApiKeysConfig:
         logger.error("Invalid/unreadable %s: %s — using empty key set", target, exc)
         config = ApiKeysConfig()
     else:
+        if not isinstance(raw, dict):
+            raw = {}
         search = raw.get("search", {})
         hosted = search.get("hosted_api", search) if isinstance(search, dict) else {}
         config = ApiKeysConfig(
@@ -98,10 +92,12 @@ def load_api_keys(path: Path | None = None) -> ApiKeysConfig:
 
     if path is None:
         _cached_api_keys = config
+        _cached_api_keys_signature = signature
     return config
 
 
 # Drop the cached config (tests that rewrite api_keys.json).
 def reset_api_keys_cache() -> None:
-    global _cached_api_keys
+    global _cached_api_keys, _cached_api_keys_signature
     _cached_api_keys = None
+    _cached_api_keys_signature = None

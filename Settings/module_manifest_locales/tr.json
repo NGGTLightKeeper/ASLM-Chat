@@ -4,97 +4,300 @@
     "commands": {
         "firstRun": [
             {
-                "name": "İlk kurulum",
-                "description": "settings.json oluşturur ve veritabanı geçişlerini uygular"
+                "name": "İlk kurulum"
             }
         ],
         "run": [
             {
-                "name": "Arayüz sunucusu",
-                "description": "Django geliştirme sunucusunu başlatır"
+                "name": "Arayüz sunucusu"
             },
             {
-                "name": "Ollama çalışma zamanı",
-                "description": "Yönetilen Ollama hizmetini ayrı bir konsol oturumunda başlatır"
+                "name": "Ollama çalışma zamanı"
             }
         ]
     },
+    "settingCategories": [
+        {
+            "id": "engines",
+            "name": "Motorlar"
+        },
+        {
+            "id": "browser-agent",
+            "name": "Tarayıcı Aracısı"
+        },
+        {
+            "id": "sandbox",
+            "name": "Korumalı Alan"
+        },
+        {
+            "id": "web-search",
+            "name": "WebSearch"
+        },
+        {
+            "id": "web-search-engines",
+            "name": "WebSearch Motorları"
+        },
+        {
+            "id": "web-search-api",
+            "name": "WebSearch API"
+        },
+        {
+            "id": "web-search-search",
+            "name": "WebSearch Araması"
+        },
+        {
+            "id": "web-search-extraction",
+            "name": "WebSearch İçerik Çıkarma"
+        },
+        {
+            "id": "web-search-cache",
+            "name": "WebSearch Önbelleği"
+        }
+    ],
     "settings": {
-        "ui-port": {
-            "name": "Arayüz sunucusu bağlantı noktası",
-            "description": "Arayüz sunucusunun dinlediği bağlantı noktası"
-        },
-        "api-port": {
-            "name": "API sunucusu bağlantı noktası",
-            "description": "API sunucusunun dinlediği bağlantı noktası"
-        },
-        "aslm-host-theme": {
-            "name": "ASLM ana bilgisayar teması",
-            "description": "ASLM uygulamasından tema anlık görüntüsü; her modül başlatılışında uygulanır. Yalnızca ASLM tarafından yönetilir."
-        },
-        "aslm-host-locale": {
-            "name": "ASLM ana bilgisayar dili",
-            "description": "ASLM uygulamasından dil anlık görüntüsü; her modül başlatılışında uygulanır. Yalnızca ASLM tarafından yönetilir."
+        "generate-chat-titles": {
+            "name": "Sohbet Başlıkları Oluştur"
         },
         "console_log_level": {
-            "name": "Konsol günlük düzeyi",
-            "description": "ASLM-Chat'in ASLM konsoluna yazdığı çalışma zamanı ayrıntısı miktarı"
+            "name": "Konsol Günlük Düzeyi"
         },
         "llm-engine": {
-            "name": "Etkin LLM motoru",
-            "description": "Sohbet arayüzünde üretim için kullanılan motor"
+            "name": "Etkin LLM Motoru"
         },
         "ollama-service": {
-            "name": "Ollama",
-            "description": "Ollama çıkarım hizmetinin kurulu olup olmadığı"
+            "name": "Ollama"
         },
         "ollama-service_path": {
-            "name": "Ollama yolu",
-            "description": "Ollama yürütülebilir dosyasının yolu"
+            "name": "Özel Ollama yolu kullan"
         },
         "ollama-service_data": {
-            "name": "Ollama verileri",
-            "description": "Ollama veri dizininin yolu"
+            "name": "Özel Ollama veri yolu kullan"
         },
         "ollama-service_models": {
-            "name": "Ollama modelleri",
-            "description": "Ollama model dizininin yolu"
-        },
-        "ollama-service_port": {
-            "name": "Ollama bağlantı noktası",
-            "description": "Yerel Ollama hizmetinin dinlediği bağlantı noktası"
+            "name": "Özel Ollama model yolu kullan"
         },
         "lms": {
-            "name": "LM Studio",
-            "description": "LM Studio entegrasyonunun kullanılabilir olup olmadığı"
+            "name": "LM Studio"
         },
         "lms_url": {
-            "name": "LM Studio adresi",
-            "description": "LM Studio sunucu API'sinin temel adresi"
+            "name": "LM Studio Sunucu URL'si"
         },
         "openai": {
-            "name": "OpenAI uyumlu API",
-            "description": "OpenAI uyumlu bir API uç noktasının kullanılabilir olup olmadığı"
+            "name": "OpenAI Uyumlu API"
         },
         "openai_url": {
-            "name": "OpenAI uyumlu adres",
-            "description": "OpenAI uyumlu API uç noktasının temel URL'si"
+            "name": "OpenAI Uyumlu URL"
         },
         "openai_api_key": {
-            "name": "OpenAI uyumlu API anahtarı",
-            "description": "Güvenli uç noktalar için isteğe bağlı API anahtarı"
+            "name": "OpenAI Uyumlu API Anahtarı (isteğe bağlı)"
         },
         "google-genai": {
-            "name": "Google GenAI",
-            "description": "Google GenAI entegrasyonunun kullanılabilir olup olmadığı"
+            "name": "Google GenAI API"
         },
         "google_genai_url": {
-            "name": "Google GenAI adresi",
-            "description": "Google GenAI Gemini API uç noktasının temel URL'si"
+            "name": "Google GenAI API URL'si"
         },
         "google_genai_api_key": {
-            "name": "Google GenAI API anahtarı",
-            "description": "Google GenAI Gemini API istekleri için API anahtarı"
+            "name": "Google GenAI API Anahtarı"
+        },
+        "web-search-tavily-api-key": {
+            "name": "Tavily API Anahtarı (isteğe bağlı)"
+        },
+        "web-search-firecrawl-api-key": {
+            "name": "Firecrawl API Anahtarı (isteğe bağlı)"
+        },
+        "web-search-brave-api-key": {
+            "name": "Brave Search API Anahtarı (isteğe bağlı)"
+        },
+        "web-search-serpapi-api-key": {
+            "name": "SerpApi API Anahtarı (isteğe bağlı)"
+        },
+        "web-search-max-results": {
+            "name": "En fazla arama sonucu"
+        },
+        "web-search-total-context-budget": {
+            "name": "Toplam arama bağlamı bütçesi"
+        },
+        "web-search-prefetch-timeout": {
+            "name": "Ön getirme zaman aşımı"
+        },
+        "web-search-preview-max-chars": {
+            "name": "En fazla önizleme uzunluğu"
+        },
+        "web-search-extraction-timeout": {
+            "name": "İçerik çıkarma zaman aşımı"
+        },
+        "web-search-max-page-chars": {
+            "name": "En fazla sayfa uzunluğu"
+        },
+        "web-search-min-content-length": {
+            "name": "En az içerik uzunluğu"
+        },
+        "web-search-compress-read-pages": {
+            "name": "Uzun sayfaları sıkıştır"
+        },
+        "web-search-compress-threshold": {
+            "name": "Sıkıştırma eşiği"
+        },
+        "web-search-compress-target": {
+            "name": "Sıkıştırma hedefi"
+        },
+        "web-search-cache-ttl": {
+            "name": "Arama sonucu önbellek süresi"
+        },
+        "web-search-negative-cache-ttl": {
+            "name": "Olumsuz arama önbellek süresi"
+        },
+        "web-search-page-cache-ttl": {
+            "name": "Sayfa önbellek süresi"
+        },
+        "web-search-repeat-block-window": {
+            "name": "Tekrar engelleme süresi",
+            "description": "Aynı sorgunun tekrarlanmasını engelleyen süre (saniye)"
+        },
+        "web-search-seen-source-window": {
+            "name": "Görülen kaynakları gizleme süresi",
+            "description": "Yakın zamanda döndürülen kaynakların yeniden gösterilmediği süre (saniye)"
+        },
+        "web-search-prefetch-max-urls": {
+            "name": "En fazla URL ön getirme sonucu",
+            "description": "Arama başına önceden getirilen en fazla sonuç URL'si. Sıfır, ön getirmeyi devre dışı bırakır"
+        },
+        "web-search-tor-enabled": {
+            "name": "Tor Aramasını Etkinleştir",
+            "description": "Yalnızca Windows'ta desteklenir ve Tor'un çalışıyor olması gerekir"
+        },
+        "web-search-profile-import-enabled": {
+            "name": "Tarayıcı profili içe aktarmayı etkinleştir",
+            "description": "Chrome, Edge, Brave ve Firefox'tan çerezleri içe aktar"
+        },
+        "web-search-profile-import-all-profiles": {
+            "name": "Tüm profilleri içe aktar",
+            "description": "Tarayıcılardaki tüm profilleri içe aktar"
+        },
+        "web-search-profile-import-refresh-hours": {
+            "name": "Profil yenileme süresi"
+        },
+        "web-search-profile-import-purge-on-disable": {
+            "name": "İçe aktarılan profilleri temizle",
+            "description": "Tarayıcı profili içe aktarma devre dışı bırakıldığında içe aktarılan çerezleri kaldır"
+        },
+        "browser-agent-width": {
+            "name": "Tarayıcı penceresi genişliği"
+        },
+        "browser-agent-height": {
+            "name": "Tarayıcı penceresi yüksekliği"
+        },
+        "browser-agent-headless": {
+            "name": "Başsız Mod",
+            "description": "Tarayıcı aracısını görünür bir tarayıcı penceresi olmadan çalıştır"
+        },
+        "browser-agent-max-a11y-depth": {
+            "name": "Erişilebilirlik derinliği",
+            "description": "Erişilebilirlik ağacında en fazla gezinme derinliği"
+        },
+        "browser-agent-max-elements": {
+            "name": "Öge sınırı",
+            "description": "Tek bir sayfadan toplanan en fazla öge sayısı"
+        },
+        "browser-agent-max-main-interactive": {
+            "name": "Etkileşimli öge sınırı",
+            "description": "Kısa bir anlık görüntüye dahil edilen en fazla etkileşimli öge sayısı"
+        },
+        "browser-agent-auto-text-preview-length": {
+            "name": "Metin önizleme uzunluğu",
+            "description": "Otomatik sayfa önizlemesinde kullanılan en fazla metin uzunluğu"
+        },
+        "sandbox-container-name": {
+            "name": "Korumalı Alan Container adı"
+        },
+        "sandbox-image": {
+            "name": "Korumalı Alan Image'ı",
+            "description": "Korumalı alanın kullandığı Docker Hub image'ı"
+        },
+        "sandbox-cpu-limit": {
+            "name": "CPU iş parçacığı sınırı"
+        },
+        "sandbox-memory-limit": {
+            "name": "Bellek sınırı (GB)"
+        },
+        "sandbox-memory-swap-limit": {
+            "name": "Bellek ve Swap sınırı (GB)",
+            "description": "Birleşik bellek ve takas alanı sınırı"
+        },
+        "sandbox-pids-limit": {
+            "name": "İşlem sınırı"
+        },
+        "sandbox-storage-limit": {
+            "name": "Depolama sınırı (GB)"
+        },
+        "sandbox-network-limit-mbit": {
+            "name": "Ağ sınırı (Mbit/s)"
+        },
+        "sandbox-default-timeout": {
+            "name": "Varsayılan komut zaman aşımı"
+        },
+        "sandbox-max-output-bytes": {
+            "name": "Çıktı sınırı"
+        },
+        "sandbox-output-head-ratio": {
+            "name": "Çıktı başlangıcı oranı",
+            "description": "Kesilen çıktının başlangıçtan itibaren korunan bölümü"
+        },
+        "sandbox-max-read-bytes": {
+            "name": "Okuma sınırı"
+        },
+        "sandbox-max-cat-file-bytes": {
+            "name": "cat dosya sınırı"
+        },
+        "sandbox-max-cat-line-threshold": {
+            "name": "cat satır eşiği"
+        },
+        "sandbox-max-image-preview-bytes": {
+            "name": "Görüntü önizleme sınırı",
+            "description": "Önizleme olarak döndürülen görüntünün bayt cinsinden en fazla boyutu"
+        },
+        "sandbox-max-ls-entries": {
+            "name": "Dizin girdisi sınırı"
+        },
+        "sandbox-max-find-results": {
+            "name": "find sonucu sınırı"
+        },
+        "sandbox-max-grep-results": {
+            "name": "grep sonucu sınırı"
+        },
+        "sandbox-background-timeout-threshold": {
+            "name": "Arka plan zaman aşımı eşiği",
+            "description": "Arka planda yürütmeyi seçmek için kullanılan saniye cinsinden zaman aşımı eşiği"
+        },
+        "sandbox-thread-limit": {
+            "name": "İş parçacığı sınırı",
+            "description": "En fazla çalışan ve sayısal kitaplık iş parçacığı sayısı"
+        },
+        "sandbox-default-task-dir": {
+            "name": "Çalışma alanı dizini"
+        },
+        "sandbox-workspace-cleanup-enabled": {
+            "name": "Çalışma Alanı Temizliği",
+            "description": "Etkin olmayan korumalı alan çalışma alanlarını otomatik olarak geri dönüştür"
+        },
+        "sandbox-workspace-cleanup-idle-seconds": {
+            "name": "Çalışma alanı temizleme boşta kalma süresi",
+            "description": "Çalışma alanı temizlenmeden önceki saniye cinsinden boşta kalma süresi"
+        },
+        "sandbox-workspace-cleanup-recycle-seconds": {
+            "name": "Çalışma alanı geri dönüşüm süresi",
+            "description": "Geri dönüştürülmeden önce çalışma alanının saniye cinsinden en uzun ömrü"
+        },
+        "sandbox-workspace-cleanup-interval-seconds": {
+            "name": "Çalışma alanı temizleme aralığı"
+        },
+        "sandbox-max-file-map-symbols": {
+            "name": "Dosya haritası simge sınırı",
+            "description": "Oluşturulan haritalarda dosya başına dahil edilen en fazla simge sayısı"
+        },
+        "sandbox-docker-start-timeout-seconds": {
+            "name": "Docker başlatma zaman aşımı"
         }
     },
     "downloadsBridge": {

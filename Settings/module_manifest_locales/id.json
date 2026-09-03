@@ -4,97 +4,300 @@
     "commands": {
         "firstRun": [
             {
-                "name": "Penyiapan pertama",
-                "description": "Membuat settings.json dan menerapkan migrasi basis data"
+                "name": "Penyiapan pertama"
             }
         ],
         "run": [
             {
-                "name": "Server UI",
-                "description": "Menjalankan server pengembangan Django"
+                "name": "Server UI"
             },
             {
-                "name": "Runtime Ollama",
-                "description": "Menjalankan layanan Ollama terkelola dalam sesi konsol khusus"
+                "name": "Runtime Ollama"
             }
         ]
     },
+    "settingCategories": [
+        {
+            "id": "engines",
+            "name": "Mesin"
+        },
+        {
+            "id": "browser-agent",
+            "name": "Agen Browser"
+        },
+        {
+            "id": "sandbox",
+            "name": "Sandbox"
+        },
+        {
+            "id": "web-search",
+            "name": "WebSearch"
+        },
+        {
+            "id": "web-search-engines",
+            "name": "Mesin WebSearch"
+        },
+        {
+            "id": "web-search-api",
+            "name": "API WebSearch"
+        },
+        {
+            "id": "web-search-search",
+            "name": "Pencarian WebSearch"
+        },
+        {
+            "id": "web-search-extraction",
+            "name": "Ekstraksi WebSearch"
+        },
+        {
+            "id": "web-search-cache",
+            "name": "Cache WebSearch"
+        }
+    ],
     "settings": {
-        "ui-port": {
-            "name": "Port server UI",
-            "description": "Port tempat server UI mendengarkan"
-        },
-        "api-port": {
-            "name": "Port server API",
-            "description": "Port tempat server API mendengarkan"
-        },
-        "aslm-host-theme": {
-            "name": "Tema host ASLM",
-            "description": "Cuplikan tema dari aplikasi ASLM; diterapkan pada setiap mulai modul. Hanya dikelola oleh ASLM."
-        },
-        "aslm-host-locale": {
-            "name": "Bahasa host ASLM",
-            "description": "Cuplikan bahasa dari aplikasi ASLM; diterapkan pada setiap mulai modul. Hanya dikelola oleh ASLM."
+        "generate-chat-titles": {
+            "name": "Buat Judul Percakapan"
         },
         "console_log_level": {
-            "name": "Tingkat log konsol",
-            "description": "Seberapa banyak detail runtime yang ASLM-Chat cetak ke konsol ASLM"
+            "name": "Level Log Konsol"
         },
         "llm-engine": {
-            "name": "Mesin LLM aktif",
-            "description": "Mesin yang digunakan untuk generasi di antarmuka chat"
+            "name": "Mesin LLM Aktif"
         },
         "ollama-service": {
-            "name": "Ollama",
-            "description": "Apakah layanan inferensi Ollama terinstal"
+            "name": "Ollama"
         },
         "ollama-service_path": {
-            "name": "Jalur Ollama",
-            "description": "Jalur ke file eksekusi Ollama"
+            "name": "Gunakan jalur Ollama khusus"
         },
         "ollama-service_data": {
-            "name": "Data Ollama",
-            "description": "Jalur ke direktori data Ollama"
+            "name": "Gunakan jalur data Ollama khusus"
         },
         "ollama-service_models": {
-            "name": "Model Ollama",
-            "description": "Jalur ke direktori model Ollama"
-        },
-        "ollama-service_port": {
-            "name": "Port Ollama",
-            "description": "Port tempat layanan Ollama lokal mendengarkan"
+            "name": "Gunakan jalur model Ollama khusus"
         },
         "lms": {
-            "name": "LM Studio",
-            "description": "Apakah integrasi LM Studio tersedia"
+            "name": "LM Studio"
         },
         "lms_url": {
-            "name": "Alamat LM Studio",
-            "description": "Alamat dasar API server LM Studio"
+            "name": "URL Server LM Studio"
         },
         "openai": {
-            "name": "API kompatibel OpenAI",
-            "description": "Apakah titik akhir API kompatibel OpenAI tersedia"
+            "name": "API yang Kompatibel dengan OpenAI"
         },
         "openai_url": {
-            "name": "Alamat kompatibel OpenAI",
-            "description": "URL dasar titik akhir API kompatibel OpenAI"
+            "name": "URL yang Kompatibel dengan OpenAI"
         },
         "openai_api_key": {
-            "name": "Kunci API kompatibel OpenAI",
-            "description": "Kunci API opsional untuk titik akhir yang diamankan"
+            "name": "Kunci API yang Kompatibel dengan OpenAI (opsional)"
         },
         "google-genai": {
-            "name": "Google GenAI",
-            "description": "Apakah integrasi Google GenAI tersedia"
+            "name": "API Google GenAI"
         },
         "google_genai_url": {
-            "name": "Alamat Google GenAI",
-            "description": "URL dasar titik akhir API Google GenAI Gemini"
+            "name": "URL API Google GenAI"
         },
         "google_genai_api_key": {
-            "name": "Kunci API Google GenAI",
-            "description": "Kunci API untuk permintaan API Google GenAI Gemini"
+            "name": "Kunci API Google GenAI"
+        },
+        "web-search-tavily-api-key": {
+            "name": "Kunci API Tavily (opsional)"
+        },
+        "web-search-firecrawl-api-key": {
+            "name": "Kunci API Firecrawl (opsional)"
+        },
+        "web-search-brave-api-key": {
+            "name": "Kunci API Brave Search (opsional)"
+        },
+        "web-search-serpapi-api-key": {
+            "name": "Kunci API SerpApi (opsional)"
+        },
+        "web-search-max-results": {
+            "name": "Hasil pencarian maksimum"
+        },
+        "web-search-total-context-budget": {
+            "name": "Total anggaran konteks pencarian"
+        },
+        "web-search-prefetch-timeout": {
+            "name": "Batas waktu pramuat"
+        },
+        "web-search-preview-max-chars": {
+            "name": "Panjang pratinjau maksimum"
+        },
+        "web-search-extraction-timeout": {
+            "name": "Batas waktu ekstraksi"
+        },
+        "web-search-max-page-chars": {
+            "name": "Panjang halaman maksimum"
+        },
+        "web-search-min-content-length": {
+            "name": "Panjang konten minimum"
+        },
+        "web-search-compress-read-pages": {
+            "name": "Kompres halaman panjang"
+        },
+        "web-search-compress-threshold": {
+            "name": "Ambang kompresi"
+        },
+        "web-search-compress-target": {
+            "name": "Target kompresi"
+        },
+        "web-search-cache-ttl": {
+            "name": "Masa berlaku cache hasil pencarian"
+        },
+        "web-search-negative-cache-ttl": {
+            "name": "Masa berlaku cache negatif pencarian"
+        },
+        "web-search-page-cache-ttl": {
+            "name": "Masa berlaku cache halaman"
+        },
+        "web-search-repeat-block-window": {
+            "name": "Rentang pemblokiran pengulangan",
+            "description": "Waktu dalam detik untuk memblokir kueri identik yang diulang"
+        },
+        "web-search-seen-source-window": {
+            "name": "Rentang sumber yang telah dilihat",
+            "description": "Waktu dalam detik untuk menyembunyikan sumber yang baru saja dikembalikan"
+        },
+        "web-search-prefetch-max-urls": {
+            "name": "Hasil pramuat URL maksimum",
+            "description": "Jumlah maksimum URL hasil yang dimuat sebelumnya per pencarian. Nol menonaktifkan pramuat"
+        },
+        "web-search-tor-enabled": {
+            "name": "Aktifkan Pencarian Tor",
+            "description": "Hanya didukung di Windows dan memerlukan Tor yang sedang berjalan"
+        },
+        "web-search-profile-import-enabled": {
+            "name": "Aktifkan impor profil browser",
+            "description": "Impor cookie dari Chrome, Edge, Brave, dan Firefox"
+        },
+        "web-search-profile-import-all-profiles": {
+            "name": "Impor semua profil",
+            "description": "Impor setiap profil dari browser"
+        },
+        "web-search-profile-import-refresh-hours": {
+            "name": "Waktu penyegaran profil"
+        },
+        "web-search-profile-import-purge-on-disable": {
+            "name": "Hapus profil yang diimpor",
+            "description": "Hapus cookie yang diimpor saat impor profil browser dinonaktifkan"
+        },
+        "browser-agent-width": {
+            "name": "Lebar jendela browser"
+        },
+        "browser-agent-height": {
+            "name": "Tinggi jendela browser"
+        },
+        "browser-agent-headless": {
+            "name": "Mode Headless",
+            "description": "Jalankan agen browser tanpa jendela browser yang terlihat"
+        },
+        "browser-agent-max-a11y-depth": {
+            "name": "Kedalaman aksesibilitas",
+            "description": "Kedalaman maksimum penelusuran pohon aksesibilitas"
+        },
+        "browser-agent-max-elements": {
+            "name": "Batas elemen",
+            "description": "Jumlah maksimum elemen yang dikumpulkan dari satu halaman"
+        },
+        "browser-agent-max-main-interactive": {
+            "name": "Batas elemen interaktif",
+            "description": "Jumlah maksimum elemen interaktif yang disertakan dalam cuplikan ringkas"
+        },
+        "browser-agent-auto-text-preview-length": {
+            "name": "Panjang pratinjau teks",
+            "description": "Panjang teks maksimum yang digunakan oleh pratinjau halaman otomatis"
+        },
+        "sandbox-container-name": {
+            "name": "Nama Container Sandbox"
+        },
+        "sandbox-image": {
+            "name": "Image Sandbox",
+            "description": "Image Docker Hub yang digunakan oleh sandbox"
+        },
+        "sandbox-cpu-limit": {
+            "name": "Batas thread CPU"
+        },
+        "sandbox-memory-limit": {
+            "name": "Batas memori (GB)"
+        },
+        "sandbox-memory-swap-limit": {
+            "name": "Batas memori dan Swap (GB)",
+            "description": "Batas gabungan memori dan swap"
+        },
+        "sandbox-pids-limit": {
+            "name": "Batas proses"
+        },
+        "sandbox-storage-limit": {
+            "name": "Batas penyimpanan (GB)"
+        },
+        "sandbox-network-limit-mbit": {
+            "name": "Batas jaringan (Mbit/s)"
+        },
+        "sandbox-default-timeout": {
+            "name": "Batas waktu perintah default"
+        },
+        "sandbox-max-output-bytes": {
+            "name": "Batas output"
+        },
+        "sandbox-output-head-ratio": {
+            "name": "Rasio awal output",
+            "description": "Bagian output terpotong yang dipertahankan dari awal"
+        },
+        "sandbox-max-read-bytes": {
+            "name": "Batas pembacaan"
+        },
+        "sandbox-max-cat-file-bytes": {
+            "name": "Batas file cat"
+        },
+        "sandbox-max-cat-line-threshold": {
+            "name": "Ambang baris cat"
+        },
+        "sandbox-max-image-preview-bytes": {
+            "name": "Batas pratinjau gambar",
+            "description": "Ukuran gambar maksimum dalam byte yang dikembalikan sebagai pratinjau"
+        },
+        "sandbox-max-ls-entries": {
+            "name": "Batas entri direktori"
+        },
+        "sandbox-max-find-results": {
+            "name": "Batas hasil find"
+        },
+        "sandbox-max-grep-results": {
+            "name": "Batas hasil grep"
+        },
+        "sandbox-background-timeout-threshold": {
+            "name": "Ambang batas waktu latar belakang",
+            "description": "Ambang batas waktu dalam detik untuk memilih eksekusi latar belakang"
+        },
+        "sandbox-thread-limit": {
+            "name": "Batas thread",
+            "description": "Jumlah maksimum thread pekerja dan pustaka numerik"
+        },
+        "sandbox-default-task-dir": {
+            "name": "Direktori ruang kerja"
+        },
+        "sandbox-workspace-cleanup-enabled": {
+            "name": "Pembersihan Ruang Kerja",
+            "description": "Daur ulang ruang kerja sandbox yang tidak aktif secara otomatis"
+        },
+        "sandbox-workspace-cleanup-idle-seconds": {
+            "name": "Waktu diam pembersihan ruang kerja",
+            "description": "Waktu diam dalam detik sebelum ruang kerja dibersihkan"
+        },
+        "sandbox-workspace-cleanup-recycle-seconds": {
+            "name": "Waktu daur ulang ruang kerja",
+            "description": "Masa pakai maksimum ruang kerja dalam detik sebelum didaur ulang"
+        },
+        "sandbox-workspace-cleanup-interval-seconds": {
+            "name": "Interval pembersihan ruang kerja"
+        },
+        "sandbox-max-file-map-symbols": {
+            "name": "Batas simbol peta file",
+            "description": "Jumlah maksimum simbol per file yang disertakan dalam peta yang dibuat"
+        },
+        "sandbox-docker-start-timeout-seconds": {
+            "name": "Batas waktu mulai Docker"
         }
     },
     "downloadsBridge": {

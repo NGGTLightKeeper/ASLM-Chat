@@ -1,100 +1,303 @@
 {
     "name": "ASLM Chat",
-    "description": "ASLM-Chat-Modul",
+    "description": "Modul für ASLM Chat",
     "commands": {
         "firstRun": [
             {
-                "name": "Ersteinrichtung",
-                "description": "Erstellt settings.json und wendet Datenbankmigrationen an"
+                "name": "Ersteinrichtung"
             }
         ],
         "run": [
             {
-                "name": "UI-Server",
-                "description": "Startet den Django-Entwicklungsserver"
+                "name": "UI-Server"
             },
             {
-                "name": "Ollama-Laufzeit",
-                "description": "Startet den verwalteten Ollama-Dienst in einer eigenen Konsolensitzung"
+                "name": "Ollama-Laufzeit"
             }
         ]
     },
+    "settingCategories": [
+        {
+            "id": "engines",
+            "name": "Engines"
+        },
+        {
+            "id": "browser-agent",
+            "name": "Browser-Agent"
+        },
+        {
+            "id": "sandbox",
+            "name": "Sandbox"
+        },
+        {
+            "id": "web-search",
+            "name": "WebSearch"
+        },
+        {
+            "id": "web-search-engines",
+            "name": "WebSearch-Suchmaschinen"
+        },
+        {
+            "id": "web-search-api",
+            "name": "WebSearch-API"
+        },
+        {
+            "id": "web-search-search",
+            "name": "WebSearch-Sucheinstellungen"
+        },
+        {
+            "id": "web-search-extraction",
+            "name": "WebSearch-Inhaltsextraktion"
+        },
+        {
+            "id": "web-search-cache",
+            "name": "WebSearch-Cache"
+        }
+    ],
     "settings": {
-        "ui-port": {
-            "name": "UI-Server-Port",
-            "description": "Port, auf dem der UI-Server lauscht"
-        },
-        "api-port": {
-            "name": "API-Server-Port",
-            "description": "Port, auf dem der API-Server lauscht"
-        },
-        "aslm-host-theme": {
-            "name": "ASLM-Host-Design",
-            "description": "Design-Schnappschuss aus der ASLM-App; wird bei jedem Modulstart angewendet. Wird nur von ASLM verwaltet."
-        },
-        "aslm-host-locale": {
-            "name": "ASLM-Host-Sprache",
-            "description": "Sprach-Schnappschuss aus der ASLM-App; wird bei jedem Modulstart angewendet. Wird nur von ASLM verwaltet."
+        "generate-chat-titles": {
+            "name": "Chattitel generieren"
         },
         "console_log_level": {
-            "name": "Konsolen-Protokollstufe",
-            "description": "Wie viele Laufzeitdetails ASLM-Chat in die ASLM-Konsole schreibt."
+            "name": "Konsolen-Protokollstufe"
         },
         "llm-engine": {
-            "name": "Aktive LLM-Engine",
-            "description": "Engine für die Textgenerierung in der Chat-Oberfläche"
+            "name": "Aktive LLM-Engine"
         },
         "ollama-service": {
-            "name": "Ollama",
-            "description": "Ob der Ollama-Inferenzdienst installiert ist"
+            "name": "Ollama"
         },
         "ollama-service_path": {
-            "name": "Ollama-Pfad",
-            "description": "Pfad zur Ollama-Ausführungsdatei"
+            "name": "Benutzerdefinierten Ollama-Pfad verwenden"
         },
         "ollama-service_data": {
-            "name": "Ollama-Daten",
-            "description": "Pfad zum Ollama-Datenverzeichnis"
+            "name": "Benutzerdefinierten Ollama-Datenpfad verwenden"
         },
         "ollama-service_models": {
-            "name": "Ollama-Modelle",
-            "description": "Pfad zum Ollama-Modellverzeichnis"
-        },
-        "ollama-service_port": {
-            "name": "Ollama-Port",
-            "description": "Port, auf dem der lokale Ollama-Dienst lauscht"
+            "name": "Benutzerdefinierten Ollama-Modellpfad verwenden"
         },
         "lms": {
-            "name": "LM Studio",
-            "description": "Ob die LM-Studio-Integration verfügbar ist"
+            "name": "LM Studio"
         },
         "lms_url": {
-            "name": "LM-Studio-Adresse",
-            "description": "Basisadresse der LM-Studio-Server-API"
+            "name": "Server-URL von LM Studio"
         },
         "openai": {
-            "name": "OpenAI-kompatible API",
-            "description": "Ob ein OpenAI-kompatibler API-Endpunkt verfügbar ist"
+            "name": "OpenAI-kompatible API"
         },
         "openai_url": {
-            "name": "OpenAI-kompatible Adresse",
-            "description": "Basis-URL des OpenAI-kompatiblen API-Endpunkts"
+            "name": "OpenAI-kompatible URL"
         },
         "openai_api_key": {
-            "name": "OpenAI-kompatibler API-Schlüssel",
-            "description": "Optionaler API-Schlüssel für gesicherte Endpunkte"
+            "name": "OpenAI-kompatibler API-Schlüssel (optional)"
         },
         "google-genai": {
-            "name": "Google GenAI",
-            "description": "Ob die Google-GenAI-Integration verfügbar ist"
+            "name": "Google GenAI API"
         },
         "google_genai_url": {
-            "name": "Google-GenAI-Adresse",
-            "description": "Basis-URL des Google-GenAI-Gemini-API-Endpunkts"
+            "name": "URL der Google GenAI API"
         },
         "google_genai_api_key": {
-            "name": "Google-GenAI-API-Schlüssel",
-            "description": "API-Schlüssel für Google-GenAI-Gemini-API-Anfragen"
+            "name": "Google GenAI API-Schlüssel"
+        },
+        "web-search-tavily-api-key": {
+            "name": "Tavily API-Schlüssel (optional)"
+        },
+        "web-search-firecrawl-api-key": {
+            "name": "Firecrawl API-Schlüssel (optional)"
+        },
+        "web-search-brave-api-key": {
+            "name": "Brave Search API-Schlüssel (optional)"
+        },
+        "web-search-serpapi-api-key": {
+            "name": "SerpApi API-Schlüssel (optional)"
+        },
+        "web-search-max-results": {
+            "name": "Maximale Anzahl an Suchergebnissen"
+        },
+        "web-search-total-context-budget": {
+            "name": "Gesamtes Suchkontextbudget"
+        },
+        "web-search-prefetch-timeout": {
+            "name": "Zeitlimit für Vorabladen"
+        },
+        "web-search-preview-max-chars": {
+            "name": "Maximale Vorschaulänge"
+        },
+        "web-search-extraction-timeout": {
+            "name": "Zeitlimit für Extraktion"
+        },
+        "web-search-max-page-chars": {
+            "name": "Maximale Seitenlänge"
+        },
+        "web-search-min-content-length": {
+            "name": "Minimale Inhaltslänge"
+        },
+        "web-search-compress-read-pages": {
+            "name": "Lange Seiten komprimieren"
+        },
+        "web-search-compress-threshold": {
+            "name": "Komprimierungsschwelle"
+        },
+        "web-search-compress-target": {
+            "name": "Komprimierungsziel"
+        },
+        "web-search-cache-ttl": {
+            "name": "Speicherdauer des Suchergebnis-Caches"
+        },
+        "web-search-negative-cache-ttl": {
+            "name": "Speicherdauer des negativen Such-Caches"
+        },
+        "web-search-page-cache-ttl": {
+            "name": "Speicherdauer des Seiten-Caches"
+        },
+        "web-search-repeat-block-window": {
+            "name": "Sperrzeit für Wiederholungen",
+            "description": "Zeitraum in Sekunden, in dem eine identische wiederholte Suchanfrage gesperrt wird"
+        },
+        "web-search-seen-source-window": {
+            "name": "Sperrzeit für bereits verwendete Quellen",
+            "description": "Zeitraum in Sekunden, in dem kürzlich zurückgegebene Quellen unterdrückt werden"
+        },
+        "web-search-prefetch-max-urls": {
+            "name": "Maximale Anzahl vorabgeladener URLs",
+            "description": "Maximale Anzahl an Ergebnis-URLs, die pro Suche vorabgeladen werden. Null deaktiviert das Vorabladen"
+        },
+        "web-search-tor-enabled": {
+            "name": "Tor-Suche aktivieren",
+            "description": "Wird nur unter Windows unterstützt und erfordert, dass Tor ausgeführt wird"
+        },
+        "web-search-profile-import-enabled": {
+            "name": "Browserprofil-Import aktivieren",
+            "description": "Cookies aus Chrome/Edge/Brave/Firefox importieren"
+        },
+        "web-search-profile-import-all-profiles": {
+            "name": "Alle Profile importieren",
+            "description": "Jedes Profil aus den Browsern importieren"
+        },
+        "web-search-profile-import-refresh-hours": {
+            "name": "Aktualisierungsintervall der Profile"
+        },
+        "web-search-profile-import-purge-on-disable": {
+            "name": "Importierte Profile bereinigen",
+            "description": "Importierte Cookies entfernen, wenn der Browserprofil-Import deaktiviert wird"
+        },
+        "browser-agent-width": {
+            "name": "Breite des Browserfensters"
+        },
+        "browser-agent-height": {
+            "name": "Höhe des Browserfensters"
+        },
+        "browser-agent-headless": {
+            "name": "Headless-Modus",
+            "description": "Den Browser-Agent ohne sichtbares Browserfenster ausführen"
+        },
+        "browser-agent-max-a11y-depth": {
+            "name": "Tiefe des Barrierefreiheitsbaums",
+            "description": "Maximale Durchlauftiefe des Barrierefreiheitsbaums"
+        },
+        "browser-agent-max-elements": {
+            "name": "Elementlimit",
+            "description": "Maximale Anzahl an Elementen, die von einer Seite erfasst werden"
+        },
+        "browser-agent-max-main-interactive": {
+            "name": "Limit interaktiver Elemente",
+            "description": "Maximale Anzahl interaktiver Elemente in einer kompakten Momentaufnahme"
+        },
+        "browser-agent-auto-text-preview-length": {
+            "name": "Länge der Textvorschau",
+            "description": "Maximale Textlänge für die automatische Seitenvorschau"
+        },
+        "sandbox-container-name": {
+            "name": "Name des Sandbox-Containers"
+        },
+        "sandbox-image": {
+            "name": "Sandbox-Image",
+            "description": "Von der Sandbox verwendetes Docker Hub-Image"
+        },
+        "sandbox-cpu-limit": {
+            "name": "CPU-Thread-Limit"
+        },
+        "sandbox-memory-limit": {
+            "name": "Arbeitsspeicherlimit (GB)"
+        },
+        "sandbox-memory-swap-limit": {
+            "name": "Arbeitsspeicher- und Swap-Limit (GB)",
+            "description": "Kombiniertes Limit für Arbeitsspeicher und Swap"
+        },
+        "sandbox-pids-limit": {
+            "name": "Prozesslimit"
+        },
+        "sandbox-storage-limit": {
+            "name": "Speicherplatzlimit (GB)"
+        },
+        "sandbox-network-limit-mbit": {
+            "name": "Netzwerklimit (Mbit/s)"
+        },
+        "sandbox-default-timeout": {
+            "name": "Standard-Zeitlimit für Befehle"
+        },
+        "sandbox-max-output-bytes": {
+            "name": "Ausgabelimit"
+        },
+        "sandbox-output-head-ratio": {
+            "name": "Anteil des Ausgabeanfangs",
+            "description": "Anteil der gekürzten Ausgabe, der vom Anfang beibehalten wird"
+        },
+        "sandbox-max-read-bytes": {
+            "name": "Leselimit"
+        },
+        "sandbox-max-cat-file-bytes": {
+            "name": "Dateigrößenlimit für cat"
+        },
+        "sandbox-max-cat-line-threshold": {
+            "name": "Zeilenschwelle für cat"
+        },
+        "sandbox-max-image-preview-bytes": {
+            "name": "Limit für Bildvorschauen",
+            "description": "Maximale Bildgröße in Byte, die als Vorschau zurückgegeben wird"
+        },
+        "sandbox-max-ls-entries": {
+            "name": "Limit für Verzeichniseinträge"
+        },
+        "sandbox-max-find-results": {
+            "name": "Limit für find-Ergebnisse"
+        },
+        "sandbox-max-grep-results": {
+            "name": "Limit für grep-Ergebnisse"
+        },
+        "sandbox-background-timeout-threshold": {
+            "name": "Schwelle für Hintergrundausführung",
+            "description": "Zeitlimitschwelle in Sekunden zur Auswahl der Hintergrundausführung"
+        },
+        "sandbox-thread-limit": {
+            "name": "Thread-Limit",
+            "description": "Maximale Thread-Anzahl für Worker und numerische Bibliotheken"
+        },
+        "sandbox-default-task-dir": {
+            "name": "Arbeitsbereichsverzeichnis"
+        },
+        "sandbox-workspace-cleanup-enabled": {
+            "name": "Arbeitsbereiche bereinigen",
+            "description": "Inaktive Sandbox-Arbeitsbereiche automatisch neu erstellen"
+        },
+        "sandbox-workspace-cleanup-idle-seconds": {
+            "name": "Leerlaufzeit bis zur Bereinigung",
+            "description": "Leerlaufzeit in Sekunden vor der Bereinigung des Arbeitsbereichs"
+        },
+        "sandbox-workspace-cleanup-recycle-seconds": {
+            "name": "Lebensdauer des Arbeitsbereichs",
+            "description": "Maximale Lebensdauer des Arbeitsbereichs in Sekunden bis zur Neuerstellung"
+        },
+        "sandbox-workspace-cleanup-interval-seconds": {
+            "name": "Bereinigungsintervall für Arbeitsbereiche"
+        },
+        "sandbox-max-file-map-symbols": {
+            "name": "Symbollimit der Dateizuordnung",
+            "description": "Maximale Anzahl an Symbolen pro Datei in erzeugten Zuordnungen"
+        },
+        "sandbox-docker-start-timeout-seconds": {
+            "name": "Zeitlimit für Docker-Start"
         }
     },
     "downloadsBridge": {

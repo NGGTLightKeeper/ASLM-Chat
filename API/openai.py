@@ -1332,6 +1332,9 @@ def _build_openai_request_options(
         else:
             extra_body[raw_key] = raw_value
 
+    if not _bool_from_value(direct_options.get("logprobs")):
+        direct_options.pop("top_logprobs", None)
+
     think = kwargs.get("think")
     think_level = kwargs.get("think_level")
     think_param_name = str(kwargs.get("think_param_name", "think") or "think")

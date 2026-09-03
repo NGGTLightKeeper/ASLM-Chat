@@ -29,6 +29,7 @@ from core.extract.content_processor import (
 )
 
 _MAX_OUTPUT_CHARS = 50_000
+_NO_CONTENT_MARKER = "*No content extracted.*"
 _WHITESPACE_RE = re.compile(r"[ \t\r\f\v]+")
 _TAG_RE = re.compile(r"<[^>]+>")
 
@@ -36,6 +37,11 @@ _MD_HEADING_RE = re.compile(r"^#{1,6}\s")
 _MD_LIST_RE = re.compile(r"^(\s*[-*•]\s|\s*\d+[.)]\s)")
 _MD_QUOTE_RE = re.compile(r"^>\s?")
 _MD_CODE_FENCE_RE = re.compile(r"^```")
+
+
+# Return whether normalized markdown contains page content rather than metadata alone.
+def has_extractable_content(markdown: str) -> bool:
+    return bool(markdown and markdown.strip() and _NO_CONTENT_MARKER not in markdown)
 
 
 # Extract metadata using trafilatura (CPU only).
@@ -396,5 +402,5 @@ def normalize_page(
             return _build_markdown(meta, full)
 
     if not cleaned.strip():
-        return _build_markdown(meta, "*No content extracted.*")
+        return _build_markdown(meta, _NO_CONTENT_MARKER)
     return _build_markdown(meta, cleaned)

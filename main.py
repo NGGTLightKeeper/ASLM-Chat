@@ -249,14 +249,13 @@ def cmd_collectstatic(log: bool) -> None:
 def cmd_first_run(
     log: bool = True,
     ui_port: int = 30000,
-    api_port: int = 30001,
 ) -> None:
     """Generate settings and apply initial migrations."""
 
     from Settings.first_run import run as first_run
 
     print("[ASLM-Chat] Running first-run setup...")
-    first_run(log=log, ui_port=ui_port, api_port=api_port)
+    first_run(log=log, ui_port=ui_port)
 
     from Services import venv_manager
 
@@ -281,14 +280,17 @@ def cmd_get_setting(key: str) -> None:
 def cmd_set_setting(key: str, value: str) -> None:
     """Update a single setting key from string input."""
 
-    from Settings.settings import normalize_setting_value, set
+    from Settings.settings import HOST_KEY_SETTING_KEYS, normalize_setting_value, set
 
     parsed_value = normalize_setting_value(value)
     # ASLM invokes this command in a short-lived process before the module's
     # run commands exist. Persisting a setting must not make that helper own a
     # long-running engine runtime (or wait for the dedicated runtime command).
     set(key, parsed_value, sync_runtime=False)
-    print(f"[ASLM-Chat] Setting '{key}' updated to {parsed_value}")
+    if key in HOST_KEY_SETTING_KEYS:
+        print(f"[ASLM-Chat] Setting '{key}' updated.")
+    else:
+        print(f"[ASLM-Chat] Setting '{key}' updated to {parsed_value}")
 
 
 def cmd_apply_aslm_host_theme(theme_file: str) -> None:
@@ -400,7 +402,6 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("command", type=str, help="Command to execute")
     parser.add_argument("--port", type=int, default=30000, help="Port for runserver (default: 30000)")
-    parser.add_argument("--api-port", type=int, default=30001, help="API server port (default: 30001)")
     parser.add_argument("--app", type=str, default=None, help="App name for makemigrations")
     parser.add_argument("--key", type=str, default=None, help="Setting key for get_setting/set_setting")
     parser.add_argument("--value", type=str, default=None, help="Setting value for set_setting")
@@ -480,7 +481,7 @@ def main() -> None:
             cmd_collectstatic(args.log)
 
         case "first_run":
-            cmd_first_run(log=True, ui_port=args.port, api_port=args.api_port)
+            cmd_first_run(log=True, ui_port=args.port)
 
         case "get_setting":
             if not args.key:

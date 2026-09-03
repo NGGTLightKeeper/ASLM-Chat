@@ -53,7 +53,10 @@ class TestInspectContainer(unittest.TestCase):
         from sandbox.config import HOST_WORKSPACE, DEFAULT_TASK_DIR
         import os as os_mod
         mount = os_mod.path.normpath(os_mod.path.join(HOST_WORKSPACE, DEFAULT_TASK_DIR))
-        payload = json.dumps([{"State": {"Running": True, "Status": "running"}, "Mounts": [{"Source": mount}]}])
+        payload = json.dumps([{
+            "State": {"Running": True, "Status": "running"},
+            "Mounts": [{"Source": mount}],
+        }])
         with patch.object(docker_host_mod, "_run_command", return_value=_ok(payload)):
             result = container_mod._inspect_container()
         self.assertIsNotNone(result)
@@ -103,7 +106,10 @@ class TestStartExisting(unittest.TestCase):
         import json, os as os_mod
         from sandbox.config import HOST_WORKSPACE, DEFAULT_TASK_DIR
         mount = os_mod.path.normpath(os_mod.path.join(HOST_WORKSPACE, DEFAULT_TASK_DIR))
-        running_payload = json.dumps([{"State": {"Running": True, "Status": "running"}, "Mounts": [{"Source": mount}]}])
+        running_payload = json.dumps([{
+            "State": {"Running": True, "Status": "running"},
+            "Mounts": [{"Source": mount}],
+        }])
 
         # docker start → OK; docker inspect → running
         with patch.object(docker_host_mod, "_run_command",
@@ -265,7 +271,10 @@ class TestEnsureContainerRunning(unittest.TestCase):
         import json, os as os_mod
         from sandbox.config import HOST_WORKSPACE, DEFAULT_TASK_DIR
         mount = os_mod.path.normpath(os_mod.path.join(HOST_WORKSPACE, DEFAULT_TASK_DIR))
-        payload = json.dumps([{"State": {"Running": True, "Status": "running"}, "Mounts": [{"Source": mount}]}])
+        payload = json.dumps([{
+            "State": {"Running": True, "Status": "running"},
+            "Mounts": [{"Source": mount}],
+        }])
 
         with patch.object(docker_host_mod, "_ensure_docker_running",
                           return_value=(True, "OK")), \
@@ -304,7 +313,10 @@ class TestEnsureContainerRunning(unittest.TestCase):
         import json, os as os_mod
         from sandbox.config import HOST_WORKSPACE, DEFAULT_TASK_DIR
         mount = os_mod.path.normpath(os_mod.path.join(HOST_WORKSPACE, DEFAULT_TASK_DIR))
-        running_payload = json.dumps([{"State": {"Running": True, "Status": "running"}, "Mounts": [{"Source": mount}]}])
+        running_payload = json.dumps([{
+            "State": {"Running": True, "Status": "running"},
+            "Mounts": [{"Source": mount}],
+        }])
 
         call_count = {"n": 0}
 

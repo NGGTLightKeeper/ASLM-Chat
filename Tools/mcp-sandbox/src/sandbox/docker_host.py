@@ -57,6 +57,7 @@ from sandbox.config import (
     MACOS_DOCKER_DESKTOP_PATHS,
     WINDOWS_DOCKER_DESKTOP_PATHS,
 )
+from sandbox.config_bridge import sync_sandbox_env
 from sandbox.exec import (
     BoundedOutputCollector,
     _background_error_result,
@@ -153,7 +154,7 @@ def _docker_info(timeout: int = 5):
 
 # Return whether host tools may launch Docker Desktop automatically.
 def _auto_start_docker_enabled() -> bool:
-    value = os.environ.get("SANDBOX_AUTO_START_DOCKER", "")
+    value = os.environ.get("SANDBOX_AUTO_START_DOCKER", "1")
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -314,66 +315,12 @@ def _linux_venv_bind_source() -> str | None:
     return str(venv_path)
 
 
-_CONFIG_TEMPLATE = """\
-# sandbox.env - generated automatically on first launch.
-# Uncomment and edit any line to override the default without rebuilding the image.
-# Changes take effect the next time the container is (re)started.
-
-# === Container identity ===
-#SANDBOX_CONTAINER_NAME=aslm-chat-sandbox
-#SANDBOX_IMAGE=nggtlightkeeper/aslm-chat-sandbox:latest
-#SANDBOX_IMAGE_SOURCE=registry
-
-# === Resource limits (applied at docker run) ===
-#SANDBOX_CPU_LIMIT=4
-#SANDBOX_MEMORY_LIMIT=3g
-#SANDBOX_MEMORY_SWAP_LIMIT=4g
-#SANDBOX_PIDS_LIMIT=256
-#SANDBOX_STORAGE_LIMIT=12G
-#SANDBOX_NETWORK_LIMIT_MBIT=100
-
-# === Execution limits (inside container) ===
-#SANDBOX_DEFAULT_TIMEOUT=60
-#SANDBOX_MAX_OUTPUT_BYTES=60000
-#SANDBOX_OUTPUT_HEAD_RATIO=0.5
-#SANDBOX_MAX_READ_BYTES=200000
-#SANDBOX_MAX_CAT_FILE_BYTES=30720
-#SANDBOX_MAX_CAT_LINE_THRESHOLD=300
-#SANDBOX_MAX_IMAGE_PREVIEW_BYTES=2000000
-#SANDBOX_MAX_LS_ENTRIES=500
-#SANDBOX_MAX_FIND_RESULTS=200
-#SANDBOX_MAX_GREP_RESULTS=200
-#SANDBOX_BACKGROUND_TIMEOUT_THRESHOLD=10
-
-# === Thread limits ===
-#SANDBOX_THREAD_LIMIT=4
-
-# === Workspace ===
-#SANDBOX_DEFAULT_TASK_DIR=_sandbox
-#SANDBOX_WORKSPACE_CLEANUP_ENABLED=1
-#SANDBOX_WORKSPACE_CLEANUP_IDLE_SECONDS=5400
-#SANDBOX_WORKSPACE_CLEANUP_RECYCLE_SECONDS=10800
-#SANDBOX_WORKSPACE_CLEANUP_INTERVAL_SECONDS=5
-
-#SANDBOX_MAX_FILE_MAP_SYMBOLS=50
-
-# === Docker startup ===
-#SANDBOX_DOCKER_START_TIMEOUT_SECONDS=60
-#SANDBOX_AUTO_START_DOCKER=0
-"""
-
-
-# Create sandbox.env with commented-out defaults if it does not exist yet.
+# Regenerate sandbox.env from sandbox.json before each container lifecycle check.
 def _ensure_sandbox_config(config_path: str = CONFIG_FILE_PATH) -> None:
-    path = Path(config_path)
-    if path.exists():
-        return
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(_CONFIG_TEMPLATE, encoding="utf-8")
-        logger.info("Created sandbox config: %s", config_path)
+        sync_sandbox_env(env_path=Path(config_path))
     except OSError as exc:
-        logger.warning("Could not create sandbox config %s: %s", config_path, exc)
+        logger.warning("Could not synchronize sandbox config %s: %s", config_path, exc)
 
 
 # Build the docker run command for the sandbox container.
@@ -670,12 +617,15 @@ def _wait_for_container_running(timeout_s: float = 10.0) -> tuple[bool, str]:
     return False, f"Container did not reach 'running' within {timeout_s}s."
 
 
+# Restart the sandbox container.
 def restart_container() -> tuple[bool, str]:
+    _ensure_sandbox_config()
     docker_ok, docker_message = _ensure_docker_running()
     if not docker_ok:
         return False, docker_message
     if not _container_exists():
         return _ensure_container_running()
+
     result = _run_command(["docker", "restart", CONTAINER_NAME], timeout=60)
     if result.returncode == 0:
         return True, f"Container '{CONTAINER_NAME}' restarted."
